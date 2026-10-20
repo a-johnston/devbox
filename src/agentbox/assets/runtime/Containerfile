@@ -1,0 +1,17 @@
+ARG PROJECT_IMAGE
+FROM ${PROJECT_IMAGE}
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash ca-certificates git less python3 ripgrep sudo tmux util-linux \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 agent \
+    && useradd --create-home --uid 10001 --gid 10001 --shell /bin/bash agent
+COPY . /opt/agentbox/
+RUN chmod 755 /opt/agentbox/*.py \
+    && printf 'agent ALL=(root) NOPASSWD: /opt/agentbox/prepare.py ""\n' > /etc/sudoers.d/agentbox \
+    && chmod 440 /etc/sudoers.d/agentbox \
+    && visudo -cf /etc/sudoers.d/agentbox
+ENV HOME=/home/agent TERM=tmux-256color
+ENV PATH=/opt/agentbox/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+WORKDIR /home/agent
+ENTRYPOINT ["/opt/agentbox/init.py"]

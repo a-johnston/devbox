@@ -5,13 +5,13 @@ from pathlib import Path
 import pytest
 
 from devbox.app import App
+from devbox.apple import AppleEngine
 from devbox.cli import dispatch, format_size, parser
-from devbox.engine import Engine
 from devbox.errors import DevboxError
 from devbox.state import Store, disk_usage
 
 
-class InventoryEngine(Engine):
+class InventoryEngine(AppleEngine):
     def __init__(self) -> None:
         super().__init__()
         self.rows: list[dict] = []

@@ -12,7 +12,7 @@ import time
 from pathlib import Path, PurePosixPath
 
 from devbox.config import ASSETS, Harness, Project, git_output, relative
-from devbox.engine import MANAGED, Container, Engine, host_platform
+from devbox.engine import MANAGED, Container, Engine, RunSpec, host_platform, select_engine
 from devbox.errors import DevboxError
 from devbox.state import (
     Instance,
@@ -29,12 +29,6 @@ PREPARED = PurePosixPath("/opt/devbox/prepared")
 PALETTE = (24, 25, 29, 53, 60, 88, 94, 96, 130)
 # Terminal capabilities the guest cannot detect itself; manifests and profiles override them.
 INHERITED = ("COLORTERM",)
-
-
-def mount(source: Path | str, target: str, *, type: str = "bind") -> tuple[str, str]:
-    if any(c in str(source) + target for c in ",\n\r"):
-        raise DevboxError("Mount paths cannot contain commas or newlines")
-    return "--mount", f"type={type},source={source},target={target}"
 
 
 def git_identity(directory: Path) -> dict[str, str]:
@@ -68,7 +62,7 @@ def tmux_config(id: str, project: str, harness: str) -> str:
 
 class App:
     def __init__(self, engine: Engine | None = None, store: Store | None = None) -> None:
-        self.engine = engine or Engine()
+        self.engine = engine or select_engine()
         self.store = store or Store()
 
     def _image_key(self, project: Project) -> str:
@@ -111,47 +105,44 @@ class App:
                 else f"No host {harness.name} version found; installing the pinned default.",
                 flush=True,
             )
-        # Stop a builder we start: it holds gigabytes of RAM and launches don't need it.
-        started_builder = not self.engine.builder_running()
-        try:
-            with tempfile.TemporaryDirectory(prefix="devbox-build-") as temp:
-                # Only harness assets and hook-selected public declarations enter this context.
-                context = Path(temp) / "harness"
-                shutil.copytree(
-                    harness.directory, context, ignore=shutil.ignore_patterns("__pycache__")
+        with (
+            self.engine.building(),
+            tempfile.TemporaryDirectory(prefix="devbox-build-") as temp,
+        ):
+            # Only harness assets and hook-selected public declarations enter this context.
+            context = Path(temp) / "harness"
+            shutil.copytree(
+                harness.directory, context, ignore=shutil.ignore_patterns("__pycache__")
+            )
+            for name, content in files.items():
+                (context / name).write_text(content)
+            for tag, file, source, layer_args in (
+                (base, project.containerfile, project.context, {}),
+                (
+                    runtime,
+                    ASSETS / "runtime/Containerfile",
+                    ASSETS / "runtime",
+                    {"PROJECT_IMAGE": base},
+                ),
+                (
+                    image,
+                    context / "Containerfile",
+                    context,
+                    {
+                        **args,
+                        "RUNTIME_IMAGE": runtime,
+                        "PREPARE_REVISION": str(time.time_ns()),
+                    },
+                ),
+            ):
+                self.engine.build(
+                    tag,
+                    file,
+                    source,
+                    layer_args,
+                    platform=host_platform(),
+                    cpus=project.cpus,
                 )
-                for name, content in files.items():
-                    (context / name).write_text(content)
-                for tag, file, source, layer_args in (
-                    (base, project.containerfile, project.context, {}),
-                    (
-                        runtime,
-                        ASSETS / "runtime/Containerfile",
-                        ASSETS / "runtime",
-                        {"PROJECT_IMAGE": base},
-                    ),
-                    (
-                        image,
-                        context / "Containerfile",
-                        context,
-                        {
-                            **args,
-                            "RUNTIME_IMAGE": runtime,
-                            "PREPARE_REVISION": str(time.time_ns()),
-                        },
-                    ),
-                ):
-                    self.engine.build(
-                        tag,
-                        file,
-                        source,
-                        layer_args,
-                        platform=host_platform(),
-                        cpus=project.cpus,
-                    )
-        finally:
-            if started_builder:
-                self.engine.call("builder", "stop", check=False)
         print(f"Environment prepared in {time.monotonic() - started:.1f}s", flush=True)
         return image
 
@@ -233,35 +224,24 @@ class App:
             "resumed_from": session.id if session else None,
         }
         (directory / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
-        flags: list[str] = []
-        for key, value in {**env, **git_identity(project.cwd)}.items():
-            flags.extend(("--env", f"{key}={value}"))
         artifacts = [str(project.root / artifact) for artifact in project.artifacts]
-        for i, target in enumerate(artifacts):
-            flags.extend(mount(f"{id}-{i}", target, type="volume"))
+        spec = RunSpec(
+            name=id,
+            image=image,
+            cpus=project.cpus,
+            memory=project.memory,
+            labels={
+                MANAGED: "1",
+                "dev.devbox.project": str(project.root),
+                "dev.devbox.harness": harness.name,
+            },
+            binds=((str(project.root), str(project.root)), (str(home), "/home/agent")),
+            volumes=tuple((f"{id}-{i}", target) for i, target in enumerate(artifacts)),
+            env={**env, **git_identity(project.cwd)},
+        )
         started = time.monotonic()
         try:
-            self.engine.call(
-                "run",
-                "--detach",
-                "--init",
-                "--name",
-                id,
-                "--cpus",
-                str(project.cpus),
-                "--memory",
-                project.memory,
-                "--label",
-                f"{MANAGED}=1",
-                "--label",
-                f"dev.devbox.project={project.root}",
-                "--label",
-                f"dev.devbox.harness={harness.name}",
-                *mount(project.root, str(project.root)),
-                *mount(home, "/home/agent"),
-                *flags,
-                image,
-            )
+            self.engine.run(spec)
             if artifacts:
                 # Fresh volumes are root-owned ext4 filesystems.
                 self.engine.exec(

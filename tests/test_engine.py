@@ -4,7 +4,8 @@ import subprocess
 
 import pytest
 
-from devbox.engine import MANAGED, Engine, builder_memory, host_platform
+from devbox.apple import AppleEngine, builder_memory
+from devbox.engine import MANAGED, RunSpec, host_platform
 from devbox.errors import DevboxError
 
 
@@ -20,7 +21,7 @@ def test_ownership_filter(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 0, json.dumps(data), "")
     )
-    assert [c.id for c in Engine().containers()] == ["ours"]
+    assert [c.id for c in AppleEngine().containers()] == ["ours"]
 
 
 def test_remove_deletes_only_this_containers_volumes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -31,7 +32,7 @@ def test_remove_deletes_only_this_containers_volumes(monkeypatch: pytest.MonkeyP
         calls.append(args)
         return subprocess.CompletedProcess(args, 0, json.dumps(volumes), "")
 
-    engine = Engine()
+    engine = AppleEngine()
     monkeypatch.setattr(engine, "call", call)
     engine.remove("ours")
     assert calls == [
@@ -50,7 +51,7 @@ def test_stopped_service_message(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda *a, **kw: subprocess.CompletedProcess(a, 0, "apiserver is not running", ""),
     )
     with pytest.raises(DevboxError, match="container system start"):
-        Engine().require_running()
+        AppleEngine().require_running()
 
 
 def test_connect_replaces_process_and_strips_outer_tmux(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -58,7 +59,7 @@ def test_connect_replaces_process_and_strips_outer_tmux(monkeypatch: pytest.Monk
     monkeypatch.setenv("TMUX", "/host/socket,1,0")
     monkeypatch.setattr("shutil.which", lambda name: "/bin/container")
     monkeypatch.setattr(os, "execvpe", lambda *a: calls.append(a))
-    Engine().connect("ours", "tmux", "attach-session", "-t", "agent")
+    AppleEngine().connect("ours", "tmux", "attach-session", "-t", "agent")
     executable, argv, env = calls[0]
     assert executable == "/bin/container"
     assert argv == [
@@ -101,3 +102,43 @@ def test_builder_memory_is_validated(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEVBOX_BUILDER_MEMORY", "lots")
     with pytest.raises(DevboxError, match="DEVBOX_BUILDER_MEMORY"):
         builder_memory()
+
+
+def test_apple_run_translates_spec(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+    engine = AppleEngine()
+    monkeypatch.setattr(engine, "call", lambda *a, **kw: calls.append(a))
+    engine.run(
+        RunSpec(
+            name="devbox-1",
+            image="img:latest",
+            cpus=2,
+            memory="4G",
+            labels={MANAGED: "1"},
+            binds=(("/src", "/src"),),
+            volumes=(("devbox-1-0", "/src/.venv"),),
+            env={"A": "b"},
+        )
+    )
+    assert calls == [
+        (
+            "run",
+            "--detach",
+            "--init",
+            "--name",
+            "devbox-1",
+            "--cpus",
+            "2",
+            "--memory",
+            "4G",
+            "--label",
+            f"{MANAGED}=1",
+            "--mount",
+            "type=bind,source=/src,target=/src",
+            "--env",
+            "A=b",
+            "--mount",
+            "type=volume,source=devbox-1-0,target=/src/.venv",
+            "img:latest",
+        )
+    ]

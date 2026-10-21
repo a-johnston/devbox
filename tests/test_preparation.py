@@ -9,8 +9,8 @@ import pytest
 from test_app import FakeEngine
 
 from devbox.app import App
+from devbox.apple import AppleEngine
 from devbox.config import Harness, Project
-from devbox.engine import Engine
 from devbox.errors import DevboxError
 from devbox.state import Store, build_files, host_version
 
@@ -100,7 +100,7 @@ def test_builder_stopped_on_failure_or_cancellation(
 
 
 def test_image_lookup_does_not_misclassify_service_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    engine = Engine()
+    engine = AppleEngine()
     monkeypatch.setattr(
         engine,
         "call",

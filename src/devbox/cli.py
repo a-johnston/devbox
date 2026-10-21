@@ -313,7 +313,7 @@ def dispatch(args: argparse.Namespace, app: App) -> None:
             require_terminal()
             getattr(app, args.action)(container)
         elif args.action == "stop":
-            app.engine.call("stop", container.id)
+            app.engine.stop(container.id)
             print(f"Stopped {container.id}. Conversation files retained; the live process is gone.")
         elif args.action == "rm":
             app.engine.remove(container.id)

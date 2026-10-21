@@ -6,14 +6,15 @@ from typing import Any
 
 import pytest
 
-from devbox.app import App, accent, mount, tmux_config
+from devbox.app import App, accent, tmux_config
+from devbox.apple import AppleEngine
 from devbox.config import Harness, Project
-from devbox.engine import Container, Engine
+from devbox.engine import Container, mount
 from devbox.errors import DevboxError
 from devbox.state import Session, Store
 
 
-class FakeEngine(Engine):
+class FakeEngine(AppleEngine):
     def __init__(self) -> None:
         super().__init__()
         self.calls: list[tuple[str, ...]] = []

@@ -1,17 +1,16 @@
-"""A deliberately small adapter to Apple's container CLI."""
+"""The small container-engine interface App uses, and the CLI plumbing its backends share."""
 
 from __future__ import annotations
 
-import json
 import os
 import platform
 import shutil
 import subprocess
+from abc import ABC, abstractmethod
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
-from devbox.config import size
 from devbox.errors import DevboxError
 
 MANAGED = "dev.devbox.managed"
@@ -31,9 +30,10 @@ def host_platform() -> str:
     return PLATFORMS[machine.lower()]
 
 
-def builder_memory() -> str:
-    """A host concern, not a project one: the builder is shared by every project."""
-    return size(os.environ.get("DEVBOX_BUILDER_MEMORY", "4G"), "DEVBOX_BUILDER_MEMORY")
+def mount(source: Path | str, target: str, *, type: str = "bind") -> tuple[str, str]:
+    if any(c in str(source) + target for c in ",\n\r"):
+        raise DevboxError("Mount paths cannot contain commas or newlines")
+    return "--mount", f"type={type},source={source},target={target}"
 
 
 @dataclass(frozen=True)
@@ -45,9 +45,26 @@ class Container:
     created: str
 
 
-class Engine:
-    def __init__(self, executable: str = "container") -> None:
-        self.executable = executable
+@dataclass(frozen=True)
+class RunSpec:
+    name: str
+    image: str
+    cpus: int
+    memory: str
+    labels: dict[str, str]
+    # (host source, guest target) and (volume name, guest target), in mount order.
+    binds: tuple[tuple[str, str], ...]
+    volumes: tuple[tuple[str, str], ...]
+    env: dict[str, str]
+
+
+class Engine(ABC):
+    executable: str
+    install_hint: str
+    # How the guest is isolated from the host, as told to the agent.
+    isolation: str
+    # Backend-specific `run` flags, placed before the shared ones.
+    run_options: tuple[str, ...] = ()
 
     def call(
         self,
@@ -65,27 +82,23 @@ class Engine:
                 env={**os.environ, **env} if env else None,
             )
         except FileNotFoundError as exc:
-            raise DevboxError(
-                "Apple's container CLI is required: https://github.com/apple/container"
-            ) from exc
+            raise DevboxError(self.install_hint) from exc
         if check and result.returncode:
             detail = (result.stderr or "").strip() if capture else "See output above."
-            raise DevboxError(f"container {args[0]} failed: {detail}")
+            raise DevboxError(f"{self.executable} {args[0]} failed: {detail}")
         return result
 
-    def require_running(self) -> None:
-        result = self.call("system", "status", check=False)
-        if result.returncode or "not running" in result.stdout:
-            raise DevboxError("Start Apple's container service first: container system start")
+    @abstractmethod
+    def require_running(self) -> None: ...
 
-    def image_exists(self, reference: str) -> bool:
-        result = self.call("image", "inspect", reference, check=False)
-        if result.returncode == 0:
-            return True
-        if "image not found:" in result.stderr.lower():
-            return False
-        raise DevboxError(f"Cannot check prepared image: {result.stderr.strip()}")
+    @abstractmethod
+    def image_exists(self, reference: str) -> bool: ...
 
+    @abstractmethod
+    def building(self) -> AbstractContextManager[None]:
+        """Wraps a sequence of builds, for engines that need a builder service."""
+
+    @abstractmethod
     def build(
         self,
         tag: str,
@@ -95,66 +108,45 @@ class Engine:
         *,
         platform: str,
         cpus: int,
-    ) -> None:
-        """Starts the builder if needed; the resources apply to (and may restart) it."""
-        flags = [flag for key, value in args.items() for flag in ("--build-arg", f"{key}={value}")]
-        self.call(
-            "build",
-            "--platform",
-            platform,
-            "--memory",
-            builder_memory(),
-            "--cpus",
-            str(cpus),
-            "--tag",
-            tag,
-            "--file",
-            str(file),
-            *flags,
-            str(context),
-            capture=False,
-        )
+    ) -> None: ...
 
-    def builder_running(self) -> bool:
-        result = self.call("builder", "status", "--format", "json", check=False)
-        try:
-            return any(row["status"]["state"] == "running" for row in json.loads(result.stdout))
-        except (ValueError, KeyError, TypeError):
-            return False
-
+    @abstractmethod
     def container_ids(self) -> set[str]:
         """All containers, including stopped and differently labelled ones, protect saved state."""
-        result = self.call("list", "--all", "--format", "json")
-        try:
-            rows = json.loads(result.stdout)
-            if not isinstance(rows, list) or any(
-                not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"]
-                for row in rows
-            ):
-                raise ValueError("Expected container IDs")
-            return {row["id"] for row in rows}
-        except (ValueError, TypeError) as exc:
-            raise DevboxError(
-                "Cannot safely determine existing containers; refusing cleanup"
-            ) from exc
 
+    @abstractmethod
     def containers(self) -> list[Container]:
-        result = self.call("list", "--all", "--format", "json")
-        try:
-            rows: list[dict[str, Any]] = json.loads(result.stdout)
-            return [
-                Container(
-                    row["id"],
-                    row["status"]["state"],
-                    row["configuration"]["labels"].get("dev.devbox.project", "?"),
-                    row["configuration"]["labels"].get("dev.devbox.harness", "?"),
-                    row["configuration"].get("creationDate", "?"),
-                )
-                for row in rows
-                if row["configuration"].get("labels", {}).get(MANAGED) == "1"
-            ]
-        except (ValueError, KeyError, TypeError) as exc:
-            raise DevboxError("Unexpected container JSON; devbox requires container 1.5+") from exc
+        """Only containers carrying our ownership label."""
+
+    @abstractmethod
+    def remove(self, id: str) -> None:
+        """Delete a container and only its own artifact volumes."""
+
+    def run(self, spec: RunSpec) -> None:
+        flags = [
+            *(flag for key, value in spec.labels.items() for flag in ("--label", f"{key}={value}")),
+            *(flag for source, target in spec.binds for flag in mount(source, target)),
+            *(flag for key, value in spec.env.items() for flag in ("--env", f"{key}={value}")),
+            *(
+                flag
+                for source, target in spec.volumes
+                for flag in mount(source, target, type="volume")
+            ),
+        ]
+        self.call(
+            "run",
+            "--detach",
+            "--init",
+            "--name",
+            spec.name,
+            *self.run_options,
+            "--cpus",
+            str(spec.cpus),
+            "--memory",
+            spec.memory,
+            *flags,
+            spec.image,
+        )
 
     def exec(
         self,
@@ -172,7 +164,7 @@ class Engine:
         """Replace the wrapper; detaching the tmux client returns to the host shell."""
         executable = shutil.which(self.executable)
         if executable is None:
-            raise DevboxError("container executable not found")
+            raise DevboxError(self.install_hint)
         # Do not leak the outer tmux socket/name into the inner client.
         env = dict(os.environ)
         env.pop("TMUX", None)
@@ -181,17 +173,11 @@ class Engine:
             executable, [executable, "exec", "-it", "--user", "agent", *flags, id, *args], env
         )
 
-    def remove(self, id: str) -> None:
-        """Delete a container and the artifact volumes named after it."""
-        self.call("stop", id, check=False)
-        self.call("delete", id)
-        for volume in self.volumes(id):
-            self.call("volume", "delete", volume)
+    def stop(self, id: str) -> None:
+        self.call("stop", id)
 
-    def volumes(self, id: str) -> list[str]:
-        result = self.call("volume", "list", "--format", "json")
-        try:
-            names = [row["id"] for row in json.loads(result.stdout)]
-        except (ValueError, KeyError, TypeError) as exc:
-            raise DevboxError("Unexpected volume JSON") from exc
-        return [name for name in names if name.startswith(f"{id}-")]
+
+def select_engine() -> Engine:
+    from devbox.apple import AppleEngine
+
+    return AppleEngine()

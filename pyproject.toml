@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Disposable Apple containers for coding harnesses, with durable conversations"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "argcomplete>=3.6",
+]
 
 [project.scripts]
 agentbox = "agentbox.cli:main"

@@ -20,6 +20,15 @@ container system start                 # first start may offer the recommended k
 
 The Python package supports 3.12+. `uv run` in this checkout uses `.python-version` (3.15).
 
+### Guest image compatibility
+
+The built-in runtime and Pi layers require a **Debian/Ubuntu-style glibc image with `apt-get`**.
+They install packages with apt and the Pi layer copies a glibc-linked Node executable from Debian.
+Alpine/musl and non-apt distributions are not currently supported: changing only the project's
+`FROM` line is insufficient. Supporting them requires adapting both the runtime and harness layers,
+including their utilities and binary dependencies. This is an Agentbox layer constraint, not a
+limitation of Apple's `container` or the OCI image format.
+
 ## Use
 
 ```sh
@@ -40,6 +49,32 @@ agentbox resume [session-id]             # snapshot + fork into a NEW container
 agentbox build pi                       # explicitly prepare/rebuild the environment
 agentbox build pi --keep-builder        # opt out of owned-builder cleanup
 ```
+
+Command names accept unique prefixes: `agentbox n pi` means `agentbox new pi`, `b` means `build`,
+and `re` means `resume`. Exact command names always win; ambiguous prefixes such as `r` (`rm`,
+`resume`) or `s` (`shell`, `stop`, `sessions`) fail without performing an action. Prefer full command
+names in scripts, since adding commands can make a previously unique prefix ambiguous.
+
+### Shell completion
+
+Completion is included for commands, options and filesystem paths. Add the appropriate line to your
+shell startup file after Agentbox is on PATH:
+
+```sh
+# Bash (~/.bashrc)
+eval "$(agentbox completion bash)"
+
+# Zsh (~/.zshrc); initialize completion first if your shell setup hasn't already.
+autoload -Uz compinit && compinit
+eval "$(agentbox completion zsh)"
+
+# Fish (~/.config/fish/config.fish)
+agentbox completion fish | source
+```
+
+Restart the shell or source its startup file. Prefix commands also support completion, for example
+`agentbox n --<TAB>`. Completion does not start the container service or change saved state; live
+container/session IDs are not dynamically completed.
 
 Omitting a harness, container ID or session ID opens fzf. Explicit arguments bypass pickers.
 Selection requires a terminal; there is no hidden prompt in noninteractive invocations. `new` and

@@ -1,5 +1,7 @@
 """Small argparse CLI; explicit arguments work without a terminal or fzf."""
 
+# PYTHON_ARGCOMPLETE_OK
+
 from __future__ import annotations
 
 import argparse
@@ -11,6 +13,8 @@ import sys
 from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from pathlib import Path
+
+import argcomplete
 
 from agentbox import __version__
 from agentbox.app import App
@@ -90,11 +94,34 @@ def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Coding harnesses in disposable Apple containers")
     p.add_argument("--version", action="version", version=__version__)
     p.add_argument("--state-dir", type=Path, help="Override the durable state directory")
-    commands = p.add_subparsers(dest="action", required=True)
+    names = (
+        "new",
+        "build",
+        "attach",
+        "shell",
+        "stop",
+        "rm",
+        "ls",
+        "sessions",
+        "resume",
+        "kill-all",
+        "completion",
+    )
+    commands = p.add_subparsers(dest="action", required=True, metavar="{" + ",".join(names) + "}")
+
+    def add_command(name: str, help: str | None = None) -> argparse.ArgumentParser:
+        # Use argparse's native aliases so option values and IDs are never rewritten.
+        aliases = [
+            name[:length]
+            for length in range(1, len(name))
+            if sum(other.startswith(name[:length]) for other in names) == 1
+        ]
+        command = commands.add_parser(name, aliases=aliases, help=help)
+        command.set_defaults(action=name)
+        return command
+
     for name in ("new", "build"):
-        command = commands.add_parser(
-            name, help=f"{name.capitalize()} a project/harness environment"
-        )
+        command = add_command(name, help=f"{name.capitalize()} a project/harness environment")
         command.add_argument("harness", nargs="?")
         command.add_argument("--project", type=Path, default=Path("."))
         command.add_argument(
@@ -110,12 +137,12 @@ def parser() -> argparse.ArgumentParser:
         if name == "new":
             command.add_argument("--detach", action="store_true", help="Create without attaching")
     for name in ("attach", "shell", "stop", "rm"):
-        command = commands.add_parser(name)
+        command = add_command(name)
         command.add_argument("id", nargs="?", help="Full or unambiguous short container ID")
     for name in ("ls", "sessions"):
-        command = commands.add_parser(name)
+        command = add_command(name)
         command.add_argument("--json", action="store_true")
-    command = commands.add_parser("resume", help="Fork a saved conversation into a new container")
+    command = add_command("resume", help="Fork a saved conversation into a new container")
     command.add_argument("session", nargs="?")
     command.add_argument(
         "--project", type=Path, help="Override the saved project's working directory"
@@ -123,10 +150,12 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--detach", action="store_true")
     command.add_argument("--no-config", action="store_true")
     command.add_argument("--keep-builder", action="store_true")
-    command = commands.add_parser(
+    command = add_command(
         "kill-all", help="Stop/remove only managed containers; retain saved history"
     )
     command.add_argument("--yes", action="store_true", help="Skip confirmation")
+    command = add_command("completion", help="Print shell completion setup")
+    command.add_argument("shell", choices=("bash", "zsh", "fish"))
     return p
 
 
@@ -223,8 +252,13 @@ def dispatch(args: argparse.Namespace, app: App) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     os.umask(0o077)
     try:
-        args = parser().parse_args(argv)
-        dispatch(args, App(store=Store(args.state_dir)))
+        command_parser = parser()
+        argcomplete.autocomplete(command_parser)
+        args = command_parser.parse_args(argv)
+        if args.action == "completion":
+            print(argcomplete.shellcode(["agentbox"], shell=args.shell))
+        else:
+            dispatch(args, App(store=Store(args.state_dir)))
     except (AgentboxError, OSError) as exc:
         print(f"agentbox: {exc}", file=sys.stderr)
         return 1

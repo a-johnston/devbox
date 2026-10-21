@@ -15,6 +15,7 @@ from devbox.config import ASSETS, Harness, Project, git_output, relative
 from devbox.engine import MANAGED, Container, Engine, host_platform
 from devbox.errors import DevboxError
 from devbox.state import (
+    Instance,
     Session,
     Store,
     build_files,
@@ -330,6 +331,21 @@ class App:
             raise DevboxError(f"{container.id} is stopped")
         metadata = self.store.metadata(container.id)
         self.engine.connect(container.id, "/bin/bash", cwd=metadata["project"])
+
+    def orphaned_instances(self) -> list[Instance]:
+        self.engine.require_running()
+        return self.store.orphaned(self.engine.container_ids())
+
+    def cleanup(self, instances: list[Instance]) -> tuple[int, int]:
+        # Recheck after confirmation. Never add newly discovered instances to the selection.
+        current = {instance.id: instance for instance in self.orphaned_instances()}
+        removed = recovered = 0
+        for id in dict.fromkeys(instance.id for instance in instances):
+            if id in current:
+                self.store.remove_instance(id)
+                removed += 1
+                recovered += current[id].size
+        return removed, recovered
 
     def kill_all(self) -> int:
         containers = self.engine.containers()

@@ -117,6 +117,22 @@ class Engine:
         except (ValueError, KeyError, TypeError):
             return False
 
+    def container_ids(self) -> set[str]:
+        """All containers, including stopped and differently labelled ones, protect saved state."""
+        result = self.call("list", "--all", "--format", "json")
+        try:
+            rows = json.loads(result.stdout)
+            if not isinstance(rows, list) or any(
+                not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"]
+                for row in rows
+            ):
+                raise ValueError("Expected container IDs")
+            return {row["id"] for row in rows}
+        except (ValueError, TypeError) as exc:
+            raise DevboxError(
+                "Cannot safely determine existing containers; refusing cleanup"
+            ) from exc
+
     def containers(self) -> list[Container]:
         result = self.call("list", "--all", "--format", "json")
         try:

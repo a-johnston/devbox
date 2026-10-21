@@ -22,12 +22,14 @@ from devbox.app import App
 from devbox.config import Harness, Project, harnesses
 from devbox.engine import Container
 from devbox.errors import DevboxError
-from devbox.state import Session, Store
+from devbox.state import Instance, Session, Store
 
 
-def require_terminal() -> None:
+def require_terminal(
+    message: str = "A terminal is required; supply an ID/harness, or use new --detach",
+) -> None:
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        raise DevboxError("A terminal is required; supply an ID/harness, or use new --detach")
+        raise DevboxError(message)
 
 
 def select[T](items: Sequence[T], prompt: str, label: Callable[[T], str]) -> T:
@@ -57,6 +59,79 @@ def select[T](items: Sequence[T], prompt: str, label: Callable[[T], str]) -> T:
     if result.returncode:
         raise DevboxError("fzf failed")
     return items[int(result.stdout.split("\t", 1)[0])]
+
+
+def select_many[T](items: Sequence[T], prompt: str, label: Callable[[T], str]) -> list[T]:
+    require_terminal()
+    if shutil.which("fzf") is None:
+        raise DevboxError("Interactive selection requires fzf")
+    rows = [f"{i}\t{label(item)}" for i, item in enumerate(items)]
+    result = subprocess.run(
+        [
+            "fzf",
+            "-m",
+            "--delimiter=\t",
+            "--with-nth=2..",
+            "--prompt",
+            f"{prompt}> ",
+            "--header=Tab to select; Enter to review; Esc to cancel",
+            "--height=60%",
+            "--reverse",
+        ],
+        input="\n".join(rows) + "\n",
+        text=True,
+        stdout=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode == 130:
+        raise KeyboardInterrupt
+    if result.returncode == 1:
+        return []
+    if result.returncode:
+        raise DevboxError("fzf failed")
+    return [items[int(row.split("\t", 1)[0])] for row in result.stdout.splitlines()]
+
+
+def format_size(size: int) -> str:
+    value = float(size)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024 or unit == "TiB":
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    raise AssertionError("unreachable")
+
+
+def cleanup(app: App, *, select: bool) -> None:
+    instances = app.orphaned_instances()
+    if not instances:
+        print("No orphaned instances.")
+        return
+
+    def label(instance: Instance) -> str:
+        return f"{instance.id}  ~{format_size(instance.size)}"
+
+    if select:
+        instances = select_many(instances, "Orphaned instances", label)
+    if not instances:
+        print("No instances selected.")
+        return
+    print(f"Orphaned instances in {app.store.instances}:")
+    for instance in instances:
+        print(f"  {label(instance)}")
+    print("This permanently deletes their saved conversations, copied credentials and home files.")
+    require_terminal("Cleanup requires a terminal for confirmation")
+    size = format_size(sum(instance.size for instance in instances))
+    try:
+        answer = input(f"Delete {len(instances)} instances (~{size})? [y/N] ")
+    except EOFError:
+        answer = ""
+    if answer.strip().lower() != "y":
+        print("Cancelled. No instances removed.")
+        return
+    removed, recovered = app.cleanup(instances)
+    print(f"Removed {removed} instances; approximately {format_size(recovered)} recovered.")
+    if removed < len(instances):
+        print("Instances that now have containers or no longer exist were skipped.")
 
 
 def match[T](
@@ -146,6 +221,14 @@ def parser() -> argparse.ArgumentParser:
         "kill-all", help="Stop/remove only managed containers; retain saved history"
     )
     command.add_argument("--yes", action="store_true", help="Skip confirmation")
+    command = commands.add_parser(
+        "cleanup", help="Delete saved instances without containers, including their conversations"
+    )
+    command.add_argument(
+        "--select",
+        action="store_true",
+        help="Choose instances with fzf multi-select before confirming",
+    )
     command = commands.add_parser("completion", help="Print shell completion setup")
     command.add_argument("shell", choices=("bash", "zsh", "fish"))
     return p
@@ -161,6 +244,9 @@ def get_harness(name: str | None) -> Harness:
 
 
 def dispatch(args: argparse.Namespace, app: App) -> None:
+    if args.action == "cleanup":
+        cleanup(app, select=args.select)
+        return
     if args.action in ("new", "build"):
         harness = get_harness(args.harness)
         project = Project.discover(args.project)

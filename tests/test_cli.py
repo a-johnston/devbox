@@ -68,6 +68,8 @@ def test_completion_script_does_not_create_state(
     [
         ("devbox n", "new"),
         ("devbox re", "resume"),
+        ("devbox cl", "cleanup"),
+        ("devbox cleanup --", "--select"),
         ("devbox ", "completion"),
         ("devbox --st", "--state-dir"),
         ("devbox new --", "--detach"),

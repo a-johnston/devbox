@@ -37,6 +37,8 @@ devbox shell [id]                     # plain non-root shell for inspection
 devbox stop [id]                      # stops processes; container disk is kept
 devbox rm [id]                        # removes the container and its artifact volumes
 devbox kill-all [--yes]
+devbox cleanup                          # confirm deletion of saved instances without containers
+devbox cleanup --select                 # choose a subset with fzf multi-select, then confirm
 devbox sessions                       # saved conversations, including from removed containers
 devbox resume [session-id]            # fork a saved conversation into a new container
 devbox build pi                       # rebuild the environment image
@@ -145,8 +147,16 @@ instances/<id>/
 ```
 
 Removing containers never removes this state. `resume` snapshots a session into a new instance and
-the harness forks it, so the original never has two writers. Delete an instance directory yourself
-to discard its conversations **and copied credentials**.
+the harness forks it, so the original never has two writers.
+
+`devbox cleanup` lists saved instances whose containers no longer exist and asks before permanently
+deleting their homes, **including conversations and copied credentials**. Use `--select` to choose
+only some instances with `fzf` multi-select (Tab to mark, Enter to review). Declining or cancelling
+deletes nothing. Instances with running **or stopped** containers are kept; the container service
+must be available to check, and containers are checked again after confirmation. The command reports
+the number removed and approximate disk space recovered, based on allocated blocks without following
+symlinks. Filesystem compression, shared/cloned blocks and snapshots can affect actual free space.
+Cleanup only deletes saved instance directories; it does not remove containers, images or volumes.
 
 The `resume` picker and `sessions` list show aligned columns for the harness, project, title,
 then the full session ID (explicit IDs and prefixes still work as before):

@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 from collections.abc import Callable, Iterator
 from contextlib import suppress
@@ -26,6 +27,12 @@ class Session:
     project: str
     path: Path
     title: str | None = None
+
+
+@dataclass(frozen=True)
+class Instance:
+    id: str
+    size: int
 
 
 class Store:
@@ -62,6 +69,39 @@ class Store:
             return json.loads((self.directory(id) / "metadata.json").read_text())
         except (OSError, ValueError) as exc:
             raise DevboxError(f"Cannot read saved state for {id}") from exc
+
+    def _instance_directories(self) -> list[Path]:
+        if self.instances.is_symlink():
+            raise DevboxError(
+                f"Refusing to clean a symlinked instances directory: {self.instances}"
+            )
+        if not self.instances.exists():
+            return []
+        return [
+            directory
+            for directory in sorted(self.instances.iterdir())
+            if not directory.is_symlink()
+            and directory.is_dir()
+            and not (directory / "metadata.json").is_symlink()
+            and (
+                (directory / "metadata.json").is_file()
+                # A failed launch may leave a home before metadata has been written.
+                or ((directory / "home").is_dir() and not (directory / "home").is_symlink())
+            )
+        ]
+
+    def orphaned(self, container_ids: set[str]) -> list[Instance]:
+        return [
+            Instance(directory.name, disk_usage(directory))
+            for directory in self._instance_directories()
+            if directory.name not in container_ids
+        ]
+
+    def remove_instance(self, id: str) -> None:
+        # Only real, immediate instance directories qualify; never trust metadata paths.
+        if id not in {directory.name for directory in self._instance_directories()}:
+            raise DevboxError(f"Not a removable instance: {id}")
+        shutil.rmtree(self.instances / id)
 
     def sessions(self) -> list[Session]:
         if not self.instances.exists():
@@ -100,6 +140,24 @@ class Store:
                     )
                 )
         return sessions
+
+
+def disk_usage(directory: Path) -> int:
+    """Approximate allocated bytes, without following prepared-directory or user symlinks."""
+    total = 0
+    seen = set()
+    pending = [directory]
+    while pending:
+        path = pending.pop()
+        info = path.lstat()
+        inode = (info.st_dev, info.st_ino)
+        if inode in seen:
+            continue
+        seen.add(inode)
+        total += info.st_blocks * 512
+        if stat.S_ISDIR(info.st_mode):
+            pending.extend(path.iterdir())
+    return total
 
 
 def run_hook(harness: Harness, name: str, *args: Any) -> Any:

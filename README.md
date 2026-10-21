@@ -110,8 +110,9 @@ directories are dropped with a notice. macOS keeps Claude credentials in the Key
 `/login` inside each new container. The CLI version is pinned in its Containerfile and the
 in-container auto-updater is disabled.
 
-Only Git `user.name`/`user.email` are passed in (as `GIT_AUTHOR_*`/`GIT_COMMITTER_*`). No host
-environment is forwarded beyond what the manifest and profile declare.
+Only Git `user.name`/`user.email` (as `GIT_AUTHOR_*`/`GIT_COMMITTER_*`) and `COLORTERM` are passed
+in; the manifest and profile can override `COLORTERM`. No other host environment is forwarded beyond
+what they declare.
 
 ## Saved state
 

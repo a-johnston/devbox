@@ -20,4 +20,3 @@ artifacts = [".venv", ".pytest_cache", ".ruff_cache", "dist", ".worktrees"]
 [environment]
 UV_LINK_MODE = "copy"                   # uv cache and .venv are on different filesystems
 PYTHONDONTWRITEBYTECODE = "1"           # keep __pycache__ out of the shared tree
-COLORTERM = "truecolor"

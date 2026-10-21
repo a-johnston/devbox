@@ -1,5 +1,6 @@
 import json
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -174,3 +175,21 @@ def test_accent_is_stable_and_status_cannot_inject_tmux_commands() -> None:
 def test_mount_rejects_cli_delimiters(path: str) -> None:
     with pytest.raises(AgentboxError):
         mount(Path(path), "/workspace")
+
+
+def test_colorterm_is_inherited_unless_overridden(
+    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COLORTERM", "truecolor")
+    monkeypatch.setenv("SECRET_TOKEN", "hunter2")
+    engine = FakeEngine()
+    app = App(engine, Store(tmp_path / "state"))
+    app.new(project, harness, no_config=True)
+    run = next(call for call in engine.calls if call[0] == "run")
+    assert "COLORTERM=truecolor" in run
+    assert not any("SECRET_TOKEN" in arg for arg in run)
+    engine.calls.clear()
+    app.new(replace(project, env={"COLORTERM": "24bit"}), harness, no_config=True)
+    run = next(call for call in engine.calls if call[0] == "run")
+    assert "COLORTERM=24bit" in run
+    assert "COLORTERM=truecolor" not in run

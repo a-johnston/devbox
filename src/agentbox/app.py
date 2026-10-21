@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -24,6 +25,8 @@ from agentbox.state import (
 
 PREPARED = PurePosixPath("/opt/agentbox/prepared")
 PALETTE = (24, 25, 29, 53, 60, 88, 94, 96, 130)
+# Terminal capabilities the guest cannot detect itself; manifests and profiles override them.
+INHERITED = ("COLORTERM",)
 
 
 def mount(source: Path | str, target: str, *, type: str = "bind") -> tuple[str, str]:
@@ -132,7 +135,8 @@ class App:
             raise AgentboxError("Keep agentbox state outside the shared project directory")
         if session and not harness.resume_args:
             raise AgentboxError(f"{harness.name} does not support local session resumption")
-        env = {**project.env, **harness.env}
+        inherited = {key: os.environ[key] for key in INHERITED if key in os.environ}
+        env = {**inherited, **project.env, **harness.env}
         self.engine.require_running()
         files = build_files(harness, no_config=no_config)
         image = self._prepared_image(project, harness, files)

@@ -92,7 +92,6 @@ class Project:
     env: dict[str, str]
     cpus: int = 4
     memory: str = "8G"
-    builder_memory: str = "4G"
 
     @classmethod
     def discover(cls, directory: Path) -> Project:
@@ -118,7 +117,6 @@ class Project:
         image = table(data.get("image", {}), "image")
         workspace = table(data.get("workspace", {}), "workspace")
         container = table(data.get("container", {}), "container")
-        builder = table(data.get("builder", {}), "builder")
         context = (config.parent / text(image.get("context", "."), "image.context")).resolve()
         containerfile = (
             config.parent / text(image.get("containerfile", "Containerfile"), "image.containerfile")
@@ -143,7 +141,6 @@ class Project:
             environment(data.get("environment", {})),
             cpus,
             size(container.get("memory", "8G"), "container.memory"),
-            size(builder.get("memory", "4G"), "builder.memory"),
         )
 
 

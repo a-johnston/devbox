@@ -57,11 +57,13 @@ def test_invalid_package_settings_fail_before_build(harness: Harness, packages: 
 
 
 def test_explicit_build_rebuilds_with_builder_memory(
-    project: Project, harness: Harness, tmp_path: Path
+    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
-    first = app.build(replace(project, memory="8G", builder_memory="2G"), harness)
+    monkeypatch.setenv("DEVBOX_BUILDER_MEMORY", "2G")
+    first = app.build(project, harness)
+    monkeypatch.delenv("DEVBOX_BUILDER_MEMORY")
     assert app.build(project, harness) == first
     builds = [c for c in engine.calls if c[0] == "build"]
     assert [c[c.index("--memory") + 1] for c in builds] == ["2G"] * 3 + ["4G"] * 3

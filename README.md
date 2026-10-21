@@ -62,9 +62,6 @@ context = ".devbox"                  # keep source and .git out of the build con
 cpus = 4
 memory = "8G"
 
-[builder]
-memory = "4G"
-
 [workspace]
 artifacts = [".godot", "tests/bin", "tests/obj", ".worktrees"]
 
@@ -97,6 +94,7 @@ The first `new` builds the project, runtime and harness layers into a prepared i
 reuse it without starting the builder. Run `devbox build <harness>` after changing a Containerfile,
 build context or Devbox itself; it also refreshes unpinned harness packages. If Devbox starts
 the builder, it stops it again afterwards. A builder that was already running is left running.
+On macOS the builder gets `DEVBOX_BUILDER_MEMORY` (default `4G`).
 
 Pi and Claude Code install the same version as `pi --version`/`claude --version` on the host, so
 upgrading on the host prepares a matching image at the next launch. Without a host installation,

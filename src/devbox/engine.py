@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from devbox.config import size
 from devbox.errors import DevboxError
 
 MANAGED = "dev.devbox.managed"
@@ -28,6 +29,11 @@ def host_platform() -> str:
     if machine.lower() not in PLATFORMS:
         raise DevboxError(f"Unsupported host architecture: {machine!r}")
     return PLATFORMS[machine.lower()]
+
+
+def builder_memory() -> str:
+    """A host concern, not a project one: the builder is shared by every project."""
+    return size(os.environ.get("DEVBOX_BUILDER_MEMORY", "4G"), "DEVBOX_BUILDER_MEMORY")
 
 
 @dataclass(frozen=True)
@@ -88,7 +94,6 @@ class Engine:
         args: dict[str, str],
         *,
         platform: str,
-        memory: str,
         cpus: int,
     ) -> None:
         """Starts the builder if needed; the resources apply to (and may restart) it."""
@@ -98,7 +103,7 @@ class Engine:
             "--platform",
             platform,
             "--memory",
-            memory,
+            builder_memory(),
             "--cpus",
             str(cpus),
             "--tag",

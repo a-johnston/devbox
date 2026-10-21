@@ -9,9 +9,6 @@ context = ".devbox"                   # keep source, .git and worktrees out of b
 cpus = 4
 memory = "8G"
 
-[builder]
-memory = "4G"
-
 [workspace]
 # Container-local volumes over these paths. .worktrees keeps guest-created worktrees
 # (and their outputs) in the VM: commit before `devbox rm`.

@@ -147,7 +147,6 @@ class App:
                         source,
                         layer_args,
                         platform=host_platform(),
-                        memory=project.builder_memory,
                         cpus=project.cpus,
                     )
         finally:

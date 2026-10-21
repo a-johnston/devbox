@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from devbox.engine import MANAGED, Engine, host_platform
+from devbox.engine import MANAGED, Engine, builder_memory, host_platform
 from devbox.errors import DevboxError
 
 
@@ -95,3 +95,9 @@ def test_unsupported_host_platform(monkeypatch: pytest.MonkeyPatch, machine: str
     monkeypatch.setattr("platform.machine", lambda: machine)
     with pytest.raises(DevboxError, match="Unsupported host architecture"):
         host_platform()
+
+
+def test_builder_memory_is_validated(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEVBOX_BUILDER_MEMORY", "lots")
+    with pytest.raises(DevboxError, match="DEVBOX_BUILDER_MEMORY"):
+        builder_memory()

@@ -17,7 +17,7 @@ def test_self_hosting_manifest(tmp_path: Path) -> None:
     assert project.context == tmp_path / ".devbox"
     assert project.artifacts == (".venv", ".pytest_cache", ".ruff_cache", "dist", ".worktrees")
     assert project.env == {"UV_LINK_MODE": "copy", "PYTHONDONTWRITEBYTECODE": "1"}
-    assert (project.cpus, project.memory, project.builder_memory) == (4, "8G", "4G")
+    assert (project.cpus, project.memory) == (4, "8G")
 
 
 def test_discovery_from_subdirectory(repository: Path) -> None:
@@ -109,7 +109,6 @@ def test_overlapping_artifacts_rejected(repository: Path) -> None:
         "\n[container]\ncpus = true\n",
         '\n[container]\nmemory = "garbage"\n',
         "\n[environment]\nX = 3\n",
-        '\n[builder]\nmemory = "garbage"\n',
     ],
 )
 def test_invalid_resources_and_environment(repository: Path, suffix: str) -> None:
@@ -119,12 +118,10 @@ def test_invalid_resources_and_environment(repository: Path, suffix: str) -> Non
         Project.discover(repository)
 
 
-def test_builder_memory_is_independent(repository: Path) -> None:
+def test_builder_table_is_ignored(repository: Path) -> None:
     with (repository / ".devbox.toml").open("a") as stream:
-        stream.write('\n[builder]\nmemory = "2G"\n')
-    project = Project.discover(repository)
-    assert project.builder_memory == "2G"
-    assert project.memory == "8G"
+        stream.write('\n[builder]\nmemory = "garbage"\n')
+    assert not hasattr(Project.discover(repository), "builder_memory")
 
 
 @pytest.mark.parametrize("path", [".pi/agent", ".pi/agent/sessions", ".pi/agent/sessions/cache"])

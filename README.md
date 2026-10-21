@@ -15,6 +15,16 @@ interactive pickers, plus a container engine:
   `sudo pacman -S podman fzf uv`. Your user needs `/etc/subuid` and `/etc/subgid` entries
   (`sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $USER`); there is no
   service to start. `podman info` should report `rootless: true`.
+  If containers or builds fail with `sd-bus call: Process org.freedesktop.systemd1 exited`,
+  Podman can't reach systemd's user bus: make sure `DBUS_SESSION_BUS_ADDRESS` is
+  `unix:path=$XDG_RUNTIME_DIR/bus` (a desktop started with `dbus-run-session` gets a private
+  bus instead). Switching to cgroupfs in `~/.config/containers/containers.conf` also works, but
+  rootless cgroupfs can't enforce `cpus`/`memory` limits, and Devbox warns about that:
+
+  ```toml
+  [engine]
+  cgroup_manager = "cgroupfs"
+  ```
 
 ```sh
 cd ~/code/devbox

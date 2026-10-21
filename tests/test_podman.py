@@ -273,5 +273,24 @@ def test_podman_run_explains_unreachable_systemd(monkeypatch: pytest.MonkeyPatch
         subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 126, "", error)
     )
     spec = RunSpec("devbox-1", "img", 1, "1G", {}, (), (), {})
-    with pytest.raises(DevboxError, match="(?s)sd-bus call.*DBUS_SESSION_BUS_ADDRESS"):
+    with pytest.raises(
+        DevboxError, match=r"(?s)sd-bus call.*DBUS_SESSION_BUS_ADDRESS.*\[engine\] cgroup_manager"
+    ):
         PodmanEngine().run(spec)
+
+
+@pytest.mark.parametrize(
+    "manager,rootless,warned", [("cgroupfs", True, True), ("systemd", True, False)]
+)
+def test_podman_warns_when_rootless_cgroupfs_ignores_limits(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    manager: str,
+    rootless: bool,
+    warned: bool,
+) -> None:
+    info = {"host": {"cgroupManager": manager, "security": {"rootless": rootless}}}
+    engine, _ = engine_with(monkeypatch, {("info",): (0, json.dumps(info), "")})
+    engine.require_running()
+    engine.run(RunSpec("devbox-1", "img", 1, "1G", {}, (), (), {}))
+    assert ("not enforced" in capsys.readouterr().err) is warned

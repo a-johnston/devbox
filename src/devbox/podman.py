@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime
@@ -22,11 +23,20 @@ class PodmanEngine(Engine):
     install_hint = "Podman is required: https://podman.io/docs/installation"
     isolation = "container"
     run_options = ("--userns", AGENT_USERNS)
+    # Rootless cgroupfs cannot delegate controllers, so Podman silently drops --cpus/--memory.
+    limits_ignored = False
 
     def require_running(self) -> None:
         result = self.call("info", "--format", "json", check=False)
         if result.returncode:
             raise DevboxError(f"podman info failed: {result.stderr.strip()}")
+        try:
+            host = json.loads(result.stdout)["host"]
+            self.limits_ignored = (
+                host["cgroupManager"] == "cgroupfs" and host["security"]["rootless"] is True
+            )
+        except (ValueError, KeyError, TypeError):
+            pass
 
     def image_exists(self, reference: str) -> bool:
         result = self.call("image", "exists", reference, check=False)
@@ -74,6 +84,13 @@ class PodmanEngine(Engine):
                 f"{INSTANCE}={spec.name}",
                 name,
             )
+        if self.limits_ignored:
+            print(
+                "Warning: CPU and memory limits are not enforced with Podman's cgroupfs manager;"
+                " reach systemd's user bus to enforce them.",
+                file=sys.stderr,
+                flush=True,
+            )
         try:
             super().run(spec)
         except DevboxError as exc:
@@ -81,8 +98,10 @@ class PodmanEngine(Engine):
                 raise
             raise DevboxError(
                 f"{exc}\nPodman could not reach systemd's user bus to create the container's "
-                "cgroup. Check that DBUS_SESSION_BUS_ADDRESS is unix:path=$XDG_RUNTIME_DIR/bus, "
-                'or set cgroup_manager = "cgroupfs" in ~/.config/containers/containers.conf.'
+                "cgroup. Check that DBUS_SESSION_BUS_ADDRESS is unix:path=$XDG_RUNTIME_DIR/bus "
+                "(a desktop started with dbus-run-session gets a private bus instead). Setting "
+                '[engine] cgroup_manager = "cgroupfs" in ~/.config/containers/containers.conf '
+                "also works, but then CPU and memory limits are not enforced."
             ) from exc
 
     def _rows(self, *filters: str) -> list[dict[str, Any]]:

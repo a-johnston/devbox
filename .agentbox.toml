@@ -36,3 +36,4 @@ prepare_commands = ["git", "uv"]
 # Values must be strings. Default: {}. Never put credentials in this tracked file.
 UV_LINK_MODE = "copy"                   # uv cache and mounted .venv may be on different filesystems.
 PYTHONDONTWRITEBYTECODE = "1"           # Keep __pycache__ files out of the shared source tree.
+COLORTERM = "truecolor"

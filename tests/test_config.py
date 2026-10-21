@@ -17,7 +17,11 @@ def test_self_hosting_manifest(tmp_path: Path) -> None:
     assert project.context == tmp_path / ".agentbox"
     assert project.artifacts == (".venv", ".pytest_cache", ".ruff_cache", "dist")
     assert project.prepare_commands == ("git", "uv")
-    assert project.env == {"UV_LINK_MODE": "copy", "PYTHONDONTWRITEBYTECODE": "1"}
+    assert project.env == {
+        "UV_LINK_MODE": "copy",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "COLORTERM": "truecolor",
+    }
     assert (project.cpus, project.memory, project.builder_memory) == (4, "8G", "4G")
 
 

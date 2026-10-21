@@ -225,6 +225,10 @@ class App:
         }
         (directory / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
         artifacts = [str(project.root / artifact) for artifact in project.artifacts]
+        for artifact in artifacts:
+            # Engines create missing mount points; rootless Podman would leave them owned by
+            # a subordinate UID, blocking host builds there.
+            Path(artifact).mkdir(parents=True, exist_ok=True)
         spec = RunSpec(
             name=id,
             image=image,

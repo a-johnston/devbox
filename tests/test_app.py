@@ -9,7 +9,7 @@ import pytest
 from devbox.app import App, accent, tmux_config
 from devbox.apple import AppleEngine
 from devbox.config import Harness, Project
-from devbox.engine import Container, mount
+from devbox.engine import Container, RunSpec, mount
 from devbox.errors import DevboxError
 from devbox.state import Session, Store
 
@@ -227,3 +227,19 @@ def test_describes_the_engine_isolation(
     id = app.new(project, harness, no_config=True)
     text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()
     assert f"devbox instance {id}, a Linux ARM64 container, as a non-root user." in text
+
+
+def test_missing_artifact_mount_points_are_created_by_the_host_user(
+    project: Project, harness: Harness, tmp_path: Path
+) -> None:
+    # Otherwise the engine creates them, as a subordinate UID under rootless Podman.
+    assert not (project.root / "tests/bin").exists()
+    created = []
+
+    class Recording(FakeEngine):
+        def run(self, spec: RunSpec) -> None:
+            created.extend((project.root / a).is_dir() for a in project.artifacts)
+            super().run(spec)
+
+    App(Recording(), Store(tmp_path / "state")).new(project, harness, no_config=True)
+    assert created == [True] * len(project.artifacts)

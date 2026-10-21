@@ -20,6 +20,9 @@ container system start                 # first start may offer the recommended k
 
 The Python package supports 3.12+. `uv run` in this checkout uses `.python-version` (3.15).
 
+**Optional:** [Enable shell completion](#shell-completion) after installing Agentbox. This is a
+one-time shell setup; `uv tool install` does not register completions automatically.
+
 ### Guest image compatibility
 
 The built-in runtime and Pi layers require a **Debian/Ubuntu-style glibc image with `apt-get`**.
@@ -58,7 +61,7 @@ names in scripts, since adding commands can make a previously unique prefix ambi
 ### Shell completion
 
 Completion is included for commands, options and filesystem paths. Add the appropriate line to your
-shell startup file after Agentbox is on PATH:
+shell startup file after Agentbox is on PATH. This setup continues to work across Agentbox upgrades:
 
 ```sh
 # Bash (~/.bashrc)

@@ -1,321 +1,153 @@
 # agentbox
 
-Run coding harnesses inside lightweight Linux ARM64 VMs using [Apple's `container`](https://github.com/apple/container).
-The project stays writable at its original path; the rest of your home stays outside the VM.
-Pi is the first included harness. The name is provisional.
+Run coding harnesses inside lightweight Linux VMs using [Apple's `container`](https://github.com/apple/container).
+The project is mounted writable at its original path; the rest of your home stays on the host.
+Pi is the included harness. The name is provisional.
 
 ## Install
 
-Requirements: Apple silicon macOS with `container` **1.5+**, [uv](https://docs.astral.sh/uv/), and
-[fzf](https://github.com/junegunn/fzf) for interactive pickers. Project images currently need a
-Debian/Ubuntu base with apt, Python 3 support and standard Linux utilities. No Docker daemon is used.
+Requires Apple silicon macOS with `container` **1.5+**, [uv](https://docs.astral.sh/uv/), and
+[fzf](https://github.com/junegunn/fzf) for interactive pickers.
 
 ```sh
 cd ~/code/agentbox
-uv sync --locked                       # development interpreter: Python 3.15
-uv run prek install                    # local hooks invoke this venv's tools through uv
+uv sync --locked
+uv run prek install
 uv tool install --editable .            # put agentbox on PATH
-container system start                 # first start may offer the recommended kernel download
+container system start
 ```
 
-The Python package supports 3.12+. `uv run` in this checkout uses `.python-version` (3.15).
+Optional shell completion (commands, options and paths):
 
-**Optional:** [Enable shell completion](#shell-completion) after installing Agentbox. This is a
-one-time shell setup; `uv tool install` does not register completions automatically.
-
-### Guest image compatibility
-
-The built-in runtime and Pi layers require a **Debian/Ubuntu-style glibc image with `apt-get`**.
-They install packages with apt and the Pi layer copies a glibc-linked Node executable from Debian.
-Alpine/musl and non-apt distributions are not currently supported: changing only the project's
-`FROM` line is insufficient. Supporting them requires adapting both the runtime and harness layers,
-including their utilities and binary dependencies. This is an Agentbox layer constraint, not a
-limitation of Apple's `container` or the OCI image format.
+```sh
+eval "$(agentbox completion bash)"      # ~/.bashrc
+eval "$(agentbox completion zsh)"       # ~/.zshrc, after compinit
+agentbox completion fish | source       # ~/.config/fish/config.fish
+```
 
 ## Use
 
 ```sh
-agentbox new pi                         # --project defaults to .
-agentbox new                            # fzf harness picker
-agentbox new pi --project ~/my-project
-agentbox new pi --detach                 # useful for scripting
-agentbox ls                             # managed containers only, including stopped ones
-agentbox attach                         # fzf running-container picker
-agentbox attach <id-or-short-prefix>
-agentbox shell [id]                      # independent, non-root inspection shell
-agentbox stop [id]                       # stops processes, retains container disk + history
-agentbox rm [id]                         # stops/removes container; retains saved history
-agentbox kill-all                        # confirm stop/removal of our containers only
-agentbox kill-all --yes                  # explicit noninteractive cleanup
-agentbox sessions                       # saved conversations, even from removed containers
-agentbox resume [session-id]             # snapshot + fork into a NEW container
-agentbox build pi                       # explicitly prepare/rebuild the environment
-agentbox build pi --keep-builder        # opt out of owned-builder cleanup
+agentbox new pi                         # --project defaults to .; omit the harness for a picker
+agentbox new pi --detach
+agentbox ls                             # managed containers, including stopped ones
+agentbox attach [id]                    # IDs accept unique prefixes; omit for a picker
+agentbox shell [id]                     # plain non-root shell for inspection
+agentbox stop [id]                      # stops processes; container disk is kept
+agentbox rm [id]                        # removes the container and its artifact volumes
+agentbox kill-all [--yes]
+agentbox sessions                       # saved conversations, including from removed containers
+agentbox resume [session-id]            # fork a saved conversation into a new container
+agentbox build pi                       # rebuild the environment image
 ```
 
-Command names accept unique prefixes: `agentbox n pi` means `agentbox new pi`, `b` means `build`,
-and `re` means `resume`. Exact command names always win; ambiguous prefixes such as `r` (`rm`,
-`resume`) or `s` (`shell`, `stop`, `sessions`) fail without performing an action. Prefer full command
-names in scripts, since adding commands can make a previously unique prefix ambiguous.
+Inside the container, **Ctrl-a, then d** detaches and returns to the host shell; the harness keeps
+running. Stopping a container ends its processes, so use `resume` to continue a conversation later.
 
-### Shell completion
+## Project manifest
 
-Completion is included for commands, options and filesystem paths. Add the appropriate line to your
-shell startup file after Agentbox is on PATH. This setup continues to work across Agentbox upgrades:
-
-```sh
-# Bash (~/.bashrc)
-eval "$(agentbox completion bash)"
-
-# Zsh (~/.zshrc); initialize completion first if your shell setup hasn't already.
-autoload -Uz compinit && compinit
-eval "$(agentbox completion zsh)"
-
-# Fish (~/.config/fish/config.fish)
-agentbox completion fish | source
-```
-
-Restart the shell or source its startup file. Command completion suggests only full names, not
-prefix aliases: `agentbox n<TAB>` completes to `new`. Already-typed prefix commands still support
-option completion, for example `agentbox n --<TAB>`. Completion does not start the container service
-or change saved state; live container/session IDs are not dynamically completed.
-
-Omitting a harness, container ID or session ID opens fzf. Explicit arguments bypass pickers.
-Selection requires a terminal; there is no hidden prompt in noninteractive invocations. `new` and
-`resume` require a terminal unless `--detach` is supplied. `ls` and `sessions` also support `--json`.
-
-Inside the container, **Ctrl-a, then d** detaches the inner tmux and returns directly to the host
-shell. Pi continues running, even if it is generating an answer. Outer tmux can keep Ctrl-b.
-Each instance gets a stable accent color and a labeled status line. Host tmux config is not mounted.
-`shell` is a plain inspection shell, not a preserved tmux session; use `exit` or Ctrl-d to leave it.
-
-The container's init/keepalive is independent of tmux. If Pi exits, the VM remains available for
-inspection. Detachment preserves live processes; **stopping a VM does not**. Use `resume` to start a
-new process with a saved conversation. The wrapper does not attempt to checkpoint processes.
-
-## Project-owned setup
-
-Put `.agentbox.toml` in the project. Configuration is discovered upwards; Git worktrees can fall back
-to the primary checkout's configuration. The full primary checkout is mounted, not just the selected
-worktree. Worktrees must be inside it, usually under `.worktrees/`.
+Put `.agentbox.toml` in the project (see this repo's [`.agentbox.toml`](.agentbox.toml)):
 
 ```toml
 version = 1
 
 [image]
 containerfile = ".agentbox/Containerfile"
-context = ".agentbox"                  # small context: don't send assets/.git to BuildKit
+context = ".agentbox"                  # keep source and .git out of the build context
 
 [container]
 cpus = 4
-memory = "8G"                        # guest RAM capacity, not an idle-footprint promise
+memory = "8G"
 
 [builder]
-memory = "4G"                        # independent image-builder capacity (default)
+memory = "4G"
 
 [workspace]
-artifacts = [".godot", "tests/bin", "tests/obj"]
-prepare_commands = ["git", "godot", "dotnet"]
+artifacts = [".godot", "tests/bin", "tests/obj", ".worktrees"]
 
 [environment]
 DOTNET_CLI_TELEMETRY_OPTOUT = "1"
 ```
 
-The project's Containerfile installs project dependencies only. Agentbox composes a cached common
-terminal/runtime layer and then the selected harness layer. Images are standard OCI Linux images;
-only the host lifecycle adapter depends on Apple's CLI.
+The manifest is discovered upwards from `--project`. A Git worktree inside the checkout falls back
+to the primary checkout's manifest; the whole primary checkout is mounted.
 
-### Developing Agentbox inside Agentbox
+The project's Containerfile installs project dependencies only, on a Debian/Ubuntu (apt, glibc)
+base. Agentbox layers a terminal runtime and the selected harness on top.
 
-This checkout includes a commented [`.agentbox.toml`](.agentbox.toml) documenting all project options
-and a minimal [`.agentbox/Containerfile`](.agentbox/Containerfile) with Python and uv. From macOS,
-run `agentbox new pi --project ~/code/agentbox`. In the guest, run:
+### Artifacts and worktrees
 
-```sh
-uv sync --locked                       # downloads the Python from .python-version
-uv run pytest                          # no running container service required
-uv run prek run --all-files
-```
+Each `artifacts` path in the primary checkout is covered by a container-local volume, so Linux build
+outputs never mix with the host's. Host contents are hidden, not copied or changed; empty mount-point
+directories may appear on the host. Volumes survive `stop` and are deleted by `rm`.
 
-The guest's `.venv`, test/lint caches and `dist` are isolated from the host and other VMs.
-This repo also declares `.worktrees` as VM-local storage: launch from the primary checkout, then
-create worktrees inside the guest. Existing host worktrees under `.worktrees` are hidden, not copied
-or modified. Guest worktrees can be removed normally with `git worktree remove`, without unmounting
-individual build outputs. Their files are not visible to the host's editor or other VMs.
+Listing `.worktrees` makes worktrees created inside the container guest-local, so their build outputs
+are too. Host worktrees there are hidden from the guest, so launch from the primary checkout.
+**Commit before removing a container**: Git objects and refs live in the shared `.git`, but
+uncommitted worktree files are deleted with the container. Afterwards, `git worktree prune` cleans
+up stale registrations.
 
-**Commit work before removing the container.** Git objects and refs remain in the shared `.git`, but
-uncommitted worktree contents disappear with the VM. Worktree registrations are also shared; after
-removing a VM, use `git worktree prune` to clean stale registrations, but only when no other VM is
-using guest-local worktrees for this checkout. Worktree files survive stop/attach on the same VM.
-To adopt this setup, rebuild with `agentbox build pi` and launch a new container; existing VMs keep
-their original configuration and mounts.
+### Image preparation
 
-The image contains no project source or harness installation; the primary checkout is mounted at launch.
-Apple `container` lifecycle and integration checks still run on macOS, not nested inside the guest.
+The first `new` builds the project, runtime and harness layers into a prepared image. Later launches
+reuse it without starting the builder. Run `agentbox build <harness>` after changing a Containerfile,
+build context or Agentbox itself; it also refreshes unpinned harness packages. If Agentbox starts
+the builder, it stops it again afterwards. A builder that was already running is left running.
 
-### Preparation versus launch
+## Harness config and credentials
 
-The first `new` prepares a missing image. Subsequent `new`/`resume` calls reuse it **without any
-BuildKit startup, build, or OCI/tar export**. The image is scoped to the project, state store, harness,
-and selected personal package sources; changing only models, credentials or package resource filters
-does not rebuild it. `--no-config` uses a package-free variant. Removing an image makes the next
-launch prepare it again.
+Each container gets its **own copy** of selected harness config files. For Pi, these are settings,
+keybindings, models, auth and user instructions from `~/.pi/agent`. Changes don't sync back.
+Host-specific settings and local packages are dropped with a notice. Portable npm/git package
+declarations are installed into the image at build time, so they must not contain credentials.
+`--no-config` skips all of this; use `/login` inside Pi instead.
 
-Use `agentbox build pi` after changing a Containerfile, build context, runtime/harness implementation,
-or other image inputs. Ordinary source edits do not require it. Explicit builds refresh unpinned
-personal packages; package versions remain at that snapshot until rebuilt. There is deliberately no
-background freshness check, full-repository hash scan, or automatic base-image update on launch.
-Existing pre-preparation Agentbox images are rebuilt once into the new prepared-image namespace.
+Only Git `user.name`/`user.email` are passed in (as `GIT_AUTHOR_*`/`GIT_COMMITTER_*`). No host
+environment is forwarded beyond what the manifest and profile declare.
 
-The builder is leased under a per-user lock shared across all Agentbox projects and `--state-dir`
-values. A builder already running is left alone, including its resource settings. If Agentbox starts
-it, it attempts to **stop** it after success, failure or Ctrl-C, preserving its disk cache and images.
-`--keep-builder` on `build`, `new` or `resume` retains it intentionally. SIGKILL/host crashes cannot run
-cleanup; use `container builder stop` once no build is active. Apple's shared builder has no exclusive
-ownership lease: raw `container build` jobs do not participate in our lock and must not overlap an
-Agentbox-owned temporary builder. Start it yourself beforehand or use `--keep-builder` when sharing.
+## Saved state
 
-Builder capacity is separate from guest capacity. Neither is an idle-memory target: Linux file cache
-can retain substantial memory inside a VM after a build. Guest-available memory and host RSS alone
-are not substitutes for macOS physical-footprint accounting. No builder is needed to keep agents alive.
-CLI timings distinguish environment preparation from VM/runtime readiness; the latter is **not** a
-claim that Pi has finished rendering its UI.
-
-### Generated-directory isolation
-
-A plain bind mount cannot exclude children. The guest preparation helper bind-mounts VM-local
-cache directories over the declared artifact paths, without copying host contents. It applies to
-all in-repo worktrees, including worktrees created after launch. A worktree or artifact target already
-covered by a configured artifact mount needs no additional mounts: its contents are already VM-local.
-This is generic artifact handling; projects choose their own paths, including whether to isolate a
-whole worktree directory. The helper runs before the declared commands and after `git worktree add`
-(even if a hook fails after checkout). Empty mount-point directories may be created on
-the host; generated contents stay in the VM. This is directory masking, not a general filesystem
-filter: commands that bypass the shims by absolute path must not build a newly created worktree
-until preparation has run.
-
-The agent is a non-root guest user. Only the root-owned preparation helper is sudo-enabled, without
-arguments, and its configuration is mounted read-only. The guest gets `CAP_SYS_ADMIN` for those
-mounts. This is not a claim of a hardened guest-user/root boundary; the security boundary is the VM
-and what you share with it. Artifact paths may not traverse symlinks or overlap one another.
-
-Caches survive reconnects and remain on a stopped VM's disk; removing the VM deletes them. Each fresh
-container/worktree must import Godot assets once. For host-backed worktrees with individual artifact
-mounts, remove containers before removing/renaming those worktrees. Worktrees wholly inside a VM-local
-artifact directory have no nested artifact mounts and can be removed directly inside that VM.
-Use the host's editor for graphical playtesting with host-backed files.
-
-## Configuration and credentials
-
-Each instance has its **own writable harness state**, not a shared writable harness home. Pi's profile
-copies selected files from `~/.pi/agent`: preferences, keybindings, model definitions, saved auth and
-user instructions. It does not import host sessions, trust decisions, MCP servers, installed package
-trees, local extensions, or your whole home. Portable personal npm/git package declarations are
-prepared as Linux dependencies in the harness image, with no copied settings or credentials in the
-build context. Package declarations/layers are image-visible: use credential-free sources, not URLs
-containing tokens. Private registry/SSH authentication is not forwarded to builds. Host-specific
-settings are omitted with a notice.
-
-At startup, prepared npm/git directories are cloned to private VM-local writable storage and cover
-only those directories in the instance home. This avoids copying package trees through the host
-filesystem on every launch. Settings, auth and sessions remain private and host-backed. Package edits
-cannot affect another VM or the image seed; stop retains them, removal discards them. Project-scoped
-packages still follow Pi's trust flow and are not preinstalled merely by reading an untrusted project.
-Pi's `fd` executable is provisioned in the image rather than downloaded on first launch.
-
-Use `--no-config` to skip imports and `/login` inside Pi instead. Copied auth and configuration do not
-sync back to the host. OAuth refresh/revocation behavior varies by provider: you may need to log in
-again, and copying a refresh credential does not guarantee independently renewable logins. Custom
-themes or model definitions that invoke host programs may need container-specific configuration.
-
-Only the effective Git `user.name` and `user.email` are copied into guest Git configuration—not
-host credential helpers, hooks settings, signing commands or URL rewrites. The runtime trusts the
-specific mounted checkout/worktree paths to accommodate VirtioFS ownership. Projects using Git LFS
-must install/configure it in their base image so shared working files are recognized correctly and
-checkout hooks work.
-
-No host environment is broadly forwarded; profiles and project manifests explicitly declare guest
-environment variables. Do not put secrets in project manifests. Credentials copied into a VM are
-readable by its agent and should be scoped appropriately.
-
-## Durable sessions
-
-By default, host state lives under `$XDG_DATA_HOME/agentbox` (usually `~/.local/share/agentbox`):
+State lives under `$XDG_DATA_HOME/agentbox` (override with `--state-dir`):
 
 ```text
 instances/<id>/
   metadata.json
-  control/                              # read-only configuration mount in the guest
-  home/                                 # private writable guest home and durable harness state
-    .pi/agent/sessions/
+  home/                                 # the guest's /home/agent: copied config and sessions
 ```
 
-Use global `--state-dir PATH` to override this location. The parent directory must be trusted/private;
-new files/directories are created with a private umask. Session transcripts can contain source and
-secrets. A container has access only to its own state, not all saved conversations.
-
-Removing containers **never** removes this state. `resume` snapshots complete JSONL records into a
-new instance and Pi forks them, so the original session never has two writers. Running processes,
-temporary files and guest-only build products are not restored. Pi receives a short environment note
-explaining the new Linux execution environment. Session lists display IDs/project metadata, not
-conversation contents. A host Pi can also resume a saved file using `pi --session <path>`; that is
-outside agentbox's ownership and you must avoid concurrent writers yourself.
-
-There is no automatic history purge. Delete an instance's saved directory explicitly when you no
-longer want its conversations **and copied credentials**, after removing its container.
+Removing containers never removes this state. `resume` snapshots a session into a new instance and
+the harness forks it, so the original never has two writers. Delete an instance directory yourself
+to discard its conversations **and copied credentials**.
 
 ## Additional harnesses
 
-User profiles override/add to built-ins under:
+User profiles override or add to the built-ins in `$XDG_CONFIG_HOME/agentbox/harnesses/<name>/`:
 
-```text
-$XDG_CONFIG_HOME/agentbox/harnesses/<name>/
-  profile.toml
-  Containerfile
-```
+- `profile.toml`: the command, optional `resume_args` with `{session}`, `state_dir`/`session_dir`
+  under `/home/agent`, `seed_dir` and `seed_files` to copy, `environment`, and optional
+  `prepared_dirs`. Follow [the Pi profile](src/agentbox/assets/harnesses/pi/profile.toml).
+- `Containerfile`: takes `ARG RUNTIME_IMAGE` and builds `FROM` it.
+- Optional `hooks.py`: host-side `build_files(seed_dir)` returns extra build-context files (keyed
+  into the image name), and `adapt_seed(state_dir)` adjusts copied config.
 
-A profile follows `src/agentbox/assets/harnesses/pi/profile.toml`: command argv, optional resume argv
-with `{session}`, relative state/session directories beneath `/home/agent`, selected seed files and
-environment variables. Its Containerfile takes global `ARG RUNTIME_IMAGE` and derives from that image.
-The runtime image already provides the agent user, tmux and the entrypoint; preserve them. Install
-Linux dependencies rather than mounting host binaries or `node_modules`.
-
-Optional `prepared_dirs` lists relative home directories to seed from matching paths beneath
-`/opt/agentbox/prepared` in the image. These directories get private writable guest-local copies;
-they may not overlap each other or the durable `session_dir`. Images for custom profiles must provide
-those templates. The generated `package-sources.json` in a harness build context contains only selected
-portable personal Pi package sources (empty for other harnesses); the included Pi build helper consumes
-it. Additional harness package discovery needs its own adapter, not Pi settings assumptions.
-
-The current session catalog handles local **JSONL** conversations; remote-only harnesses can omit
-resume support. Harnesses with another storage format will need a small catalog adapter rather than
-pretending all transcripts are interchangeable. Codex and Claude profiles are intentionally not yet
-included.
+Each `prepared_dirs` entry is symlinked from the home to `/opt/agentbox/prepared/<path>` in the
+image. Every container gets its own writable copy.
 
 ## Security scope
 
-This protects unmounted host files and processes, **not the repository**. The agent can edit main,
-rewrite Git history, delete repository files, use copied credentials and contact reachable host/LAN
-services. Repository edits can also change hooks/scripts that execute later when you run Git, builds
-or the editor on the host. Review changes before executing them there. Follow project worktree policies
-and maintain backups. There is no host shell bridge,
-container-management socket, SSH agent, or blanket host-home mount. Egress is not filtered; this is
-not an API-spending limiter or an exfiltration-proof sandbox. Treat project manifests/Containerfiles
-and harness profiles as trusted executable configuration.
+The VM protects unmounted host files and processes, **not the repository**. The agent can rewrite
+history, change hooks and scripts you later run on the host, use copied credentials, and reach the
+network. There is no host shell bridge, socket or SSH agent. Treat manifests, Containerfiles and
+harness profiles as trusted executable configuration.
 
-## Development and verification
+## Development
 
 ```sh
-uv run ruff check . --fix
-uv run ruff format .
+uv run ruff check . --fix && uv run ruff format .
 uv run ty check .
-uv run pytest
+uv run pytest                          # no container service needed
 uv run prek run --all-files
 ```
 
-Unit tests do not start containers. Before shipping runtime changes, also build a real project and
-verify: non-root operation; host generated-file sentinels remain untouched in existing and new
-worktrees; headless import/build/tests; Ctrl-a d detach/reconnect in an actual terminal; durable
-history and forked resume after removal; cleanup leaves unrelated containers alone. Host-side session
-reads reject symlink components in agent-writable state, including when snapshotting a live session. See
-`docs/verification.md` for checks performed and outstanding manual checks.
+To work on Agentbox inside Agentbox, run `agentbox new pi --project ~/code/agentbox`, then
+`uv sync --locked` in the guest. Create worktrees inside the guest.

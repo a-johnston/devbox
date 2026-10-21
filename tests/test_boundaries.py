@@ -1,14 +1,12 @@
 """Host reads of guest-writable state must not become a sandbox escape."""
 
 import json
-import subprocess
 from pathlib import Path
 
 import pytest
 from test_app import FakeEngine
 
 from agentbox.app import App
-from agentbox.assets.runtime import prepare
 from agentbox.config import Harness, Project
 from agentbox.errors import AgentboxError
 from agentbox.state import Store, snapshot_session
@@ -40,7 +38,7 @@ def test_snapshot_rejects_symlink_components(tmp_path: Path, symlink_parent: boo
         (home / "sessions").mkdir()
         (home / "sessions/secret.jsonl").symlink_to(outside / "secret.jsonl")
     target = tmp_path / "snapshot"
-    with pytest.raises(OSError):
+    with pytest.raises(AgentboxError):
         snapshot_session(home / "sessions/secret.jsonl", target, root=home)
     assert not target.exists()
 
@@ -59,20 +57,3 @@ def test_state_cannot_be_inside_shared_project(project: Project, harness: Harnes
     with pytest.raises(AgentboxError, match="outside the shared"):
         App(engine, Store(project.root / "state")).new(project, harness)
     assert engine.calls == []
-
-
-def test_git_trust_only_adds_specific_new_checkouts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls = []
-
-    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        calls.append(args)
-        return subprocess.CompletedProcess(args, 0, str(tmp_path) + "\n", "")
-
-    monkeypatch.setattr(prepare.subprocess, "run", run)
-    new = tmp_path / ".worktrees/new"
-    prepare.trust_worktrees([tmp_path, new])
-    assert calls[-1] == ["/usr/bin/git", "config", "--system", "--add", "safe.directory", str(new)]
-    assert len(calls) == 2
-    assert "*" not in calls[-1]

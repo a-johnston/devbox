@@ -29,28 +29,17 @@ class FakeEngine(Engine):
         self.calls.append(args)
         if args[:2] == ("image", "inspect") and args[2] not in self.images:
             return subprocess.CompletedProcess(args, 1, "", f"Error: image not found: {args[2]}")
-        if args[:2] == ("builder", "start"):
-            self.builder_state = "running"
         if args[:2] == ("builder", "stop"):
             self.builder_state = "stopped"
         if args[0] == "build":
+            self.builder_state = "running"
             self.images.add(args[args.index("--tag") + 1])
-        output = (
-            json.dumps(
-                [
-                    {
-                        "id": "buildkit",
-                        "configuration": {
-                            "labels": {"com.apple.container.resource.role": "builder"}
-                        },
-                        "status": {"state": self.builder_state},
-                    }
-                ]
-            )
-            if args[0] == "list"
-            else ""
-        )
-        return subprocess.CompletedProcess(args, 0, output, "")
+        if args[:2] == ("volume", "list"):
+            return subprocess.CompletedProcess(args, 0, "[]", "")
+        if args[:2] == ("builder", "status"):
+            status = [{"status": {"state": self.builder_state}}]
+            return subprocess.CompletedProcess(args, 0, json.dumps(status), "")
+        return subprocess.CompletedProcess(args, 0, "", "")
 
     def containers(self) -> list[Container]:
         return self.rows
@@ -69,32 +58,56 @@ def test_new_composes_images_and_mounts_only_selected_paths(
     assert len(builds) == 3
     run = next(call for call in engine.calls if call[0] == "run")
     mounts = [run[i + 1] for i, value in enumerate(run) if value == "--mount"]
-    assert len(mounts) == 3
-    assert f"source={project.root},target={project.root}" in mounts[0]
-    assert "target=/home/agent" in mounts[1]
-    assert mounts[2].endswith("target=/etc/agentbox,readonly")
+    assert mounts[:2] == [
+        f"type=bind,source={project.root},target={project.root}",
+        f"type=bind,source={app.store.directory(id) / 'home'},target=/home/agent",
+    ]
+    assert mounts[2:] == [
+        f"type=volume,source={id}-{i},target={project.root / artifact}"
+        for i, artifact in enumerate((".godot", "tests/bin", "tests/obj"))
+    ]
     assert not any(".ssh" in arg or arg == "--ssh" for arg in run)
-    config = json.loads((app.store.directory(id) / "control/project.json").read_text())
-    assert config["artifacts"] == [".godot", "tests/bin", "tests/obj"]
-    assert config["cwd"] == str(project.cwd)
-    startup = next(call for call in engine.calls if "new-session" in call)
-    assert startup[startup.index("tmux") :] == (
+    chown = next(call for call in engine.calls if "chown" in " ".join(call))
+    assert chown[:4] == ("exec", "--user", "root", id)
+    assert chown[-3:] == tuple(str(project.root / a) for a in (".godot", "tests/bin", "tests/obj"))
+    startup = engine.calls[-1]
+    assert startup[:4] == ("exec", "--user", "agent", id)
+    assert startup[4:15] == (
         "tmux",
         "-u",
         "-f",
-        "/etc/agentbox/tmux.conf",
+        "/home/agent/.agentbox/tmux.conf",
         "new-session",
         "-d",
         "-s",
         "agent",
         "-c",
         str(project.cwd),
-        "/opt/agentbox/launch.py",
+        "--",
     )
+    assert list(startup[15:]) == list(harness.command)
+    home = app.store.directory(id) / "home"
+    assert (home / ".pi/agent/npm").readlink() == Path("/opt/agentbox/prepared/.pi/agent/npm")
+    assert "prefix C-a" in (home / ".agentbox/tmux.conf").read_text()
+
+
+def test_git_identity_is_passed_as_environment(
+    project: Project, harness: Harness, tmp_path: Path
+) -> None:
+    for key, value in (("user.name", "Ada"), ("user.email", "ada@example.invalid")):
+        subprocess.run(["git", "-C", str(project.root), "config", key, value], check=True)
+    engine = FakeEngine()
+    App(engine, Store(tmp_path / "state")).new(project, harness, no_config=True)
+    run = next(call for call in engine.calls if call[0] == "run")
+    assert "GIT_AUTHOR_NAME=Ada" in run
+    assert "GIT_COMMITTER_NAME=Ada" in run
+    assert "GIT_AUTHOR_EMAIL=ada@example.invalid" in run
+    assert not any("credential" in arg for arg in run)
 
 
 def test_resume_snapshots_and_forks(project: Project, harness: Harness, tmp_path: Path) -> None:
-    app = App(FakeEngine(), Store(tmp_path / "state"))
+    engine = FakeEngine()
+    app = App(engine, Store(tmp_path / "state"))
     original_id, original = app.store.create()
     (original / "metadata.json").write_text("{}")
     source = original / "home/source.jsonl"
@@ -103,25 +116,25 @@ def test_resume_snapshots_and_forks(project: Project, harness: Harness, tmp_path
     id = app.new(project, harness, no_config=True, session=session)
     home = app.store.directory(id) / "home"
     assert (home / ".agentbox/resume.jsonl").read_text() == source.read_text()
-    config = json.loads((app.store.directory(id) / "control/project.json").read_text())
-    assert config["command"][-2:] == ["--fork", "/home/agent/.agentbox/resume.jsonl"]
-    assert str(source) not in json.dumps(config)
+    assert engine.calls[-1][-2:] == ("--fork", "/home/agent/.agentbox/resume.jsonl")
 
 
-def test_failed_start_removes_vm_but_retains_state(
+def test_failed_start_removes_vm_and_volumes_but_retains_state(
     project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
+    call = engine.call
 
-    def fail(id: str) -> None:
-        raise AgentboxError("startup failed")
+    def fail_tmux(*args: str, **kwargs: bool) -> subprocess.CompletedProcess[str]:
+        if "tmux" in args:
+            raise AgentboxError("startup failed")
+        return call(*args, **kwargs)
 
-    monkeypatch.setattr(app, "_wait_ready", fail)
+    monkeypatch.setattr(engine, "call", fail_tmux)
     with pytest.raises(AgentboxError, match="startup failed"):
         app.new(project, harness, no_config=True)
-    assert engine.calls[-2][0] == "stop"
-    assert engine.calls[-1][0] == "delete"
+    assert [c[0] for c in engine.calls[-3:]] == ["stop", "delete", "volume"]
     assert len(list(app.store.instances.glob("*/metadata.json"))) == 1
 
 
@@ -141,7 +154,7 @@ def test_kill_all_retains_state(tmp_path: Path) -> None:
     (directory / "metadata.json").write_text("{}")
     assert app.kill_all() == 1
     assert (app.store.directory(id) / "metadata.json").exists()
-    assert engine.calls == [("stop", "ours"), ("delete", "ours")]
+    assert engine.calls[:2] == [("stop", "ours"), ("delete", "ours")]
 
 
 def test_accent_is_stable_and_status_cannot_inject_tmux_commands() -> None:
@@ -151,6 +164,7 @@ def test_accent_is_stable_and_status_cannot_inject_tmux_commands() -> None:
     assert "#(touch" not in config
     assert "prefix C-a" in config
     assert "status-style" in config
+    assert "' p | pi | id '" in tmux_config("id", "p", "pi")
 
 
 @pytest.mark.parametrize("path", ["/a,b", "/a\nb"])

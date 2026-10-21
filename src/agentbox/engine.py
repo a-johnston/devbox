@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import shutil
 import subprocess
-import sys
-from collections.abc import Generator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,9 +13,6 @@ from typing import Any
 from agentbox.errors import AgentboxError
 
 MANAGED = "dev.agentbox.managed"
-OWNER = "dev.agentbox.owner"
-# Independent of project and --state-dir: Apple's builder is shared by this user.
-BUILDER_LOCK = Path.home() / ".cache/agentbox/apple-builder.lock"
 
 
 @dataclass(frozen=True)
@@ -64,58 +57,34 @@ class Engine:
             return False
         raise AgentboxError(f"Cannot check prepared image: {result.stderr.strip()}")
 
-    @contextmanager
-    def builder(self, *, memory: str, cpus: int, keep: bool = False) -> Generator[None, None, None]:
-        """Lease the shared builder; only stop one this operation started.
+    def build(
+        self, tag: str, file: Path, context: Path, args: dict[str, str], *, memory: str, cpus: int
+    ) -> None:
+        """Starts the builder if needed; the resources apply to (and may restart) it."""
+        flags = [flag for key, value in args.items() for flag in ("--build-arg", f"{key}={value}")]
+        self.call(
+            "build",
+            "--platform",
+            "linux/arm64",
+            "--memory",
+            memory,
+            "--cpus",
+            str(cpus),
+            "--tag",
+            tag,
+            "--file",
+            str(file),
+            *flags,
+            str(context),
+            capture=False,
+        )
 
-        All Agentbox projects/stores coordinate here. Raw `container build`
-        invocations do not participate; they must not overlap an ephemeral lease.
-        """
-        BUILDER_LOCK.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with BUILDER_LOCK.open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            result = self.call("list", "--all", "--format", "json")
-            try:
-                rows = json.loads(result.stdout)
-                running = False
-                for row in rows:
-                    if row["id"] != "buildkit":
-                        continue
-                    if (
-                        row["configuration"]
-                        .get("labels", {})
-                        .get("com.apple.container.resource.role")
-                        != "builder"
-                    ):
-                        raise AgentboxError(
-                            "The existing buildkit container is not Apple's builder"
-                        )
-                    state = row["status"]["state"]
-                    if state not in ("running", "stopped"):
-                        raise AgentboxError(f"Builder is {state}; retry when its state is stable")
-                    running = state == "running"
-            except (ValueError, KeyError, TypeError) as exc:
-                raise AgentboxError(
-                    "Cannot determine builder ownership from container JSON"
-                ) from exc
-            started = False
-            try:
-                if not running:
-                    # Set before the call: cancellation may arrive after VM startup.
-                    started = True
-                    self.call("builder", "start", "--memory", memory, "--cpus", str(cpus))
-                yield
-            finally:
-                if started and not keep:
-                    try:
-                        stopped = self.call("builder", "stop", check=False)
-                        if stopped.returncode:
-                            raise AgentboxError("builder stop failed")
-                    except (AgentboxError, OSError):
-                        print(
-                            "agentbox: builder cleanup failed; run container builder stop",
-                            file=sys.stderr,
-                        )
+    def builder_running(self) -> bool:
+        result = self.call("builder", "status", "--format", "json", check=False)
+        try:
+            return any(row["status"]["state"] == "running" for row in json.loads(result.stdout))
+        except (ValueError, KeyError, TypeError):
+            return False
 
     def containers(self) -> list[Container]:
         result = self.call("list", "--all", "--format", "json")
@@ -131,7 +100,6 @@ class Engine:
                 )
                 for row in rows
                 if row["configuration"].get("labels", {}).get(MANAGED) == "1"
-                and row["configuration"]["labels"].get(OWNER) == str(os.getuid())
             ]
         except (ValueError, KeyError, TypeError) as exc:
             raise AgentboxError(
@@ -139,12 +107,9 @@ class Engine:
             ) from exc
 
     def exec(
-        self, id: str, *args: str, interactive: bool = False, check: bool = True
+        self, id: str, *args: str, user: str = "agent", check: bool = True
     ) -> subprocess.CompletedProcess[str]:
-        flags = ("-it",) if interactive else ()
-        return self.call(
-            "exec", *flags, "--user", "agent", id, *args, capture=not interactive, check=check
-        )
+        return self.call("exec", "--user", user, id, *args, check=check)
 
     def connect(self, id: str, *args: str, cwd: str | None = None) -> None:
         """Replace the wrapper; detaching the tmux client returns to the host shell."""
@@ -159,7 +124,17 @@ class Engine:
             executable, [executable, "exec", "-it", "--user", "agent", *flags, id, *args], env
         )
 
-    def remove(self, container: Container) -> None:
-        if container.state != "stopped":
-            self.call("stop", container.id)
-        self.call("delete", container.id)
+    def remove(self, id: str) -> None:
+        """Delete a container and the artifact volumes named after it."""
+        self.call("stop", id, check=False)
+        self.call("delete", id)
+        for volume in self.volumes(id):
+            self.call("volume", "delete", volume)
+
+    def volumes(self, id: str) -> list[str]:
+        result = self.call("volume", "list", "--format", "json")
+        try:
+            names = [row["id"] for row in json.loads(result.stdout)]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise AgentboxError("Unexpected volume JSON") from exc
+        return [name for name in names if name.startswith(f"{id}-")]

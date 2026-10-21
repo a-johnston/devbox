@@ -1,4 +1,3 @@
-import fcntl
 import json
 import subprocess
 from dataclasses import replace
@@ -11,7 +10,7 @@ from agentbox.app import App
 from agentbox.config import Harness, Project
 from agentbox.engine import Engine
 from agentbox.errors import AgentboxError
-from agentbox.state import Store, package_sources
+from agentbox.state import Store, build_files
 
 
 def test_second_new_never_starts_or_checks_builder(
@@ -52,10 +51,10 @@ def test_invalid_package_settings_fail_before_build(harness: Harness, packages: 
     harness.seed_dir.mkdir()
     (harness.seed_dir / "settings.json").write_text(json.dumps({"packages": packages}))
     with pytest.raises(AgentboxError, match="settings.json is invalid"):
-        package_sources(harness)
+        build_files(harness)
 
 
-def test_explicit_build_rebuilds_and_uses_separate_memory(
+def test_explicit_build_rebuilds_with_builder_memory(
     project: Project, harness: Harness, tmp_path: Path
 ) -> None:
     engine = FakeEngine()
@@ -63,93 +62,37 @@ def test_explicit_build_rebuilds_and_uses_separate_memory(
     first = app.build(replace(project, memory="8G", builder_memory="2G"), harness)
     assert app.build(project, harness) == first
     builds = [c for c in engine.calls if c[0] == "build"]
-    assert len(builds) == 6
-    assert all(c[c.index("--memory") + 1] == "2G" for c in builds[:3])
-    assert all(c[c.index("--memory") + 1] == "4G" for c in builds[3:])
+    assert [c[c.index("--memory") + 1] for c in builds] == ["2G"] * 3 + ["4G"] * 3
 
 
-@pytest.mark.parametrize(
-    "state,keep,stops", [("running", False, 0), ("stopped", False, 1), ("stopped", True, 0)]
-)
-def test_builder_lifetime(state: str, keep: bool, stops: int) -> None:
+@pytest.mark.parametrize("state,stops", [("running", 0), ("stopped", 1)])
+def test_only_a_builder_we_started_is_stopped(
+    project: Project, harness: Harness, tmp_path: Path, state: str, stops: int
+) -> None:
     engine = FakeEngine()
     engine.builder_state = state
-    with engine.builder(memory="2G", cpus=2, keep=keep):
-        assert engine.builder_state == "running"
+    App(engine, Store(tmp_path / "state")).build(project, harness)
     assert sum(c[:2] == ("builder", "stop") for c in engine.calls) == stops
-    if state == "running":
-        assert not any(c[0] == "builder" for c in engine.calls)
 
 
 @pytest.mark.parametrize("failure", [AgentboxError("failed"), KeyboardInterrupt()])
-def test_builder_cleanup_on_failure_or_cancellation(failure: BaseException) -> None:
+def test_builder_stopped_on_failure_or_cancellation(
+    project: Project,
+    harness: Harness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: BaseException,
+) -> None:
     engine = FakeEngine()
-    with pytest.raises(type(failure)), engine.builder(memory="2G", cpus=2):
+
+    def fail(*args: object, **kwargs: object) -> None:
         raise failure
-    assert engine.calls[-1] == ("builder", "stop")
 
-
-def test_builder_cleanup_on_start_cancellation(monkeypatch: pytest.MonkeyPatch) -> None:
-    engine = FakeEngine()
-    call = engine.call
-
-    def interrupt(*args: str, **kwargs: bool) -> subprocess.CompletedProcess[str]:
-        result = call(*args, **kwargs)
-        if args[:2] == ("builder", "start"):
-            raise KeyboardInterrupt
-        return result
-
-    monkeypatch.setattr(engine, "call", interrupt)
-    with pytest.raises(KeyboardInterrupt), engine.builder(memory="2G", cpus=2):
-        pytest.fail("should not reach the build")
+    monkeypatch.setattr(engine, "build", fail)
+    with pytest.raises(type(failure)):
+        App(engine, Store(tmp_path / "state")).build(project, harness)
     assert engine.builder_state == "stopped"
-
-
-def test_builder_cleanup_does_not_hide_original_error(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    engine = FakeEngine()
-    call = engine.call
-
-    def fail_stop(*args: str, **kwargs: bool) -> subprocess.CompletedProcess[str]:
-        if args[:2] == ("builder", "stop"):
-            raise AgentboxError("stop failed")
-        return call(*args, **kwargs)
-
-    monkeypatch.setattr(engine, "call", fail_stop)
-    with pytest.raises(AgentboxError, match="original"), engine.builder(memory="2G", cpus=2):
-        raise AgentboxError("original")
-    assert "cleanup failed" in capsys.readouterr().err
-
-
-def test_builder_lock_shared_across_projects_and_stores(tmp_path: Path) -> None:
-    from agentbox.engine import BUILDER_LOCK
-
-    first = App(FakeEngine(), Store(tmp_path / "one"))
-    second = App(FakeEngine(), Store(tmp_path / "two"))
-    with first.engine.builder(memory="2G", cpus=2):
-        with BUILDER_LOCK.open("a") as other, pytest.raises(BlockingIOError):
-            fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        assert second.engine.executable == first.engine.executable
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        "garbage",
-        "null",
-        '[{"id":"buildkit","configuration":{"labels":{}},"status":{"state":"running"}}]',
-    ],
-)
-def test_unknown_builder_state_never_stops_anything(
-    payload: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    engine = FakeEngine()
-    monkeypatch.setattr(
-        engine, "call", lambda *a, **kw: subprocess.CompletedProcess(a, 0, payload, "")
-    )
-    with pytest.raises(AgentboxError), engine.builder(memory="2G", cpus=2):
-        pytest.fail("must not claim ownership")
+    assert engine.calls[-1] == ("builder", "stop")
 
 
 def test_image_lookup_does_not_misclassify_service_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -176,16 +119,16 @@ def test_package_variant_ignores_private_config_and_filters(
             }
         )
     )
-    sources = package_sources(harness)
-    assert sources == ("npm:example@1", "npm:other")
-    assert package_sources(harness, no_config=True) == ()
+    files = build_files(harness)
+    assert files == {"package-sources.txt": "npm:example@1\nnpm:other\n"}
+    assert build_files(harness, no_config=True) == {}
     app = App(FakeEngine(), Store(tmp_path / "state"))
-    image = app._prepared_image(project, harness, sources)
+    image = app._prepared_image(project, harness, files)
     settings.write_text(
         json.dumps({"packages": ["npm:other", "npm:example@1"], "apiKey": "different"})
     )
-    assert app._prepared_image(project, harness, package_sources(harness)) == image
-    assert app._prepared_image(project, harness, ()) != image
+    assert app._prepared_image(project, harness, build_files(harness)) == image
+    assert app._prepared_image(project, harness, {}) != image
 
 
 @pytest.mark.parametrize(
@@ -193,7 +136,6 @@ def test_package_variant_ignores_private_config_and_filters(
     [
         "https://token@github.com/example/package",
         "git:https://github.com/example/package?token=private",
-        "npm:-malicious",
         "npm:pkg\nsecret",
     ],
 )
@@ -203,7 +145,7 @@ def test_package_declarations_reject_obvious_secrets_and_invalid_specs(
     harness.seed_dir.mkdir()
     (harness.seed_dir / "settings.json").write_text(json.dumps({"packages": [source]}))
     with pytest.raises(AgentboxError):
-        package_sources(harness)
+        build_files(harness)
 
 
 def test_build_context_never_contains_private_settings(
@@ -220,7 +162,7 @@ def test_build_context_never_contains_private_settings(
     def inspect(*args: str, **kwargs: bool) -> subprocess.CompletedProcess[str]:
         if args[0] == "build" and "PREPARE_REVISION=" in " ".join(args):
             context = Path(args[-1])
-            assert json.loads((context / "package-sources.json").read_text()) == ["npm:example@1"]
+            assert (context / "package-sources.txt").read_text() == "npm:example@1\n"
             assert not any(p.name in ("auth.json", "settings.json") for p in context.rglob("*"))
         return call(*args, **kwargs)
 

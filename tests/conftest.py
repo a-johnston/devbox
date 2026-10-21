@@ -19,11 +19,6 @@ def isolated_git_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
 
 
-@pytest.fixture(autouse=True)
-def isolated_builder_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("agentbox.engine.BUILDER_LOCK", tmp_path / "builder.lock")
-
-
 @pytest.fixture
 def repository(tmp_path: Path) -> Path:
     root = tmp_path / "project with spaces"
@@ -37,7 +32,6 @@ containerfile = ".agentbox/Containerfile"
 context = ".agentbox"
 [workspace]
 artifacts = [".godot", "tests/bin", "tests/obj"]
-prepare_commands = ["git", "dotnet"]
 """)
     subprocess.run(["git", "-C", str(root), "add", "."], check=True)
     subprocess.run(

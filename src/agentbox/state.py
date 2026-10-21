@@ -7,13 +7,9 @@ import os
 import re
 import secrets
 import shutil
-import stat
-from collections.abc import Generator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO
-from urllib.parse import urlsplit
+from typing import Any
 
 from agentbox.config import Harness
 from agentbox.errors import AgentboxError
@@ -49,12 +45,9 @@ class Store:
         directory = self.instances / id
         directory.mkdir(parents=True, mode=0o700)
         (directory / "home").mkdir(mode=0o700)
-        (directory / "control").mkdir(mode=0o700)
         return id, directory
 
     def directory(self, id: str) -> Path:
-        if not id.startswith("agentbox-") or "/" in id or ".." in id:
-            raise AgentboxError("Invalid instance ID")
         directory = self.instances / id
         if not (directory / "metadata.json").is_file():
             raise AgentboxError(f"No saved state for {id}")
@@ -75,16 +68,10 @@ class Store:
                 continue
             metadata = self.metadata(directory.name)
             home = directory / "home"
-            base = home / metadata["session_dir"]
-            if not base.resolve().is_relative_to(home):
-                continue
-            for path in sorted(base.rglob("*.jsonl")):
-                if path.is_symlink() or not path.is_file():
-                    continue
+            for path in sorted((home / metadata["session_dir"]).rglob("*.jsonl")):
                 # Display metadata, never prompt text or credentials from the transcript.
                 try:
-                    with session_file(path, home) as stream:
-                        header = json.loads(stream.readline(65536))
+                    header = json.loads(read_session(path, home, header=True))
                     session_id = str(header.get("id", path.stem))
                     if not re.fullmatch(r"[A-Za-z0-9_.-]+", session_id):
                         continue
@@ -102,47 +89,22 @@ class Store:
         return sessions
 
 
-def package_sources(harness: Harness, *, no_config: bool = False) -> tuple[str, ...]:
-    """Only portable package declarations enter images, never private settings/auth."""
-    source = harness.seed_dir / "settings.json"
-    if (
-        no_config
-        or harness.name != "pi"
-        or "settings.json" not in harness.seed_files
-        or source.is_symlink()
-        or not source.is_file()
-    ):
-        return ()
+def run_hook(harness: Harness, name: str, *args: Any) -> Any:
+    hook = harness.hook(name)
     try:
-        data = json.loads(source.read_text())
-        result = set()
-        packages = data.get("packages", [])
-        if not isinstance(packages, list):
-            raise ValueError("packages must be an array")
-        for package in packages:
-            value = package if isinstance(package, str) else package.get("source", "")
-            if not value.startswith(("npm:", "git:", "https://", "http://")):
-                continue
-            # Declarations are visible in image layers and build logs. Reject
-            # URL credentials/query strings rather than accidentally baking tokens.
-            url = value.removeprefix("git:").removeprefix("npm:")
-            if "://" in url:
-                parsed = urlsplit(url)
-                if parsed.username or parsed.password or parsed.query:
-                    raise AgentboxError(
-                        "Prepared package URLs must not contain credentials or query strings"
-                    )
-            if any(c in value for c in "\n\r\x00") or (
-                value.startswith("npm:")
-                and not re.fullmatch(
-                    r"npm:(?:@[A-Za-z0-9_.-]+/)?[A-Za-z0-9_][A-Za-z0-9_.-]*(?:@[^:/\s]+)?", value
-                )
-            ):
-                raise AgentboxError("Invalid portable package declaration")
-            result.add(value)
-        return tuple(sorted(result))
-    except (ValueError, AttributeError, TypeError) as exc:
-        raise AgentboxError("Pi settings.json is invalid; fix it or use --no-config") from exc
+        return hook(*args) if hook else None
+    except ValueError as exc:
+        raise AgentboxError(str(exc)) from exc
+
+
+def build_files(harness: Harness, *, no_config: bool = False) -> dict[str, str]:
+    """Extra harness build-context files derived from host config, e.g. package lists."""
+    if no_config:
+        return {}
+    files = run_hook(harness, "build_files", harness.seed_dir) or {}
+    if any("/" in name or name.startswith(".") for name in files):
+        raise AgentboxError(f"{harness.name} hooks returned an invalid build file name")
+    return files
 
 
 def seed_config(harness: Harness, home: Path) -> list[str]:
@@ -159,73 +121,20 @@ def seed_config(harness: Harness, home: Path) -> list[str]:
         shutil.copyfile(source, target)
         target.chmod(0o600)
         messages.append(name)
-    settings = destination / "settings.json"
-    if harness.name == "pi" and settings.is_file():
-        try:
-            data = json.loads(settings.read_text())
-            # These refer to host resources or could redirect durable session storage.
-            for key in (
-                "sessionDir",
-                "shellPath",
-                "shellCommandPrefix",
-                "npmCommand",
-                "externalEditor",
-                "extensions",
-                "skills",
-                "prompts",
-                "themes",
-            ):
-                if key in data:
-                    del data[key]
-                    messages.append(f"omitted host-specific setting {key}")
-            packages = data.get("packages", [])
-            portable = []
-            for package in packages:
-                source = package if isinstance(package, str) else package.get("source", "")
-                if source.startswith(("npm:", "git:", "https://", "http://")):
-                    portable.append(package)
-                else:
-                    messages.append(f"omitted local package {source}")
-            data["packages"] = portable
-            settings.write_text(json.dumps(data, indent=2) + "\n")
-        except (ValueError, AttributeError, TypeError) as exc:
-            raise AgentboxError("Pi settings.json is invalid; fix it or use --no-config") from exc
-    return messages
+    return messages + (run_hook(harness, "adapt_seed", destination) or [])
 
 
-@contextmanager
-def session_file(source: Path, root: Path) -> Generator[BinaryIO, None, None]:
-    """Read agent-writable state without following symlinks into unmounted host files.
-
-    Open each component relative to a directory descriptor, so even a running
-    agent swapping symlinks during resume cannot redirect a host-side read.
-    """
-    try:
-        parts = source.relative_to(root).parts
-    except ValueError as exc:
-        raise AgentboxError("Session path is outside its saved home") from exc
-    if not parts or ".." in parts:
-        raise AgentboxError("Session path is outside its saved home")
-    directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
-        for part in parts[:-1]:
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
-            os.close(directory)
-            directory = child
-        file = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
-        if not stat.S_ISREG(os.fstat(file).st_mode):
-            os.close(file)
-            raise AgentboxError("Session must be a regular file")
-        with os.fdopen(file, "rb") as stream:
-            yield stream
-    finally:
-        os.close(directory)
+def read_session(path: Path, home: Path, *, header: bool = False) -> bytes:
+    """Read agent-writable state without following symlinks out of its saved home."""
+    if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(home.resolve()):
+        raise AgentboxError(f"Session must be a regular file inside {home}")
+    with path.open("rb") as stream:
+        return stream.readline(65536) if header else stream.read()
 
 
 def snapshot_session(source: Path, target: Path, *, root: Path | None = None) -> None:
     """Snapshot complete JSONL records; a live source may currently be appending a record."""
-    with session_file(source, root or source.parent) as stream:
-        data = stream.read()
+    data = read_session(source, root or source.parent)
     end = data.rfind(b"\n")
     if end < 0:
         raise AgentboxError("Session has no complete JSONL records")

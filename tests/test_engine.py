@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from agentbox.engine import MANAGED, OWNER, Container, Engine
+from agentbox.engine import MANAGED, Engine
 from agentbox.errors import AgentboxError
 
 
@@ -14,8 +14,8 @@ def test_ownership_filter(monkeypatch: pytest.MonkeyPatch) -> None:
 
     data = [
         row("unrelated", {}),
-        row("wrong-owner", {MANAGED: "1", OWNER: "999999"}),
-        row("ours", {MANAGED: "1", OWNER: str(os.getuid())}),
+        row("other-tool", {"dev.other.managed": "1"}),
+        row("ours", {MANAGED: "1"}),
     ]
     monkeypatch.setattr(
         subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 0, json.dumps(data), "")
@@ -23,12 +23,24 @@ def test_ownership_filter(monkeypatch: pytest.MonkeyPatch) -> None:
     assert [c.id for c in Engine().containers()] == ["ours"]
 
 
-def test_remove_never_uses_global_all(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_remove_deletes_only_this_containers_volumes(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = []
+    volumes = [{"id": "ours-0"}, {"id": "ours-1"}, {"id": "ours2-0"}, {"id": "other"}]
+
+    def call(*args: str, **kwargs: bool) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, json.dumps(volumes), "")
+
     engine = Engine()
-    monkeypatch.setattr(engine, "call", lambda *a, **kw: calls.append(a))
-    engine.remove(Container("ours", "running", "p", "pi", "now"))
-    assert calls == [("stop", "ours"), ("delete", "ours")]
+    monkeypatch.setattr(engine, "call", call)
+    engine.remove("ours")
+    assert calls == [
+        ("stop", "ours"),
+        ("delete", "ours"),
+        ("volume", "list", "--format", "json"),
+        ("volume", "delete", "ours-0"),
+        ("volume", "delete", "ours-1"),
+    ]
 
 
 def test_stopped_service_message(monkeypatch: pytest.MonkeyPatch) -> None:

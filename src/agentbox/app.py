@@ -2,33 +2,36 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
-import os
 import re
 import shutil
 import tempfile
 import time
-from collections.abc import Generator
-from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from agentbox.config import ASSETS, Harness, Project, git_output
-from agentbox.engine import MANAGED, OWNER, Container, Engine
+from agentbox.engine import MANAGED, Container, Engine
 from agentbox.errors import AgentboxError
-from agentbox.state import Session, Store, package_sources, seed_config, snapshot_session
+from agentbox.state import Session, Store, build_files, seed_config, snapshot_session
 
+PREPARED = PurePosixPath("/opt/agentbox/prepared")
 PALETTE = (24, 25, 29, 53, 60, 88, 94, 96, 130)
 
 
-def mount(source: Path, target: str, *, readonly: bool = False) -> tuple[str, str]:
+def mount(source: Path | str, target: str, *, type: str = "bind") -> tuple[str, str]:
     if any(c in str(source) + target for c in ",\n\r"):
         raise AgentboxError("Mount paths cannot contain commas or newlines")
-    return (
-        "--mount",
-        f"type=bind,source={source},target={target}" + (",readonly" if readonly else ""),
-    )
+    return "--mount", f"type={type},source={source},target={target}"
+
+
+def git_identity(directory: Path) -> dict[str, str]:
+    """Only the author identity crosses over: no credential helpers, hooks or rewrites."""
+    env = {}
+    for key, name in (("user.name", "NAME"), ("user.email", "EMAIL")):
+        if value := git_output(directory, "config", "--get", key):
+            env[f"GIT_AUTHOR_{name}"] = env[f"GIT_COMMITTER_{name}"] = value
+    return env
 
 
 def accent(id: str) -> int:
@@ -37,7 +40,7 @@ def accent(id: str) -> int:
 
 def tmux_config(id: str, project: str, harness: str) -> str:
     # Do not allow project names to introduce tmux format expressions or commands.
-    label = re.sub(r"[^A-Za-z0-9_. /-]", "_", f" {project} | {harness} | {id} ")
+    label = re.sub(r"[^A-Za-z0-9_. /|-]", "_", f" {project} | {harness} | {id} ")
     color = accent(id)
     return (ASSETS / "runtime/tmux.conf").read_text() + (
         f"\nset -g status-style bg=colour{color},fg=colour255\n"
@@ -54,95 +57,59 @@ class App:
     def _image_key(self, project: Project) -> str:
         return hashlib.sha256(f"{self.store.root}:{project.root}".encode()).hexdigest()[:12]
 
-    @contextmanager
-    def _project_lock(self, project: Project) -> Generator[None, None, None]:
-        directory = self.store.root / "build-locks"
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with (directory / self._image_key(project)).open("w") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            yield
-
-    def _prepared_image(self, project: Project, harness: Harness, packages: tuple[str, ...]) -> str:
+    def _prepared_image(self, project: Project, harness: Harness, files: dict[str, str]) -> str:
         # A separate namespace prevents old, unprepared images from taking the fast path.
-        variant = hashlib.sha256(json.dumps(packages).encode()).hexdigest()[:12]
+        variant = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()[:12]
         return f"agentbox-{harness.name}-{self._image_key(project)}-prepared-{variant}:latest"
 
-    def build(
-        self,
-        project: Project,
-        harness: Harness,
-        *,
-        no_config: bool = False,
-        keep_builder: bool = False,
-    ) -> str:
-        packages = package_sources(harness, no_config=no_config)
-        with self._project_lock(project):
-            return self._build(project, harness, packages, keep_builder=keep_builder)
-
-    def _build(
-        self,
-        project: Project,
-        harness: Harness,
-        packages: tuple[str, ...],
-        *,
-        keep_builder: bool = False,
-    ) -> str:
+    def build(self, project: Project, harness: Harness, *, no_config: bool = False) -> str:
         self.engine.require_running()
+        return self._build(project, harness, build_files(harness, no_config=no_config))
+
+    def _build(self, project: Project, harness: Harness, files: dict[str, str]) -> str:
         key = self._image_key(project)
         base = f"agentbox-project-{key}:latest"
         runtime = f"agentbox-runtime-{key}:latest"
-        image = self._prepared_image(project, harness, packages)
-        common = (
-            "--platform",
-            "linux/arm64",
-            "--memory",
-            project.builder_memory,
-            "--cpus",
-            str(project.cpus),
-        )
+        image = self._prepared_image(project, harness, files)
         started = time.monotonic()
         print("Preparing environment; subsequent launches reuse the prepared image.", flush=True)
-        with (
-            self.engine.builder(
-                memory=project.builder_memory, cpus=project.cpus, keep=keep_builder
-            ),
-            tempfile.TemporaryDirectory(prefix="agentbox-build-") as temp,
-        ):
-            # Only harness assets and public package declarations enter this context.
-            context = Path(temp) / "harness"
-            shutil.copytree(harness.directory, context)
-            (context / "package-sources.json").write_text(json.dumps(packages) + "\n")
-            for tag, file, source, extra in (
-                (base, project.containerfile, project.context, ()),
-                (
-                    runtime,
-                    ASSETS / "runtime/Containerfile",
-                    ASSETS / "runtime",
-                    ("--build-arg", f"PROJECT_IMAGE={base}"),
-                ),
-                (
-                    image,
-                    context / "Containerfile",
-                    context,
-                    (
-                        "--build-arg",
-                        f"RUNTIME_IMAGE={runtime}",
-                        "--build-arg",
-                        f"PREPARE_REVISION={time.time_ns()}",
-                    ),
-                ),
-            ):
-                self.engine.call(
-                    "build",
-                    *common,
-                    "--tag",
-                    tag,
-                    "--file",
-                    str(file),
-                    *extra,
-                    str(source),
-                    capture=False,
+        # Stop a builder we start: it holds gigabytes of RAM and launches don't need it.
+        started_builder = not self.engine.builder_running()
+        try:
+            with tempfile.TemporaryDirectory(prefix="agentbox-build-") as temp:
+                # Only harness assets and hook-selected public declarations enter this context.
+                context = Path(temp) / "harness"
+                shutil.copytree(
+                    harness.directory, context, ignore=shutil.ignore_patterns("__pycache__")
                 )
+                for name, content in files.items():
+                    (context / name).write_text(content)
+                for tag, file, source, args in (
+                    (base, project.containerfile, project.context, {}),
+                    (
+                        runtime,
+                        ASSETS / "runtime/Containerfile",
+                        ASSETS / "runtime",
+                        {"PROJECT_IMAGE": base},
+                    ),
+                    (
+                        image,
+                        context / "Containerfile",
+                        context,
+                        {"RUNTIME_IMAGE": runtime, "PREPARE_REVISION": str(time.time_ns())},
+                    ),
+                ):
+                    self.engine.build(
+                        tag,
+                        file,
+                        source,
+                        args,
+                        memory=project.builder_memory,
+                        cpus=project.cpus,
+                    )
+        finally:
+            if started_builder:
+                self.engine.call("builder", "stop", check=False)
         print(f"Environment prepared in {time.monotonic() - started:.1f}s", flush=True)
         return image
 
@@ -153,38 +120,19 @@ class App:
         *,
         no_config: bool = False,
         session: Session | None = None,
-        keep_builder: bool = False,
     ) -> str:
         if self.store.root.is_relative_to(project.root):
             raise AgentboxError("Keep agentbox state outside the shared project directory")
-        # Hold the same lock through container creation, so another launch cannot
-        # replace a shared image tag between our build and container run.
-        with self._project_lock(project):
-            return self._new(
-                project, harness, no_config=no_config, session=session, keep_builder=keep_builder
-            )
-
-    def _new(
-        self,
-        project: Project,
-        harness: Harness,
-        *,
-        no_config: bool,
-        session: Session | None,
-        keep_builder: bool,
-    ) -> str:
         if session and not harness.resume_args:
             raise AgentboxError(f"{harness.name} does not support local session resumption")
         env = {**project.env, **harness.env}
-        if "PATH" in env or "HOME" in env:
-            raise AgentboxError("Project/harness environment must not override PATH or HOME")
         self.engine.require_running()
-        packages = package_sources(harness, no_config=no_config)
-        image = self._prepared_image(project, harness, packages)
+        files = build_files(harness, no_config=no_config)
+        image = self._prepared_image(project, harness, files)
         if self.engine.image_exists(image):
             print("Using prepared image; BuildKit not needed.", flush=True)
         else:
-            image = self._build(project, harness, packages, keep_builder=keep_builder)
+            image = self._build(project, harness, files)
         id, directory = self.store.create()
         home = directory / "home"
         (home / harness.session_dir).mkdir(parents=True, exist_ok=True)
@@ -192,6 +140,11 @@ class App:
             imported = seed_config(harness, home)
             if imported:
                 print("Seeded isolated config copy: " + ", ".join(imported), flush=True)
+        for relative in harness.prepared_dirs:
+            # Image-local and copy-on-write per container, never through the host mount.
+            link = home / relative
+            link.parent.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(PREPARED / relative)
         command = list(harness.command)
         if session:
             target = home / ".agentbox/resume.jsonl"
@@ -202,9 +155,8 @@ class App:
                 arg.replace("{session}", "/home/agent/.agentbox/resume.jsonl")
                 for arg in harness.resume_args
             )
-        note = home / ".agentbox/environment.md"
-        note.parent.mkdir(exist_ok=True)
-        note.write_text(
+        (home / ".agentbox").mkdir(exist_ok=True)
+        (home / ".agentbox/environment.md").write_text(
             f"You are running in agentbox instance {id}, a Linux ARM64 VM, as a non-root user.\n"
             f"The whole host checkout {project.root} is writable at that same path, including .git.\n"
             "Follow the project's worktree and landing policies; this is not a branch protection boundary.\n"
@@ -212,22 +164,7 @@ class App:
             "Any previous session's processes, temporary files and OS assumptions do not carry over.\n"
             "There is no host shell bridge. Do not assume macOS tools or the host editor are available.\n"
         )
-        control = directory / "control"
-        config = {
-            "root": str(project.root),
-            "cwd": str(project.cwd),
-            "artifacts": project.artifacts,
-            "prepare_commands": project.prepare_commands,
-            "prepared_dirs": harness.prepared_dirs,
-            "command": command,
-            "git_identity": {
-                key: value
-                for key in ("user.name", "user.email")
-                if (value := git_output(project.cwd, "config", "--get", key))
-            },
-        }
-        (control / "project.json").write_text(json.dumps(config, indent=2) + "\n")
-        (control / "tmux.conf").write_text(tmux_config(id, project.root.name, harness.name))
+        (home / ".agentbox/tmux.conf").write_text(tmux_config(id, project.root.name, harness.name))
         metadata = {
             "id": id,
             "project": str(project.cwd),
@@ -240,8 +177,11 @@ class App:
         }
         (directory / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
         flags: list[str] = []
-        for key, value in env.items():
+        for key, value in {**env, **git_identity(project.cwd)}.items():
             flags.extend(("--env", f"{key}={value}"))
+        artifacts = [str(project.root / artifact) for artifact in project.artifacts]
+        for i, target in enumerate(artifacts):
+            flags.extend(mount(f"{id}-{i}", target, type="volume"))
         started = time.monotonic()
         try:
             self.engine.call(
@@ -254,60 +194,53 @@ class App:
                 str(project.cpus),
                 "--memory",
                 project.memory,
-                "--cap-add",
-                "SYS_ADMIN",
                 "--label",
                 f"{MANAGED}=1",
-                "--label",
-                f"{OWNER}={os.getuid()}",
                 "--label",
                 f"dev.agentbox.project={project.root}",
                 "--label",
                 f"dev.agentbox.harness={harness.name}",
                 *mount(project.root, str(project.root)),
                 *mount(home, "/home/agent"),
-                *mount(control, "/etc/agentbox", readonly=True),
                 *flags,
                 image,
             )
-            self._wait_ready(id)
-            print(
-                f"VM/runtime ready in {time.monotonic() - started:.1f}s; starting {harness.name}.",
-                flush=True,
-            )
+            if artifacts:
+                # Fresh volumes are root-owned ext4 filesystems.
+                self.engine.exec(
+                    id,
+                    "sh",
+                    "-c",
+                    'chown agent:agent "$@" && find "$@" -maxdepth 1 -name lost+found -delete',
+                    "sh",
+                    *artifacts,
+                    user="root",
+                )
             self.engine.exec(
                 id,
                 "tmux",
                 "-u",
                 "-f",
-                "/etc/agentbox/tmux.conf",
+                "/home/agent/.agentbox/tmux.conf",
                 "new-session",
                 "-d",
                 "-s",
                 "agent",
                 "-c",
                 str(project.cwd),
-                "/opt/agentbox/launch.py",
+                "--",
+                *command,
             )
         except (AgentboxError, KeyboardInterrupt):
-            # Retain state for diagnosis, but do not leak a running VM on startup failure.
-            self.engine.call("stop", id, check=False)
-            self.engine.call("delete", id, check=False)
+            # Retain state for diagnosis, but do not leak a VM or its volumes.
+            self.engine.remove(id)
             raise
-        print(f"Created {id} · {harness.name} · {project.cwd}", flush=True)
+        print(
+            f"Created {id} · {harness.name} · {project.cwd} "
+            f"({time.monotonic() - started:.1f}s to start)",
+            flush=True,
+        )
         return id
-
-    def _wait_ready(self, id: str) -> None:
-        deadline = time.monotonic() + 45
-        while time.monotonic() < deadline:
-            if (
-                self.engine.exec(id, "test", "-f", "/run/agentbox-ready", check=False).returncode
-                == 0
-            ):
-                return
-            time.sleep(0.25)
-        logs = self.engine.call("logs", id, check=False)
-        raise AgentboxError(f"Container initialization failed:\n{logs.stdout}{logs.stderr}")
 
     def attach(self, container: Container) -> None:
         if container.state != "running":
@@ -329,14 +262,8 @@ class App:
         metadata = self.store.metadata(container.id)
         self.engine.connect(container.id, "/bin/bash", cwd=metadata["project"])
 
-    def describe(self, container: Container) -> str:
-        if container.state != "running":
-            return container.state
-        live = self.engine.exec(container.id, "tmux", "has-session", "-t", "agent", check=False)
-        return "running" if live.returncode == 0 else "exited (VM running)"
-
     def kill_all(self) -> int:
         containers = self.engine.containers()
         for container in containers:
-            self.engine.remove(container)
+            self.engine.remove(container.id)
         return len(containers)

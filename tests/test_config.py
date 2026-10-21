@@ -16,7 +16,6 @@ def test_self_hosting_manifest(tmp_path: Path) -> None:
     assert project.containerfile == tmp_path / ".agentbox/Containerfile"
     assert project.context == tmp_path / ".agentbox"
     assert project.artifacts == (".venv", ".pytest_cache", ".ruff_cache", "dist", ".worktrees")
-    assert project.prepare_commands == ("git", "uv")
     assert project.env == {
         "UV_LINK_MODE": "copy",
         "PYTHONDONTWRITEBYTECODE": "1",
@@ -61,6 +60,20 @@ def test_discovery_ignores_inherited_git_hook_scope(
     monkeypatch.setenv("GIT_WORK_TREE", "/wrong/project")
     monkeypatch.setenv("GIT_INDEX_FILE", "/wrong/index")
     assert Project.discover(tree).root == repository
+
+
+def test_worktree_hidden_by_artifact_rejected(repository: Path) -> None:
+    config = repository / ".agentbox.toml"
+    config.write_text(config.read_text().replace('".godot", "tests/bin"', '".godot", ".worktrees"'))
+    tree = repository / ".worktrees/feature"
+    subprocess.run(
+        ["git", "-C", str(repository), "worktree", "add", "-b", "feature", str(tree)],
+        check=True,
+        capture_output=True,
+    )
+    (tree / ".agentbox.toml").unlink()
+    with pytest.raises(AgentboxError, match="hidden"):
+        Project.discover(tree)
 
 
 def test_external_worktree_rejected(repository: Path, tmp_path: Path) -> None:

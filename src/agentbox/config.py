@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 import subprocess
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -13,27 +15,6 @@ from typing import Any
 from agentbox.errors import AgentboxError
 
 ASSETS = Path(__file__).parent / "assets"
-# Repository-local variables exported by Git hooks must not override --project.
-LOCAL_GIT_ENV = frozenset(
-    {
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_CONFIG",
-        "GIT_CONFIG_PARAMETERS",
-        "GIT_CONFIG_COUNT",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_IMPLICIT_WORK_TREE",
-        "GIT_GRAFT_FILE",
-        "GIT_INDEX_FILE",
-        "GIT_NO_REPLACE_OBJECTS",
-        "GIT_REPLACE_REF_BASE",
-        "GIT_PREFIX",
-        "GIT_SHALLOW_FILE",
-        "GIT_COMMON_DIR",
-        "GIT_INTERNAL_SUPER_PREFIX",
-    }
-)
 
 
 def table(value: Any, name: str) -> dict[str, Any]:
@@ -69,6 +50,17 @@ def relative(value: str) -> str:
     return str(p)
 
 
+def size(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[1-9][0-9]*[KMG]?", value):
+        raise AgentboxError(f"{name} must be a size such as '8G'")
+    return value
+
+
+def overlapping(paths: tuple[str, ...]) -> bool:
+    pure = [PurePosixPath(path) for path in paths]
+    return any(a.is_relative_to(b) for i, a in enumerate(pure) for b in pure[:i] + pure[i + 1 :])
+
+
 def load_toml(path: Path) -> dict[str, Any]:
     try:
         with path.open("rb") as stream:
@@ -83,7 +75,8 @@ def git_output(directory: Path, *args: str) -> str | None:
         capture_output=True,
         text=True,
         check=False,
-        env={key: value for key, value in os.environ.items() if key not in LOCAL_GIT_ENV},
+        # Variables exported by Git hooks (GIT_DIR, ...) must not override --project.
+        env={key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
     )
     return result.stdout.strip() if result.returncode == 0 else None
 
@@ -96,7 +89,6 @@ class Project:
     containerfile: Path
     context: Path
     artifacts: tuple[str, ...]
-    prepare_commands: tuple[str, ...]
     env: dict[str, str]
     cpus: int = 4
     memory: str = "8G"
@@ -136,23 +128,13 @@ class Project:
         if not context.is_dir() or not containerfile.is_file():
             raise AgentboxError(f"Image context or Containerfile missing in {config}")
         artifacts = tuple(relative(v) for v in strings(workspace.get("artifacts", []), "artifacts"))
-        for i, path in enumerate(artifacts):
-            if any(
-                PurePosixPath(path).is_relative_to(other)
-                or PurePosixPath(other).is_relative_to(path)
-                for other in artifacts[:i]
-            ):
-                raise AgentboxError("Artifact directories must not overlap")
-        commands = strings(workspace.get("prepare_commands", []), "prepare_commands")
-        if any(not re.fullmatch(r"[A-Za-z0-9_.+-]+", c) for c in commands):
-            raise AgentboxError("prepare_commands must contain executable names, not paths")
+        if overlapping(artifacts):
+            raise AgentboxError("Artifact directories must not overlap")
+        if any(cwd.is_relative_to(root / artifact) for artifact in artifacts):
+            raise AgentboxError(f"{cwd} is hidden by a VM-local artifact directory in the guest")
         cpus = container.get("cpus", 4)
-        memory = text(container.get("memory", "8G"), "container.memory")
-        builder_memory = text(builder.get("memory", "4G"), "builder.memory")
-        if not re.fullmatch(r"[1-9][0-9]*[KMG]?", builder_memory):
-            raise AgentboxError("Invalid builder.memory size (e.g. '4G')")
-        if type(cpus) is not int or cpus < 1 or not re.fullmatch(r"[1-9][0-9]*[KMG]?", memory):
-            raise AgentboxError("Invalid CPU count or memory size (e.g. cpus = 4, memory = '8G')")
+        if type(cpus) is not int or cpus < 1:
+            raise AgentboxError("container.cpus must be a positive integer")
         return cls(
             config,
             root,
@@ -160,11 +142,10 @@ class Project:
             containerfile,
             context,
             artifacts,
-            commands,
             environment(data.get("environment", {})),
             cpus,
-            memory,
-            builder_memory,
+            size(container.get("memory", "8G"), "container.memory"),
+            size(builder.get("memory", "4G"), "builder.memory"),
         )
 
 
@@ -195,13 +176,8 @@ class Harness:
             relative(v) for v in strings(data.get("prepared_dirs", []), "prepared_dirs")
         )
         session_dir = relative(text(data.get("session_dir"), "session_dir"))
-        for i, path in enumerate(prepared):
-            if any(
-                PurePosixPath(path).is_relative_to(other)
-                or PurePosixPath(other).is_relative_to(path)
-                for other in (*prepared[:i], session_dir)
-            ):
-                raise AgentboxError("Prepared directories must not overlap each other or sessions")
+        if overlapping((*prepared, session_dir)):
+            raise AgentboxError("Prepared directories must not overlap each other or sessions")
         if not (directory / "Containerfile").is_file():
             raise AgentboxError(f"Missing {directory / 'Containerfile'}")
         return cls(
@@ -216,6 +192,18 @@ class Harness:
             environment(data.get("environment", {})),
             prepared,
         )
+
+    def hook(self, name: str) -> Callable[..., Any] | None:
+        """An optional host-side adapter function from the profile's hooks.py."""
+        path = self.directory / "hooks.py"
+        if not path.is_file():
+            return None
+        spec = importlib.util.spec_from_file_location(f"agentbox_hooks_{self.name}", path)
+        if spec is None or spec.loader is None:
+            raise AgentboxError(f"Cannot load {path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return getattr(module, name, None)
 
 
 def harnesses() -> dict[str, Harness]:

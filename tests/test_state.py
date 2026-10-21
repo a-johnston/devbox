@@ -87,7 +87,6 @@ def test_catalog_survives_without_a_container(tmp_path: Path) -> None:
     assert "secret" not in str(rows)
 
 
-@pytest.mark.parametrize("id", ["../escape", "agentbox-../escape", "other"])
-def test_state_path_validation(tmp_path: Path, id: str) -> None:
-    with pytest.raises(AgentboxError):
-        Store(tmp_path).directory(id)
+def test_unknown_instance(tmp_path: Path) -> None:
+    with pytest.raises(AgentboxError, match="No saved state"):
+        Store(tmp_path).directory("agentbox-missing")

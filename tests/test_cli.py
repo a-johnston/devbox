@@ -23,46 +23,7 @@ def test_new_defaults_to_current_project() -> None:
 
 @pytest.mark.parametrize("action", ["new", "build", "resume"])
 def test_preparation_options(action: str) -> None:
-    args = parser().parse_args([action, "--keep-builder", "--no-config"])
-    assert args.keep_builder
-    assert args.no_config
-
-
-@pytest.mark.parametrize(
-    ("prefix", "action"),
-    [
-        ("n", "new"),
-        ("b", "build"),
-        ("a", "attach"),
-        ("sh", "shell"),
-        ("st", "stop"),
-        ("rm", "rm"),
-        ("l", "ls"),
-        ("se", "sessions"),
-        ("re", "resume"),
-        ("k", "kill-all"),
-        ("c", "completion"),
-    ],
-)
-def test_unique_command_prefixes(prefix: str, action: str) -> None:
-    extra = ["bash"] if action == "completion" else []
-    assert parser().parse_args([prefix, *extra]).action == action
-
-
-@pytest.mark.parametrize("prefix", ["r", "s"])
-def test_ambiguous_command_prefixes_fail(prefix: str, capsys: pytest.CaptureFixture[str]) -> None:
-    with pytest.raises(SystemExit) as exc:
-        parser().parse_args([prefix])
-    assert exc.value.code == 2
-    assert "invalid choice" in capsys.readouterr().err
-
-
-def test_command_prefix_does_not_change_option_values_or_ids() -> None:
-    args = parser().parse_args(["--state-dir", "new", "re", "n", "--project", "build"])
-    assert args.state_dir == Path("new")
-    assert args.action == "resume"
-    assert args.session == "n"
-    assert args.project == Path("build")
+    assert parser().parse_args([action, "--no-config"]).no_config
 
 
 def test_unknown_command_fails(capsys: pytest.CaptureFixture[str]) -> None:
@@ -91,49 +52,16 @@ def test_completion_script_does_not_create_state(
     ("line", "expected"),
     [
         ("agentbox n", "new"),
+        ("agentbox re", "resume"),
         ("agentbox ", "completion"),
         ("agentbox --st", "--state-dir"),
         ("agentbox new --", "--detach"),
-        ("agentbox n --", "--detach"),
-        ("agentbox c ", "fish"),
+        ("agentbox completion ", "fish"),
     ],
 )
 @pytest.mark.parametrize("shell", ["bash", "zsh", "fish"])
 def test_shell_completion(line: str, expected: str, tmp_path: Path, shell: str) -> None:
     assert expected in complete(line, tmp_path, shell=shell)
-
-
-@pytest.mark.parametrize("shell", ["bash", "zsh", "fish"])
-@pytest.mark.parametrize(
-    ("prefix", "expected"),
-    [
-        ("n", {"new"}),
-        ("r", {"rm", "resume"}),
-        ("s", {"shell", "stop", "sessions"}),
-        ("co", {"completion"}),
-        (
-            "",
-            {
-                "new",
-                "build",
-                "attach",
-                "shell",
-                "stop",
-                "rm",
-                "ls",
-                "sessions",
-                "resume",
-                "kill-all",
-                "completion",
-            },
-        ),
-    ],
-)
-def test_command_completion_omits_prefix_aliases(
-    prefix: str, expected: set[str], shell: str, tmp_path: Path
-) -> None:
-    completions = complete(f"agentbox {prefix}", tmp_path, shell=shell)
-    assert {value for value in completions if not value.startswith("-")} == expected
 
 
 def test_completion_does_not_filter_prefix_like_filenames(tmp_path: Path) -> None:

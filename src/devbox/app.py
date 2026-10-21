@@ -165,7 +165,7 @@ class App:
         args = self._build_args(harness)
         image = self._prepared_image(project, harness, files, args)
         if self.engine.image_exists(image):
-            print("Using prepared image; BuildKit not needed.", flush=True)
+            print("Using prepared image; no build needed.", flush=True)
         else:
             image = self._build(project, harness, files, args)
         # Only the harness process receives these: not the container config or saved state.
@@ -204,7 +204,7 @@ class App:
         (home / ".devbox").mkdir(exist_ok=True)
         architecture = host_platform().removeprefix("linux/").upper()
         (home / ".devbox/environment.md").write_text(
-            f"You are running in devbox instance {id}, a Linux {architecture} VM, as a non-root user.\n"
+            f"You are running in devbox instance {id}, a Linux {architecture} {self.engine.isolation}, as a non-root user.\n"
             f"The whole host checkout {project.root} is writable at that same path, including .git.\n"
             "Follow the project's worktree and landing policies; this is not a branch protection boundary.\n"
             "Declared build/import outputs are guest-local and will disappear if the container is removed.\n"
@@ -281,7 +281,7 @@ class App:
                 env=secrets,
             )
         except (DevboxError, KeyboardInterrupt):
-            # Retain state for diagnosis, but do not leak a VM or its volumes.
+            # Retain state for diagnosis, but do not leak a container or its volumes.
             self.engine.remove(id)
             raise
         print(

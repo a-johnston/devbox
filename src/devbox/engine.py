@@ -6,6 +6,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -178,6 +179,16 @@ class Engine(ABC):
 
 
 def select_engine() -> Engine:
+    """Apple's container on macOS and rootless Podman on Linux, unless DEVBOX_ENGINE says otherwise."""
     from devbox.apple import AppleEngine
+    from devbox.podman import PodmanEngine
 
-    return AppleEngine()
+    engines: dict[str, type[Engine]] = {"apple": AppleEngine, "podman": PodmanEngine}
+    if name := os.environ.get("DEVBOX_ENGINE"):
+        if name not in engines:
+            raise DevboxError(f"DEVBOX_ENGINE must be one of: {', '.join(engines)}")
+        return engines[name]()
+    defaults = {"darwin": "apple", "linux": "podman"}
+    if sys.platform not in defaults:
+        raise DevboxError(f"No container engine for {sys.platform}; set DEVBOX_ENGINE")
+    return engines[defaults[sys.platform]]()

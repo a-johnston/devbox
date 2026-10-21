@@ -1,21 +1,30 @@
 # devbox
 
-Run coding harnesses inside lightweight Linux VMs using [Apple's `container`](https://github.com/apple/container).
+Run coding harnesses inside lightweight Linux VMs using [Apple's `container`](https://github.com/apple/container)
+on macOS, or rootless [Podman](https://podman.io) containers on Linux.
 The project is mounted writable at its original path; the rest of your home stays on the host.
 Pi and Claude Code are the included harnesses.
 
 ## Install
 
-Requires Apple silicon macOS with `container` **1.5+**, [uv](https://docs.astral.sh/uv/), and
-[fzf](https://github.com/junegunn/fzf) for interactive pickers.
+Requires [uv](https://docs.astral.sh/uv/), and [fzf](https://github.com/junegunn/fzf) for
+interactive pickers, plus a container engine:
+
+- **macOS** (Apple silicon): Apple's `container` **1.5+**. Start it with `container system start`.
+- **Linux** (x86_64 or arm64): rootless Podman **4.3+** with cgroup v2. On Arch,
+  `sudo pacman -S podman fzf uv`. Your user needs `/etc/subuid` and `/etc/subgid` entries
+  (`sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $USER`); there is no
+  service to start. `podman info` should report `rootless: true`.
 
 ```sh
 cd ~/code/devbox
 uv sync --locked
 uv run prek install
 uv tool install --editable .            # put devbox on PATH
-container system start
 ```
+
+Devbox picks the engine from the host OS; set `DEVBOX_ENGINE=apple` or `DEVBOX_ENGINE=podman`
+to override it.
 
 Optional shell completion (commands, options and paths):
 
@@ -199,7 +208,11 @@ image. Every container gets its own writable copy.
 
 ## Security scope
 
-The VM protects unmounted host files and processes, **not the repository**. The agent can rewrite
+On macOS each container is its own VM. On Linux, rootless Podman containers share the host kernel
+but run in your user namespace, with your host user mapped to the guest `agent` user, so files the
+agent creates in the checkout are owned by you.
+
+The isolation protects unmounted host files and processes, **not the repository**. The agent can rewrite
 history, change hooks and scripts you later run on the host, use copied or stored credentials, and
 reach the network. There is no host shell bridge, socket or SSH agent. Treat manifests, Containerfiles and
 harness profiles as trusted executable configuration.
@@ -209,7 +222,7 @@ harness profiles as trusted executable configuration.
 ```sh
 uv run ruff check . --fix && uv run ruff format .
 uv run ty check .
-uv run pytest                          # no container service needed
+uv run pytest                          # needs neither container engine
 uv run prek run --all-files
 ```
 

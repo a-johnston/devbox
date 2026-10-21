@@ -127,7 +127,7 @@ class Project:
         if overlapping(artifacts):
             raise DevboxError("Artifact directories must not overlap")
         if any(cwd.is_relative_to(root / artifact) for artifact in artifacts):
-            raise DevboxError(f"{cwd} is hidden by a VM-local artifact directory in the guest")
+            raise DevboxError(f"{cwd} is hidden by a guest-local artifact directory in the guest")
         cpus = container.get("cpus", 4)
         if type(cpus) is not int or cpus < 1:
             raise DevboxError("container.cpus must be a positive integer")

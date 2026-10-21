@@ -5,8 +5,9 @@ import subprocess
 import pytest
 
 from devbox.apple import AppleEngine, builder_memory
-from devbox.engine import MANAGED, RunSpec, host_platform
+from devbox.engine import MANAGED, RunSpec, host_platform, select_engine
 from devbox.errors import DevboxError
+from devbox.podman import PodmanEngine
 
 
 def test_ownership_filter(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,3 +143,34 @@ def test_apple_run_translates_spec(monkeypatch: pytest.MonkeyPatch) -> None:
             "img:latest",
         )
     ]
+
+
+@pytest.mark.parametrize(
+    "platform,override,expected",
+    [
+        ("darwin", None, AppleEngine),
+        ("linux", None, PodmanEngine),
+        ("darwin", "podman", PodmanEngine),
+        ("linux", "apple", AppleEngine),
+        ("win32", "podman", PodmanEngine),
+    ],
+)
+def test_select_engine(
+    monkeypatch: pytest.MonkeyPatch, platform: str, override: str | None, expected: type
+) -> None:
+    monkeypatch.setattr("sys.platform", platform)
+    if override:
+        monkeypatch.setenv("DEVBOX_ENGINE", override)
+    else:
+        monkeypatch.delenv("DEVBOX_ENGINE", raising=False)
+    assert type(select_engine()) is expected
+
+
+def test_select_engine_rejects_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEVBOX_ENGINE", "docker")
+    with pytest.raises(DevboxError, match="DEVBOX_ENGINE"):
+        select_engine()
+    monkeypatch.delenv("DEVBOX_ENGINE")
+    monkeypatch.setattr("sys.platform", "win32")
+    with pytest.raises(DevboxError, match="win32"):
+        select_engine()

@@ -40,7 +40,6 @@ agentbox kill-all [--yes]
 agentbox sessions                       # saved conversations, including from removed containers
 agentbox resume [session-id]            # fork a saved conversation into a new container
 agentbox build pi                       # rebuild the environment image
-agentbox secret claude                  # store a harness token in the macOS Keychain
 ```
 
 Inside the container, **Ctrl-a, then d** detaches and returns to the host shell; the harness keeps
@@ -109,23 +108,27 @@ Host-specific settings and local packages are dropped with a notice. Portable np
 declarations are installed into the image at build time, so they must not contain credentials.
 `--no-config` skips all of this; use `/login` inside Pi instead.
 
-For Claude Code, these are `settings.json`, `keybindings.json`, `CLAUDE.md` and, on Linux hosts,
-`.credentials.json` from `~/.claude`. Hooks, status line, credential helpers, plugins and extra
-directories are dropped with a notice, and first-run onboarding is skipped. The in-container
-auto-updater is disabled.
+For Claude Code, these are `settings.json`, `keybindings.json` and `CLAUDE.md` from `~/.claude`.
+Hooks, status line, credential helpers, plugins and extra directories are dropped with a notice,
+and first-run onboarding is skipped. The in-container auto-updater is disabled.
 
-The host's Claude login lives in the macOS Keychain and is never copied: a shared login would
-rotate tokens out from under the host. Instead, create a separate long-lived token once and store
-it for agentbox:
+The host's Claude login (in the macOS Keychain, or `~/.claude/.credentials.json` on Linux) is never
+copied: a shared login would rotate tokens out from under the host. Instead, create a separate
+long-lived token once with `claude setup-token` (valid for a year) and set
+`CLAUDE_CODE_OAUTH_TOKEN` for agentbox only. Don't export it to your whole shell: the host's
+`claude` would use it instead of its own login. For example, wrap the launch with a
+password-manager CLI (`op run -- agentbox new claude`), or keep the token in a file only you can
+read and use a shell function:
 
-```sh
-claude setup-token                      # prints a token valid for a year
-agentbox secret claude                  # paste it; stored in the login Keychain
+```fish
+function agentbox --wraps agentbox
+    CLAUDE_CODE_OAUTH_TOKEN=(cat ~/.config/agentbox/claude-token) command agentbox $argv
+end
 ```
 
 New Claude containers then start logged in. The token is passed only to the harness process's
 environment (not the container configuration, image or saved state). Without one, use `/login`
-inside the container. `agentbox secret claude --remove` deletes it; `--no-config` skips it.
+inside the container. `--no-config` skips forwarding.
 
 Only Git `user.name`/`user.email` (as `GIT_AUTHOR_*`/`GIT_COMMITTER_*`) and `COLORTERM` are passed
 in; the manifest and profile can override `COLORTERM`. No other host environment is forwarded beyond
@@ -153,8 +156,8 @@ User profiles override or add to the built-ins in `$XDG_CONFIG_HOME/agentbox/har
   `{session_id}`, `state_dir`/`session_dir` under `/home/agent`, optional `session_glob` (default
   `**/*.jsonl`), `seed_dir` and `seed_files` to copy, `environment`, optional `prepared_dirs`,
   an optional host `version_command` whose version is passed as the `HARNESS_VERSION` build arg,
-  and optional `secrets`: environment variable names whose values `agentbox secret` keeps in the
-  Keychain.
+  and optional `secrets`: environment variable names forwarded from the host environment to the
+  harness process when set.
   Follow [the Pi profile](src/agentbox/assets/harnesses/pi/profile.toml).
 - `Containerfile`: takes `ARG RUNTIME_IMAGE` and builds `FROM` it.
 - Optional `hooks.py`: host-side `build_files(seed_dir)` returns extra build-context files (keyed

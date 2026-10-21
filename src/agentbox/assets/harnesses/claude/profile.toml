@@ -8,10 +8,10 @@ session_dir = ".claude/projects"
 session_glob = "*/*.jsonl"
 version_command = ["claude", "--version"]
 seed_dir = "~/.claude"
-# macOS keeps credentials in the Keychain; .credentials.json only exists on Linux hosts.
-seed_files = ["settings.json", "keybindings.json", "CLAUDE.md", ".credentials.json"]
+# Never the host login (Keychain or .credentials.json): sharing it would rotate the host's tokens.
+seed_files = ["settings.json", "keybindings.json", "CLAUDE.md"]
 
-# A long-lived token from `claude setup-token`, stored with `agentbox secret claude`.
+# A long-lived token from `claude setup-token`, forwarded from the host environment.
 secrets = ["CLAUDE_CODE_OAUTH_TOKEN"]
 
 [environment]

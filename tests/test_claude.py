@@ -91,3 +91,7 @@ def test_resume_places_snapshot_by_id_and_forks(
     key = "".join(c if c.isalnum() else "-" for c in str(project.cwd))
     assert (home / f".claude/projects/{key}/abc.jsonl").read_text() == source.read_text()
     assert engine.calls[-1][-3:] == ("--resume", "abc", "--fork-session")
+
+
+def test_claude_never_copies_the_host_login() -> None:
+    assert ".credentials.json" not in Harness.load(ASSETS / "harnesses/claude").seed_files

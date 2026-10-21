@@ -11,7 +11,6 @@ import tempfile
 import time
 from pathlib import Path, PurePosixPath
 
-from agentbox import keychain
 from agentbox.config import ASSETS, Harness, Project, git_output, relative
 from agentbox.engine import MANAGED, Container, Engine
 from agentbox.errors import AgentboxError
@@ -44,6 +43,11 @@ def git_identity(directory: Path) -> dict[str, str]:
         if value := git_output(directory, "config", "--get", key):
             env[f"GIT_AUTHOR_{name}"] = env[f"GIT_COMMITTER_{name}"] = value
     return env
+
+
+def environment_secrets(harness: Harness) -> dict[str, str]:
+    """Declared secrets that are set on the host; nothing else crosses over."""
+    return {name: value for name in harness.secrets if (value := os.environ.get(name))}
 
 
 def accent(id: str) -> int:
@@ -171,9 +175,9 @@ class App:
         else:
             image = self._build(project, harness, files, args)
         # Only the harness process receives these: not the container config or saved state.
-        secrets = {} if no_config else keychain.load(harness)
+        secrets = {} if no_config else environment_secrets(harness)
         if secrets:
-            print("Using stored credentials: " + ", ".join(secrets), flush=True)
+            print("Forwarding credentials from environment: " + ", ".join(secrets), flush=True)
         id, directory = self.store.create()
         home = directory / "home"
         (home / harness.session_dir).mkdir(parents=True, exist_ok=True)

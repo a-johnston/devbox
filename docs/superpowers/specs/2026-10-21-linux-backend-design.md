@@ -119,7 +119,7 @@ builder lifecycle stays inside the Apple backend.
 - An isolation/description string for `environment.md` and `ls`.
 
 **Selection.** Builder's call: choose by `sys.platform` (`darwin` → Apple, `linux` → Podman), with
-an `AGENTBOX_BACKEND` environment variable to override it. No new host config file.
+an `AGENTBOX_ENGINE` environment variable to override it. No new host config file.
 
 **Podman specifics** (verify each against the installed Podman; target ≥ 4.3):
 

@@ -265,3 +265,13 @@ def test_podman_remove_deletes_only_labelled_volumes(
         *(("volume", "rm", name) for name in listed.split()),
     ]
     assert recorder.kwargs[0] == {"check": False}
+
+
+def test_podman_run_explains_unreachable_systemd(monkeypatch: pytest.MonkeyPatch) -> None:
+    error = "crun: sd-bus call: Process org.freedesktop.systemd1 exited with status 1"
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 126, "", error)
+    )
+    spec = RunSpec("devbox-1", "img", 1, "1G", {}, (), (), {})
+    with pytest.raises(DevboxError, match="(?s)sd-bus call.*DBUS_SESSION_BUS_ADDRESS"):
+        PodmanEngine().run(spec)

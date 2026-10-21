@@ -74,7 +74,16 @@ class PodmanEngine(Engine):
                 f"{INSTANCE}={spec.name}",
                 name,
             )
-        super().run(spec)
+        try:
+            super().run(spec)
+        except DevboxError as exc:
+            if "org.freedesktop.systemd1" not in str(exc):
+                raise
+            raise DevboxError(
+                f"{exc}\nPodman could not reach systemd's user bus to create the container's "
+                "cgroup. Check that DBUS_SESSION_BUS_ADDRESS is unix:path=$XDG_RUNTIME_DIR/bus, "
+                'or set cgroup_manager = "cgroupfs" in ~/.config/containers/containers.conf.'
+            ) from exc
 
     def _rows(self, *filters: str) -> list[dict[str, Any]]:
         result = self.call("ps", "--all", *filters, "--format", "json")

@@ -148,12 +148,17 @@ Removing containers never removes this state. `resume` snapshots a session into 
 the harness forks it, so the original never has two writers. Delete an instance directory yourself
 to discard its conversations **and copied credentials**.
 
-The `resume` picker and `sessions` list show the harness, project path, title, then the full
-session ID (explicit IDs and prefixes still work as before):
+The `resume` picker and `sessions` list show aligned columns for the harness, project, title,
+then the full session ID (explicit IDs and prefixes still work as before):
 
 ```text
-pi  /path/to/project  Fix login flow  agentbox-aabbccdd/session-id
+pi      project  Fix login flow  agentbox-aabbccdd/session-id
+claude  project  Check tests     agentbox-eeff0011/session-id
 ```
+
+Projects display just their final directory name when it identifies one distinct saved project
+path. Multiple sessions for the same project still use the short name. If different projects
+share that directory name, both show their full paths. JSON output always retains the full path.
 
 Titles come from saved harness metadata: Pi session names (`/name`, including names set by
 extensions), or Claude custom titles (`/rename`), automatic titles, and session summaries, in

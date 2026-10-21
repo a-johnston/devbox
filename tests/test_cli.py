@@ -9,7 +9,7 @@ import pytest
 from test_app import FakeEngine
 
 from agentbox.app import App
-from agentbox.cli import dispatch, get_harness, main, match, parser, select, session_label
+from agentbox.cli import dispatch, get_harness, main, match, parser, select, session_labels
 from agentbox.engine import Container
 from agentbox.errors import AgentboxError
 from agentbox.state import Session, Store
@@ -133,8 +133,9 @@ def test_session_listing_and_picker(
     session = Session(
         "agentbox-aabb/conversation", "agentbox-aabb", "pi", "/project", tmp_path, title
     )
-    expected = f"pi  /project  {title or '(untitled)'}  agentbox-aabb/conversation"
-    assert session_label(session) == expected
+    expected = f"pi  project  {title or '(untitled)'}  agentbox-aabb/conversation"
+    labels = session_labels([session])
+    assert labels[session.id] == expected
     app = App(FakeEngine(), Store(tmp_path))
     monkeypatch.setattr(app.store, "sessions", lambda: [session])
     dispatch(parser().parse_args(["sessions"]), app)
@@ -143,6 +144,7 @@ def test_session_listing_and_picker(
     (row,) = json.loads(capsys.readouterr().out)
     assert row["title"] == title
     assert row["id"] == session.id
+    assert row["project"] == "/project"
 
     monkeypatch.setattr("agentbox.cli.require_terminal", lambda: None)
     monkeypatch.setattr("agentbox.cli.shutil.which", lambda _: "/bin/fzf")
@@ -152,10 +154,70 @@ def test_session_listing_and_picker(
         return subprocess.CompletedProcess(args, 0, f"0\t{expected}\n", "")
 
     monkeypatch.setattr("agentbox.cli.subprocess.run", pick)
-    assert match([session], None, "Sessions", lambda s: s.id, session_label) == session
-    assert (
-        match([session], "aabb/conversation", "Sessions", lambda s: s.id, session_label) == session
-    )
+
+    def label(s: Session) -> str:
+        return labels[s.id]
+
+    assert match([session], None, "Sessions", lambda s: s.id, label) == session
+    assert match([session], "aabb/conversation", "Sessions", lambda s: s.id, label) == session
+
+
+@pytest.mark.parametrize(
+    ("projects", "displayed"),
+    [
+        (["/work/alpha", "/work/beta"], ["alpha", "beta"]),
+        (["/work/alpha", "/work/alpha"], ["alpha", "alpha"]),
+        (["/work/alpha/", "/work/alpha"], ["alpha", "alpha"]),
+        (
+            ["/work/alpha", "/other/alpha", "/work/beta"],
+            ["/work/alpha", "/other/alpha", "beta"],
+        ),
+        (["/", "/work/my project"], ["/", "my project"]),
+    ],
+)
+def test_session_columns_and_project_names(
+    projects: list[str],
+    displayed: list[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    sessions = [
+        Session(
+            f"agentbox-aabb/{i}",
+            "agentbox-aabb",
+            "pi" if i % 2 == 0 else "claude",
+            project,
+            tmp_path,
+            "Short" if i % 2 == 0 else "A longer title",
+        )
+        for i, project in enumerate(projects)
+    ]
+    width = max(map(len, displayed))
+    expected = [
+        f"{s.harness:<6}  {project:<{width}}  {s.title:<14}  {s.id}"
+        for s, project in zip(sessions, displayed, strict=True)
+    ]
+    labels = session_labels(sessions)
+    assert [labels[s.id] for s in sessions] == expected
+    app = App(FakeEngine(), Store(tmp_path))
+    monkeypatch.setattr(app.store, "sessions", lambda: sessions)
+    dispatch(parser().parse_args(["sessions"]), app)
+    assert capsys.readouterr().out.splitlines() == expected
+
+
+def test_empty_session_labels() -> None:
+    assert session_labels([]) == {}
+
+
+def test_session_columns_use_terminal_character_widths(tmp_path: Path) -> None:
+    sessions = [
+        Session("a/1", "a", "pi", "/work/日本", tmp_path, "Cafe\u0301"),
+        Session("b/2", "b", "claude", "/work/repo", tmp_path, "日本"),
+    ]
+    labels = session_labels(sessions)
+    assert labels["a/1"] == "pi      日本  Cafe\u0301  a/1"
+    assert labels["b/2"] == "claude  repo  日本  b/2"
 
 
 def test_picker_cancel(monkeypatch: pytest.MonkeyPatch) -> None:

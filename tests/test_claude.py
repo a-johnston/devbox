@@ -5,10 +5,10 @@ from pathlib import Path
 import pytest
 from test_app import FakeEngine
 
-from agentbox.app import App
-from agentbox.config import ASSETS, Harness, Project
-from agentbox.errors import AgentboxError
-from agentbox.state import Session, Store, seed_config
+from devbox.app import App
+from devbox.config import ASSETS, Harness, Project
+from devbox.errors import DevboxError
+from devbox.state import Session, Store, seed_config
 
 
 @pytest.fixture
@@ -52,7 +52,7 @@ def test_seed_drops_host_specific_settings(tmp_path: Path, claude: Harness) -> N
 def test_invalid_settings_fail(tmp_path: Path, claude: Harness) -> None:
     claude.seed_dir.mkdir()
     (claude.seed_dir / "settings.json").write_text("[]")
-    with pytest.raises(AgentboxError, match="settings.json is invalid"):
+    with pytest.raises(DevboxError, match="settings.json is invalid"):
         seed_config(claude, tmp_path / "home")
 
 

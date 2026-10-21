@@ -4,11 +4,11 @@ from pathlib import Path
 import pytest
 from test_app import FakeEngine
 
-from agentbox.app import App, environment_secrets
-from agentbox.cli import parser
-from agentbox.config import ASSETS, Harness, Project
-from agentbox.errors import AgentboxError
-from agentbox.state import Store
+from devbox.app import App, environment_secrets
+from devbox.cli import parser
+from devbox.config import ASSETS, Harness, Project
+from devbox.errors import DevboxError
+from devbox.state import Store
 
 
 @pytest.fixture
@@ -70,7 +70,7 @@ def test_invalid_secret_names(tmp_path: Path, harness: Harness) -> None:
         text.replace("[environment]", 'secrets = ["not valid"]\n\n[environment]')
     )
     (tmp_path / "Containerfile").write_text("")
-    with pytest.raises(AgentboxError, match="environment"):
+    with pytest.raises(DevboxError, match="environment"):
         Harness.load(tmp_path)
 
 

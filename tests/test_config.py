@@ -4,17 +4,17 @@ from pathlib import Path
 
 import pytest
 
-from agentbox.config import Harness, Project, harnesses
-from agentbox.errors import AgentboxError
+from devbox.config import Harness, Project, harnesses
+from devbox.errors import DevboxError
 
 
 def test_self_hosting_manifest(tmp_path: Path) -> None:
     checkout = Path(__file__).resolve().parents[1]
-    shutil.copy(checkout / ".agentbox.toml", tmp_path)
-    shutil.copytree(checkout / ".agentbox", tmp_path / ".agentbox")
+    shutil.copy(checkout / ".devbox.toml", tmp_path)
+    shutil.copytree(checkout / ".devbox", tmp_path / ".devbox")
     project = Project.discover(tmp_path)
-    assert project.containerfile == tmp_path / ".agentbox/Containerfile"
-    assert project.context == tmp_path / ".agentbox"
+    assert project.containerfile == tmp_path / ".devbox/Containerfile"
+    assert project.context == tmp_path / ".devbox"
     assert project.artifacts == (".venv", ".pytest_cache", ".ruff_cache", "dist", ".worktrees")
     assert project.env == {"UV_LINK_MODE": "copy", "PYTHONDONTWRITEBYTECODE": "1"}
     assert (project.cpus, project.memory, project.builder_memory) == (4, "8G", "4G")
@@ -26,7 +26,7 @@ def test_discovery_from_subdirectory(repository: Path) -> None:
     project = Project.discover(child)
     assert project.root == repository
     assert project.cwd == child
-    assert project.context == repository / ".agentbox"
+    assert project.context == repository / ".devbox"
 
 
 def test_worktree_uses_primary_mount_and_falls_back_to_config(repository: Path) -> None:
@@ -36,11 +36,11 @@ def test_worktree_uses_primary_mount_and_falls_back_to_config(repository: Path) 
         check=True,
         capture_output=True,
     )
-    (tree / ".agentbox.toml").unlink()
+    (tree / ".devbox.toml").unlink()
     project = Project.discover(tree)
     assert project.root == repository
     assert project.cwd == tree
-    assert project.config == repository / ".agentbox.toml"
+    assert project.config == repository / ".devbox.toml"
 
 
 def test_discovery_ignores_inherited_git_hook_scope(
@@ -59,7 +59,7 @@ def test_discovery_ignores_inherited_git_hook_scope(
 
 
 def test_worktree_hidden_by_artifact_rejected(repository: Path) -> None:
-    config = repository / ".agentbox.toml"
+    config = repository / ".devbox.toml"
     config.write_text(config.read_text().replace('".godot", "tests/bin"', '".godot", ".worktrees"'))
     tree = repository / ".worktrees/feature"
     subprocess.run(
@@ -67,8 +67,8 @@ def test_worktree_hidden_by_artifact_rejected(repository: Path) -> None:
         check=True,
         capture_output=True,
     )
-    (tree / ".agentbox.toml").unlink()
-    with pytest.raises(AgentboxError, match="hidden"):
+    (tree / ".devbox.toml").unlink()
+    with pytest.raises(DevboxError, match="hidden"):
         Project.discover(tree)
 
 
@@ -79,26 +79,26 @@ def test_external_worktree_rejected(repository: Path, tmp_path: Path) -> None:
         check=True,
         capture_output=True,
     )
-    with pytest.raises(AgentboxError, match="inside the primary"):
+    with pytest.raises(DevboxError, match="inside the primary"):
         Project.discover(tree)
 
 
 @pytest.mark.parametrize("artifact", ["/tmp/cache", "../outside", ".git", ".git/objects", "."])
 def test_unsafe_artifacts_rejected(repository: Path, artifact: str) -> None:
-    config = repository / ".agentbox.toml"
+    config = repository / ".devbox.toml"
     config.write_text(
         config.read_text().replace('".godot", "tests/bin", "tests/obj"', f'"{artifact}"')
     )
-    with pytest.raises(AgentboxError, match="safe relative"):
+    with pytest.raises(DevboxError, match="safe relative"):
         Project.discover(repository)
 
 
 def test_overlapping_artifacts_rejected(repository: Path) -> None:
-    config = repository / ".agentbox.toml"
+    config = repository / ".devbox.toml"
     config.write_text(
         config.read_text().replace('".godot", "tests/bin", "tests/obj"', '"tests", "tests/obj"')
     )
-    with pytest.raises(AgentboxError, match="overlap"):
+    with pytest.raises(DevboxError, match="overlap"):
         Project.discover(repository)
 
 
@@ -113,14 +113,14 @@ def test_overlapping_artifacts_rejected(repository: Path) -> None:
     ],
 )
 def test_invalid_resources_and_environment(repository: Path, suffix: str) -> None:
-    with (repository / ".agentbox.toml").open("a") as stream:
+    with (repository / ".devbox.toml").open("a") as stream:
         stream.write(suffix)
-    with pytest.raises(AgentboxError):
+    with pytest.raises(DevboxError):
         Project.discover(repository)
 
 
 def test_builder_memory_is_independent(repository: Path) -> None:
-    with (repository / ".agentbox.toml").open("a") as stream:
+    with (repository / ".devbox.toml").open("a") as stream:
         stream.write('\n[builder]\nmemory = "2G"\n')
     project = Project.discover(repository)
     assert project.builder_memory == "2G"
@@ -137,19 +137,19 @@ def test_prepared_dirs_cannot_cover_sessions(tmp_path: Path, harness: Harness, p
             'prepared_dirs = [".pi/agent/npm", ".pi/agent/git"]', f'prepared_dirs = ["{path}"]'
         )
     )
-    with pytest.raises(AgentboxError, match="overlap"):
+    with pytest.raises(DevboxError, match="overlap"):
         Harness.load(tmp_path)
 
 
 def test_missing_config(tmp_path: Path) -> None:
-    with pytest.raises(AgentboxError, match="No .agentbox.toml"):
+    with pytest.raises(DevboxError, match="No .devbox.toml"):
         Project.discover(tmp_path)
 
 
 def test_custom_profile_overrides_builtin(
     tmp_path: Path, harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    target = tmp_path / "agentbox/harnesses/pi"
+    target = tmp_path / "devbox/harnesses/pi"
     target.mkdir(parents=True)
     (target / "profile.toml").write_text(
         (harness.directory / "profile.toml")

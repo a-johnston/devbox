@@ -12,26 +12,26 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from agentbox.errors import AgentboxError
+from devbox.errors import DevboxError
 
 ASSETS = Path(__file__).parent / "assets"
 
 
 def table(value: Any, name: str) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise AgentboxError(f"{name} must be a table")
+        raise DevboxError(f"{name} must be a table")
     return value
 
 
 def strings(value: Any, name: str) -> tuple[str, ...]:
     if not isinstance(value, list) or any(not isinstance(v, str) or not v for v in value):
-        raise AgentboxError(f"{name} must be an array of nonempty strings")
+        raise DevboxError(f"{name} must be an array of nonempty strings")
     return tuple(value)
 
 
 def text(value: Any, name: str) -> str:
     if not isinstance(value, str) or not value:
-        raise AgentboxError(f"{name} must be a nonempty string")
+        raise DevboxError(f"{name} must be a nonempty string")
     return value
 
 
@@ -39,20 +39,20 @@ def environment(value: Any) -> dict[str, str]:
     result = table(value, "environment")
     for key, val in result.items():
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) or not isinstance(val, str):
-            raise AgentboxError("environment entries must be NAME = 'string'")
+            raise DevboxError("environment entries must be NAME = 'string'")
     return dict(result)
 
 
 def relative(value: str) -> str:
     p = PurePosixPath(value)
     if p.is_absolute() or ".." in p.parts or not p.parts or p.parts[0] == ".git":
-        raise AgentboxError(f"Expected a safe relative directory, got {value!r}")
+        raise DevboxError(f"Expected a safe relative directory, got {value!r}")
     return str(p)
 
 
 def size(value: Any, name: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[1-9][0-9]*[KMG]?", value):
-        raise AgentboxError(f"{name} must be a size such as '8G'")
+        raise DevboxError(f"{name} must be a size such as '8G'")
     return value
 
 
@@ -66,7 +66,7 @@ def load_toml(path: Path) -> dict[str, Any]:
         with path.open("rb") as stream:
             return tomllib.load(stream)
     except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise AgentboxError(f"Cannot read {path}: {exc}") from exc
+        raise DevboxError(f"Cannot read {path}: {exc}") from exc
 
 
 def git_output(directory: Path, *args: str) -> str | None:
@@ -98,25 +98,23 @@ class Project:
     def discover(cls, directory: Path) -> Project:
         cwd = directory.expanduser().resolve()
         if not cwd.is_dir():
-            raise AgentboxError(f"Project directory does not exist: {cwd}")
+            raise DevboxError(f"Project directory does not exist: {cwd}")
         common = git_output(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
         # Only a normal repository's .git directory identifies a primary checkout.
         # Bare repos and linked worktrees outside that checkout are not workspace mounts.
         primary = Path(common).parent if common and Path(common).name == ".git" else None
-        candidates = [p / ".agentbox.toml" for p in (cwd, *cwd.parents)]
+        candidates = [p / ".devbox.toml" for p in (cwd, *cwd.parents)]
         if primary:
-            candidates.append(primary / ".agentbox.toml")
+            candidates.append(primary / ".devbox.toml")
         config = next((p for p in candidates if p.is_file()), None)
         if config is None:
-            raise AgentboxError(f"No .agentbox.toml found for {cwd}")
+            raise DevboxError(f"No .devbox.toml found for {cwd}")
         root = primary or config.parent
         if not cwd.is_relative_to(root):
-            raise AgentboxError(
-                "Worktrees must live inside the primary checkout (e.g. .worktrees/)"
-            )
+            raise DevboxError("Worktrees must live inside the primary checkout (e.g. .worktrees/)")
         data = load_toml(config)
         if data.get("version") != 1:
-            raise AgentboxError(f"{config}: expected version = 1")
+            raise DevboxError(f"{config}: expected version = 1")
         image = table(data.get("image", {}), "image")
         workspace = table(data.get("workspace", {}), "workspace")
         container = table(data.get("container", {}), "container")
@@ -126,15 +124,15 @@ class Project:
             config.parent / text(image.get("containerfile", "Containerfile"), "image.containerfile")
         ).resolve()
         if not context.is_dir() or not containerfile.is_file():
-            raise AgentboxError(f"Image context or Containerfile missing in {config}")
+            raise DevboxError(f"Image context or Containerfile missing in {config}")
         artifacts = tuple(relative(v) for v in strings(workspace.get("artifacts", []), "artifacts"))
         if overlapping(artifacts):
-            raise AgentboxError("Artifact directories must not overlap")
+            raise DevboxError("Artifact directories must not overlap")
         if any(cwd.is_relative_to(root / artifact) for artifact in artifacts):
-            raise AgentboxError(f"{cwd} is hidden by a VM-local artifact directory in the guest")
+            raise DevboxError(f"{cwd} is hidden by a VM-local artifact directory in the guest")
         cpus = container.get("cpus", 4)
         if type(cpus) is not int or cpus < 1:
-            raise AgentboxError("container.cpus must be a positive integer")
+            raise DevboxError("container.cpus must be a positive integer")
         return cls(
             config,
             root,
@@ -170,13 +168,13 @@ class Harness:
         data = load_toml(directory / "profile.toml")
         name = text(data.get("name"), "harness.name")
         if not re.fullmatch(r"[a-z][a-z0-9-]*", name):
-            raise AgentboxError(f"Invalid harness name: {name!r}")
+            raise DevboxError(f"Invalid harness name: {name!r}")
         command = strings(data.get("command"), "command")
         resume = strings(data.get("resume_args", []), "resume_args")
         if not command or (
             resume and not any("{session}" in arg or "{session_id}" in arg for arg in resume)
         ):
-            raise AgentboxError(
+            raise DevboxError(
                 "Harness needs a command and {session} or {session_id} in resume_args"
             )
         prepared = tuple(
@@ -184,9 +182,9 @@ class Harness:
         )
         session_dir = relative(text(data.get("session_dir"), "session_dir"))
         if overlapping((*prepared, session_dir)):
-            raise AgentboxError("Prepared directories must not overlap each other or sessions")
+            raise DevboxError("Prepared directories must not overlap each other or sessions")
         if not (directory / "Containerfile").is_file():
-            raise AgentboxError(f"Missing {directory / 'Containerfile'}")
+            raise DevboxError(f"Missing {directory / 'Containerfile'}")
         return cls(
             name,
             directory,
@@ -208,9 +206,9 @@ class Harness:
         path = self.directory / "hooks.py"
         if not path.is_file():
             return None
-        spec = importlib.util.spec_from_file_location(f"agentbox_hooks_{self.name}", path)
+        spec = importlib.util.spec_from_file_location(f"devbox_hooks_{self.name}", path)
         if spec is None or spec.loader is None:
-            raise AgentboxError(f"Cannot load {path}")
+            raise DevboxError(f"Cannot load {path}")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return getattr(module, name, None)
@@ -220,7 +218,7 @@ def harnesses(*, strict: bool = True) -> dict[str, Harness]:
     """Built-in and user profiles; without `strict`, invalid profiles are skipped."""
     result = {}
     user = (
-        Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "agentbox/harnesses"
+        Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "devbox/harnesses"
     )
     for base in (ASSETS / "harnesses", user):
         if base.is_dir():
@@ -228,7 +226,7 @@ def harnesses(*, strict: bool = True) -> dict[str, Harness]:
                 if directory.is_dir() and (directory / "profile.toml").is_file():
                     try:
                         harness = Harness.load(directory)
-                    except AgentboxError:
+                    except DevboxError:
                         if strict:
                             raise
                         continue

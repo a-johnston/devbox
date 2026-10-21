@@ -4,8 +4,8 @@ import subprocess
 
 import pytest
 
-from agentbox.engine import MANAGED, Engine, host_platform
-from agentbox.errors import AgentboxError
+from devbox.engine import MANAGED, Engine, host_platform
+from devbox.errors import DevboxError
 
 
 def test_ownership_filter(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -49,7 +49,7 @@ def test_stopped_service_message(monkeypatch: pytest.MonkeyPatch) -> None:
         "run",
         lambda *a, **kw: subprocess.CompletedProcess(a, 0, "apiserver is not running", ""),
     )
-    with pytest.raises(AgentboxError, match="container system start"):
+    with pytest.raises(DevboxError, match="container system start"):
         Engine().require_running()
 
 
@@ -93,5 +93,5 @@ def test_host_platform(monkeypatch: pytest.MonkeyPatch, machine: str, expected: 
 @pytest.mark.parametrize("machine", ["riscv64", "armv7l", ""])
 def test_unsupported_host_platform(monkeypatch: pytest.MonkeyPatch, machine: str) -> None:
     monkeypatch.setattr("platform.machine", lambda: machine)
-    with pytest.raises(AgentboxError, match="Unsupported host architecture"):
+    with pytest.raises(DevboxError, match="Unsupported host architecture"):
         host_platform()

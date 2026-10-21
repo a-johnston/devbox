@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from agentbox.config import Harness, harnesses
-from agentbox.errors import AgentboxError
+from devbox.config import Harness, harnesses
+from devbox.errors import DevboxError
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,7 @@ class Store:
             (
                 root
                 or Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share")))
-                / "agentbox"
+                / "devbox"
             )
             .expanduser()
             .resolve()
@@ -45,7 +45,7 @@ class Store:
         return self.root / "instances"
 
     def create(self) -> tuple[str, Path]:
-        id = "agentbox-" + secrets.token_hex(4)
+        id = "devbox-" + secrets.token_hex(4)
         directory = self.instances / id
         directory.mkdir(parents=True, mode=0o700)
         (directory / "home").mkdir(mode=0o700)
@@ -54,14 +54,14 @@ class Store:
     def directory(self, id: str) -> Path:
         directory = self.instances / id
         if not (directory / "metadata.json").is_file():
-            raise AgentboxError(f"No saved state for {id}")
+            raise DevboxError(f"No saved state for {id}")
         return directory
 
     def metadata(self, id: str) -> dict[str, Any]:
         try:
             return json.loads((self.directory(id) / "metadata.json").read_text())
         except (OSError, ValueError) as exc:
-            raise AgentboxError(f"Cannot read saved state for {id}") from exc
+            raise DevboxError(f"Cannot read saved state for {id}") from exc
 
     def sessions(self) -> list[Session]:
         if not self.instances.exists():
@@ -81,7 +81,7 @@ class Store:
                     session_id = str(header.get("id", path.stem))
                     if not re.fullmatch(r"[A-Za-z0-9_.-]+", session_id):
                         continue
-                except (AgentboxError, OSError, ValueError, AttributeError):
+                except (DevboxError, OSError, ValueError, AttributeError):
                     continue
                 title = None
                 hook = hooks.get(metadata["harness"])
@@ -107,7 +107,7 @@ def run_hook(harness: Harness, name: str, *args: Any) -> Any:
     try:
         return hook(*args) if hook else None
     except ValueError as exc:
-        raise AgentboxError(str(exc)) from exc
+        raise DevboxError(str(exc)) from exc
 
 
 def build_files(harness: Harness, *, no_config: bool = False) -> dict[str, str]:
@@ -116,7 +116,7 @@ def build_files(harness: Harness, *, no_config: bool = False) -> dict[str, str]:
         return {}
     files = run_hook(harness, "build_files", harness.seed_dir) or {}
     if any("/" in name or name.startswith(".") for name in files):
-        raise AgentboxError(f"{harness.name} hooks returned an invalid build file name")
+        raise DevboxError(f"{harness.name} hooks returned an invalid build file name")
     return files
 
 
@@ -173,7 +173,7 @@ def clean_title(value: Any) -> str | None:
 def _open_session(path: Path, home: Path) -> BinaryIO:
     """Open agent-writable state without following symlinks out of its saved home."""
     if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(home.resolve()):
-        raise AgentboxError(f"Session must be a regular file inside {home}")
+        raise DevboxError(f"Session must be a regular file inside {home}")
     return path.open("rb")
 
 
@@ -204,7 +204,7 @@ def snapshot_session(source: Path, target: Path, *, root: Path | None = None) ->
     data = read_session(source, root or source.parent)
     end = data.rfind(b"\n")
     if end < 0:
-        raise AgentboxError("Session has no complete JSONL records")
+        raise DevboxError("Session has no complete JSONL records")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(data[: end + 1])
     target.chmod(0o600)

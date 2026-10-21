@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agentbox.config import ASSETS, Harness, Project
+from devbox.config import ASSETS, Harness, Project
 
 
 @pytest.fixture(autouse=True)
@@ -24,12 +24,12 @@ def repository(tmp_path: Path) -> Path:
     root = tmp_path / "project with spaces"
     root.mkdir()
     subprocess.run(["git", "init", "-b", "main", str(root)], check=True, capture_output=True)
-    (root / ".agentbox").mkdir()
-    (root / ".agentbox/Containerfile").write_text("FROM ubuntu:24.04\n")
-    (root / ".agentbox.toml").write_text("""version = 1
+    (root / ".devbox").mkdir()
+    (root / ".devbox/Containerfile").write_text("FROM ubuntu:24.04\n")
+    (root / ".devbox.toml").write_text("""version = 1
 [image]
-containerfile = ".agentbox/Containerfile"
-context = ".agentbox"
+containerfile = ".devbox/Containerfile"
+context = ".devbox"
 [workspace]
 artifacts = [".godot", "tests/bin", "tests/obj"]
 """)

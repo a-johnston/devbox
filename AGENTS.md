@@ -1,4 +1,4 @@
-# Agentbox
+# Devbox
 
 Python glue for Apple's `container` CLI. Development uses Python 3.15; maintain Python 3.12 compatibility.
 
@@ -19,7 +19,7 @@ Run `uv run pytest` after every source change, and run all prek hooks before req
 When dependencies change, update `uv.lock` alongside `pyproject.toml` and run `uv sync --locked`
 in the affected checkout/worktree. After landing, also sync the primary checkout's `.venv`.
 An editable install picks up source edits, but does not automatically install new dependencies:
-if runtime dependencies change and Agentbox is installed with `uv tool`, refresh that separate
+if runtime dependencies change and Devbox is installed with `uv tool`, refresh that separate
 managed environment with `uv tool install --editable . --force` from the primary checkout.
 Verify the installed tool's executable as well as `uv run` commands; they use separate environments.
 
@@ -46,7 +46,7 @@ squashing for a branch with at most one commit beyond its base.
 After approval, rebase onto the current `main`, apply any agreed squashing, and rerun
 `uv run prek run --all-files`. Land with `git merge --ff-only <branch>` from the primary checkout;
 never overwrite unrelated local changes. Remove the worktree and delete its branch only after
-confirming the changes are on `main`. Remove Agentbox containers mounting that worktree before
+confirming the changes are on `main`. Remove Devbox containers mounting that worktree before
 removing or renaming it.
 
 Keep the host wrapper independent of particular projects and harnesses. Project manifests own workspace mounts, generated directories and build dependencies. Harness profiles own installation, selected configuration and session conventions. Never mount the host home or expose a host command/socket bridge by default. Never use container-wide `--all` cleanup flags: filter our ownership labels first. Container removal must not delete saved conversations. Guest runtime helpers run under Linux; tests must not require a running container service unless explicitly invoked as integration checks.

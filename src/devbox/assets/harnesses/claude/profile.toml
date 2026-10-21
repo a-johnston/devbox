@@ -1,5 +1,5 @@
 name = "claude"
-command = ["claude", "--append-system-prompt-file", "/home/agent/.agentbox/environment.md"]
+command = ["claude", "--append-system-prompt-file", "/home/agent/.devbox/environment.md"]
 # Claude resumes by ID; always fork, so the source session never has two writers.
 resume_args = ["--resume", "{session_id}", "--fork-session"]
 state_dir = ".claude"

@@ -1,9 +1,9 @@
-# Agentbox project manifest. Paths are relative to this file.
+# Devbox project manifest. Paths are relative to this file.
 version = 1
 
 [image]
-containerfile = ".agentbox/Containerfile"
-context = ".agentbox"                   # keep source, .git and worktrees out of builds
+containerfile = ".devbox/Containerfile"
+context = ".devbox"                   # keep source, .git and worktrees out of builds
 
 [container]
 cpus = 4
@@ -14,7 +14,7 @@ memory = "4G"
 
 [workspace]
 # Container-local volumes over these paths. .worktrees keeps guest-created worktrees
-# (and their outputs) in the VM: commit before `agentbox rm`.
+# (and their outputs) in the VM: commit before `devbox rm`.
 artifacts = [".venv", ".pytest_cache", ".ruff_cache", "dist", ".worktrees"]
 
 [environment]

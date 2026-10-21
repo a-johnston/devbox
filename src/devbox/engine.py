@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agentbox.errors import AgentboxError
+from devbox.errors import DevboxError
 
-MANAGED = "dev.agentbox.managed"
+MANAGED = "dev.devbox.managed"
 PLATFORMS = {
     "arm64": "linux/arm64",
     "aarch64": "linux/arm64",
@@ -26,7 +26,7 @@ def host_platform() -> str:
     """Images build natively; there is no cross-architecture emulation."""
     machine = platform.machine()
     if machine.lower() not in PLATFORMS:
-        raise AgentboxError(f"Unsupported host architecture: {machine!r}")
+        raise DevboxError(f"Unsupported host architecture: {machine!r}")
     return PLATFORMS[machine.lower()]
 
 
@@ -59,18 +59,18 @@ class Engine:
                 env={**os.environ, **env} if env else None,
             )
         except FileNotFoundError as exc:
-            raise AgentboxError(
+            raise DevboxError(
                 "Apple's container CLI is required: https://github.com/apple/container"
             ) from exc
         if check and result.returncode:
             detail = (result.stderr or "").strip() if capture else "See output above."
-            raise AgentboxError(f"container {args[0]} failed: {detail}")
+            raise DevboxError(f"container {args[0]} failed: {detail}")
         return result
 
     def require_running(self) -> None:
         result = self.call("system", "status", check=False)
         if result.returncode or "not running" in result.stdout:
-            raise AgentboxError("Start Apple's container service first: container system start")
+            raise DevboxError("Start Apple's container service first: container system start")
 
     def image_exists(self, reference: str) -> bool:
         result = self.call("image", "inspect", reference, check=False)
@@ -78,7 +78,7 @@ class Engine:
             return True
         if "image not found:" in result.stderr.lower():
             return False
-        raise AgentboxError(f"Cannot check prepared image: {result.stderr.strip()}")
+        raise DevboxError(f"Cannot check prepared image: {result.stderr.strip()}")
 
     def build(
         self,
@@ -125,17 +125,15 @@ class Engine:
                 Container(
                     row["id"],
                     row["status"]["state"],
-                    row["configuration"]["labels"].get("dev.agentbox.project", "?"),
-                    row["configuration"]["labels"].get("dev.agentbox.harness", "?"),
+                    row["configuration"]["labels"].get("dev.devbox.project", "?"),
+                    row["configuration"]["labels"].get("dev.devbox.harness", "?"),
                     row["configuration"].get("creationDate", "?"),
                 )
                 for row in rows
                 if row["configuration"].get("labels", {}).get(MANAGED) == "1"
             ]
         except (ValueError, KeyError, TypeError) as exc:
-            raise AgentboxError(
-                "Unexpected container JSON; agentbox requires container 1.5+"
-            ) from exc
+            raise DevboxError("Unexpected container JSON; devbox requires container 1.5+") from exc
 
     def exec(
         self,
@@ -153,7 +151,7 @@ class Engine:
         """Replace the wrapper; detaching the tmux client returns to the host shell."""
         executable = shutil.which(self.executable)
         if executable is None:
-            raise AgentboxError("container executable not found")
+            raise DevboxError("container executable not found")
         # Do not leak the outer tmux socket/name into the inner client.
         env = dict(os.environ)
         env.pop("TMUX", None)
@@ -174,5 +172,5 @@ class Engine:
         try:
             names = [row["id"] for row in json.loads(result.stdout)]
         except (ValueError, KeyError, TypeError) as exc:
-            raise AgentboxError("Unexpected volume JSON") from exc
+            raise DevboxError("Unexpected volume JSON") from exc
         return [name for name in names if name.startswith(f"{id}-")]

@@ -1,8 +1,8 @@
-# agentbox
+# devbox
 
 Run coding harnesses inside lightweight Linux VMs using [Apple's `container`](https://github.com/apple/container).
 The project is mounted writable at its original path; the rest of your home stays on the host.
-Pi and Claude Code are the included harnesses. The name is provisional.
+Pi and Claude Code are the included harnesses.
 
 ## Install
 
@@ -10,36 +10,36 @@ Requires Apple silicon macOS with `container` **1.5+**, [uv](https://docs.astral
 [fzf](https://github.com/junegunn/fzf) for interactive pickers.
 
 ```sh
-cd ~/code/agentbox
+cd ~/code/devbox
 uv sync --locked
 uv run prek install
-uv tool install --editable .            # put agentbox on PATH
+uv tool install --editable .            # put devbox on PATH
 container system start
 ```
 
 Optional shell completion (commands, options and paths):
 
 ```sh
-eval "$(agentbox completion bash)"      # ~/.bashrc
-eval "$(agentbox completion zsh)"       # ~/.zshrc, after compinit
-agentbox completion fish | source       # ~/.config/fish/config.fish
+eval "$(devbox completion bash)"      # ~/.bashrc
+eval "$(devbox completion zsh)"       # ~/.zshrc, after compinit
+devbox completion fish | source       # ~/.config/fish/config.fish
 ```
 
 ## Use
 
 ```sh
-agentbox new pi                         # --project defaults to .; omit the harness for a picker
-agentbox new claude
-agentbox new pi --detach
-agentbox ls                             # managed containers, including stopped ones
-agentbox attach [id]                    # IDs accept unique prefixes; omit for a picker
-agentbox shell [id]                     # plain non-root shell for inspection
-agentbox stop [id]                      # stops processes; container disk is kept
-agentbox rm [id]                        # removes the container and its artifact volumes
-agentbox kill-all [--yes]
-agentbox sessions                       # saved conversations, including from removed containers
-agentbox resume [session-id]            # fork a saved conversation into a new container
-agentbox build pi                       # rebuild the environment image
+devbox new pi                         # --project defaults to .; omit the harness for a picker
+devbox new claude
+devbox new pi --detach
+devbox ls                             # managed containers, including stopped ones
+devbox attach [id]                    # IDs accept unique prefixes; omit for a picker
+devbox shell [id]                     # plain non-root shell for inspection
+devbox stop [id]                      # stops processes; container disk is kept
+devbox rm [id]                        # removes the container and its artifact volumes
+devbox kill-all [--yes]
+devbox sessions                       # saved conversations, including from removed containers
+devbox resume [session-id]            # fork a saved conversation into a new container
+devbox build pi                       # rebuild the environment image
 ```
 
 Inside the container, **Ctrl-a, then d** detaches and returns to the host shell; the harness keeps
@@ -47,14 +47,14 @@ running. Stopping a container ends its processes, so use `resume` to continue a 
 
 ## Project manifest
 
-Put `.agentbox.toml` in the project (see this repo's [`.agentbox.toml`](.agentbox.toml)):
+Put `.devbox.toml` in the project (see this repo's [`.devbox.toml`](.devbox.toml)):
 
 ```toml
 version = 1
 
 [image]
-containerfile = ".agentbox/Containerfile"
-context = ".agentbox"                  # keep source and .git out of the build context
+containerfile = ".devbox/Containerfile"
+context = ".devbox"                  # keep source and .git out of the build context
 
 [container]
 cpus = 4
@@ -74,7 +74,7 @@ The manifest is discovered upwards from `--project`. A Git worktree inside the c
 to the primary checkout's manifest; the whole primary checkout is mounted.
 
 The project's Containerfile installs project dependencies only, on a Debian/Ubuntu (apt, glibc)
-base. Agentbox layers a terminal runtime and the selected harness on top.
+base. Devbox layers a terminal runtime and the selected harness on top.
 
 ### Artifacts and worktrees
 
@@ -92,8 +92,8 @@ up stale registrations.
 ### Image preparation
 
 The first `new` builds the project, runtime and harness layers into a prepared image. Later launches
-reuse it without starting the builder. Run `agentbox build <harness>` after changing a Containerfile,
-build context or Agentbox itself; it also refreshes unpinned harness packages. If Agentbox starts
+reuse it without starting the builder. Run `devbox build <harness>` after changing a Containerfile,
+build context or Devbox itself; it also refreshes unpinned harness packages. If Devbox starts
 the builder, it stops it again afterwards. A builder that was already running is left running.
 
 Pi and Claude Code install the same version as `pi --version`/`claude --version` on the host, so
@@ -115,14 +115,14 @@ and first-run onboarding is skipped. The in-container auto-updater is disabled.
 The host's Claude login (in the macOS Keychain, or `~/.claude/.credentials.json` on Linux) is never
 copied: a shared login would rotate tokens out from under the host. Instead, create a separate
 long-lived token once with `claude setup-token` (valid for a year) and set
-`CLAUDE_CODE_OAUTH_TOKEN` for agentbox only. Don't export it to your whole shell: the host's
+`CLAUDE_CODE_OAUTH_TOKEN` for devbox only. Don't export it to your whole shell: the host's
 `claude` would use it instead of its own login. For example, wrap the launch with a
-password-manager CLI (`op run -- agentbox new claude`), or keep the token in a file only you can
+password-manager CLI (`op run -- devbox new claude`), or keep the token in a file only you can
 read and use a shell function:
 
 ```fish
-function agentbox --wraps agentbox
-    CLAUDE_CODE_OAUTH_TOKEN=(cat ~/.config/agentbox/claude-token) command agentbox $argv
+function devbox --wraps devbox
+    CLAUDE_CODE_OAUTH_TOKEN=(cat ~/.config/devbox/claude-token) command devbox $argv
 end
 ```
 
@@ -136,7 +136,7 @@ what they declare.
 
 ## Saved state
 
-State lives under `$XDG_DATA_HOME/agentbox` (override with `--state-dir`):
+State lives under `$XDG_DATA_HOME/devbox` (override with `--state-dir`):
 
 ```text
 instances/<id>/
@@ -152,8 +152,8 @@ The `resume` picker and `sessions` list show aligned columns for the harness, pr
 then the full session ID (explicit IDs and prefixes still work as before):
 
 ```text
-pi      project  Fix login flow  agentbox-aabbccdd/session-id
-claude  project  Check tests     agentbox-eeff0011/session-id
+pi      project  Fix login flow  devbox-aabbccdd/session-id
+claude  project  Check tests     devbox-eeff0011/session-id
 ```
 
 Projects display just their final directory name when it identifies one distinct saved project
@@ -168,7 +168,7 @@ terminal-safe, and limited to 100 characters. `sessions --json` includes a nulla
 
 ## Additional harnesses
 
-User profiles override or add to the built-ins in `$XDG_CONFIG_HOME/agentbox/harnesses/<name>/`:
+User profiles override or add to the built-ins in `$XDG_CONFIG_HOME/devbox/harnesses/<name>/`:
 
 - `profile.toml`: the command, optional `resume_args` with `{session}` (snapshot path) or
   `{session_id}`, `state_dir`/`session_dir` under `/home/agent`, optional `session_glob` (default
@@ -176,17 +176,17 @@ User profiles override or add to the built-ins in `$XDG_CONFIG_HOME/agentbox/har
   an optional host `version_command` whose version is passed as the `HARNESS_VERSION` build arg,
   and optional `secrets`: environment variable names forwarded from the host environment to the
   harness process when set.
-  Follow [the Pi profile](src/agentbox/assets/harnesses/pi/profile.toml).
+  Follow [the Pi profile](src/devbox/assets/harnesses/pi/profile.toml).
 - `Containerfile`: takes `ARG RUNTIME_IMAGE` and builds `FROM` it.
 - Optional `hooks.py`: host-side `build_files(seed_dir)` returns extra build-context files (keyed
   into the image name), `adapt_seed(state_dir)` adjusts copied config, and
-  `resume_file(session_id, cwd)` places the resume snapshot (default `.agentbox/resume.jsonl`).
+  `resume_file(session_id, cwd)` places the resume snapshot (default `.devbox/resume.jsonl`).
   `session_title(records)` optionally returns a saved display title (or `None`); `records` is a
   streaming iterator of complete JSON objects from the transcript. Malformed, incomplete, and
   oversized records (over 64 KiB) are skipped. Extract title metadata only, not prompt text.
   Invalid profiles and failing title hooks only drop titles; listing and resuming still work.
 
-Each `prepared_dirs` entry is symlinked from the home to `/opt/agentbox/prepared/<path>` in the
+Each `prepared_dirs` entry is symlinked from the home to `/opt/devbox/prepared/<path>` in the
 image. Every container gets its own writable copy.
 
 ## Security scope
@@ -205,5 +205,5 @@ uv run pytest                          # no container service needed
 uv run prek run --all-files
 ```
 
-To work on Agentbox inside Agentbox, run `agentbox new pi --project ~/code/agentbox`, then
+To work on Devbox inside Devbox, run `devbox new pi --project ~/code/devbox`, then
 `uv sync --locked` in the guest. Create worktrees inside the guest.

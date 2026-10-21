@@ -4,9 +4,19 @@ from pathlib import Path
 
 import pytest
 
-from agentbox.config import Harness
-from agentbox.errors import AgentboxError
-from agentbox.state import Store, seed_config, snapshot_session
+from devbox.config import Harness
+from devbox.errors import DevboxError
+from devbox.state import Store, seed_config, snapshot_session
+
+
+def test_store_uses_devbox_namespace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    store = Store()
+    assert store.root == tmp_path / "data/devbox"
+    instance, directory = store.create()
+    assert instance.startswith("devbox-")
+    assert directory == store.root / "instances" / instance
+    assert (directory / "home").is_dir()
 
 
 def test_seed_is_copy_not_shared_state(tmp_path: Path, harness: Harness) -> None:
@@ -65,7 +75,7 @@ def test_snapshot_ignores_incomplete_record(tmp_path: Path) -> None:
 def test_empty_snapshot_fails(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.write_text("partial")
-    with pytest.raises(AgentboxError, match="no complete"):
+    with pytest.raises(DevboxError, match="no complete"):
         snapshot_session(source, tmp_path / "target")
 
 
@@ -170,7 +180,7 @@ def test_catalog_title_ignores_invalid_and_incomplete_records(tmp_path: Path) ->
 def test_catalog_survives_broken_profiles_and_loads_hooks_once(
     tmp_path: Path, harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    profiles = tmp_path / "config/agentbox/harnesses"
+    profiles = tmp_path / "config/devbox/harnesses"
     (profiles / "broken").mkdir(parents=True)
     (profiles / "broken/profile.toml").write_text('name = "broken"\n')
     custom = profiles / "custom"
@@ -216,5 +226,5 @@ def test_catalog_does_not_follow_session_symlinks(tmp_path: Path) -> None:
 
 
 def test_unknown_instance(tmp_path: Path) -> None:
-    with pytest.raises(AgentboxError, match="No saved state"):
-        Store(tmp_path).directory("agentbox-missing")
+    with pytest.raises(DevboxError, match="No saved state"):
+        Store(tmp_path).directory("devbox-missing")

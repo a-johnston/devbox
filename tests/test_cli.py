@@ -8,11 +8,25 @@ from pathlib import Path
 import pytest
 from test_app import FakeEngine
 
-from agentbox.app import App
-from agentbox.cli import dispatch, get_harness, main, match, parser, select, session_labels
-from agentbox.engine import Container
-from agentbox.errors import AgentboxError
-from agentbox.state import Session, Store
+from devbox.app import App
+from devbox.cli import dispatch, get_harness, main, match, parser, select, session_labels
+from devbox.engine import Container
+from devbox.errors import DevboxError
+from devbox.state import Session, Store
+
+
+@pytest.mark.parametrize("args", [["--help"], ["--version"], ["completion", "bash"]])
+def test_installed_devbox_entry_point(args: list[str]) -> None:
+    result = subprocess.run(
+        [str(Path(sys.executable).with_name("devbox")), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip()
+    if args != ["--version"]:
+        assert "devbox" in result.stdout
 
 
 def test_new_defaults_to_current_project() -> None:
@@ -41,23 +55,23 @@ def test_completion_script_does_not_create_state(
     def unexpected(*args: object, **kwargs: object) -> None:
         pytest.fail("completion must not initialize the application or run subprocesses")
 
-    monkeypatch.setattr("agentbox.cli.App", unexpected)
-    monkeypatch.setattr("agentbox.cli.subprocess.run", unexpected)
+    monkeypatch.setattr("devbox.cli.App", unexpected)
+    monkeypatch.setattr("devbox.cli.subprocess.run", unexpected)
     state = tmp_path / "state"
     assert main(["--state-dir", str(state), "completion", shell]) == 0
-    assert "agentbox" in capsys.readouterr().out
+    assert "devbox" in capsys.readouterr().out
     assert not state.exists()
 
 
 @pytest.mark.parametrize(
     ("line", "expected"),
     [
-        ("agentbox n", "new"),
-        ("agentbox re", "resume"),
-        ("agentbox ", "completion"),
-        ("agentbox --st", "--state-dir"),
-        ("agentbox new --", "--detach"),
-        ("agentbox completion ", "fish"),
+        ("devbox n", "new"),
+        ("devbox re", "resume"),
+        ("devbox ", "completion"),
+        ("devbox --st", "--state-dir"),
+        ("devbox new --", "--detach"),
+        ("devbox completion ", "fish"),
     ],
 )
 @pytest.mark.parametrize("shell", ["bash", "zsh", "fish"])
@@ -67,7 +81,7 @@ def test_shell_completion(line: str, expected: str, tmp_path: Path, shell: str) 
 
 def test_completion_does_not_filter_prefix_like_filenames(tmp_path: Path) -> None:
     (tmp_path / "n").touch()
-    assert "n" in complete("agentbox --state-dir ", tmp_path)
+    assert "n" in complete("devbox --state-dir ", tmp_path)
 
 
 def complete(line: str, tmp_path: Path, *, shell: str = "bash") -> list[str]:
@@ -76,7 +90,7 @@ def complete(line: str, tmp_path: Path, *, shell: str = "bash") -> list[str]:
     output = tmp_path / "completions"
     state = tmp_path / "state"
     result = subprocess.run(
-        [sys.executable, "-m", "agentbox.cli"],
+        [sys.executable, "-m", "devbox.cli"],
         cwd=tmp_path,
         env={
             **os.environ,
@@ -100,24 +114,22 @@ def complete(line: str, tmp_path: Path, *, shell: str = "bash") -> list[str]:
 
 
 def test_prefix_selection() -> None:
-    assert (
-        match(["agentbox-aabb", "agentbox-bbcc"], "aab", "Containers", str, str) == "agentbox-aabb"
-    )
-    with pytest.raises(AgentboxError, match="matches 2"):
+    assert match(["devbox-aabb", "devbox-bbcc"], "aab", "Containers", str, str) == "devbox-aabb"
+    with pytest.raises(DevboxError, match="matches 2"):
         match(["aa", "ab"], "a", "Containers", str, str)
 
 
 def test_missing_argument_without_terminal_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-    with pytest.raises(AgentboxError, match="terminal"):
+    with pytest.raises(DevboxError, match="terminal"):
         select(["pi"], "Harnesses", str)
 
 
 def test_picker_uses_fzf(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("agentbox.cli.require_terminal", lambda: None)
-    monkeypatch.setattr("agentbox.cli.shutil.which", lambda _: "/bin/fzf")
+    monkeypatch.setattr("devbox.cli.require_terminal", lambda: None)
+    monkeypatch.setattr("devbox.cli.shutil.which", lambda _: "/bin/fzf")
     monkeypatch.setattr(
-        "agentbox.cli.subprocess.run",
+        "devbox.cli.subprocess.run",
         lambda *a, **kw: subprocess.CompletedProcess(a, 0, "1\tsecond\n", ""),
     )
     assert select(["first", "second"], "Harnesses", str) == "second"
@@ -130,10 +142,8 @@ def test_session_listing_and_picker(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    session = Session(
-        "agentbox-aabb/conversation", "agentbox-aabb", "pi", "/project", tmp_path, title
-    )
-    expected = f"pi  project  {title or '(untitled)'}  agentbox-aabb/conversation"
+    session = Session("devbox-aabb/conversation", "devbox-aabb", "pi", "/project", tmp_path, title)
+    expected = f"pi  project  {title or '(untitled)'}  devbox-aabb/conversation"
     labels = session_labels([session])
     assert labels[session.id] == expected
     app = App(FakeEngine(), Store(tmp_path))
@@ -146,14 +156,14 @@ def test_session_listing_and_picker(
     assert row["id"] == session.id
     assert row["project"] == "/project"
 
-    monkeypatch.setattr("agentbox.cli.require_terminal", lambda: None)
-    monkeypatch.setattr("agentbox.cli.shutil.which", lambda _: "/bin/fzf")
+    monkeypatch.setattr("devbox.cli.require_terminal", lambda: None)
+    monkeypatch.setattr("devbox.cli.shutil.which", lambda _: "/bin/fzf")
 
     def pick(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         assert kwargs["input"] == f"0\t{expected}\n"
         return subprocess.CompletedProcess(args, 0, f"0\t{expected}\n", "")
 
-    monkeypatch.setattr("agentbox.cli.subprocess.run", pick)
+    monkeypatch.setattr("devbox.cli.subprocess.run", pick)
 
     def label(s: Session) -> str:
         return labels[s.id]
@@ -184,8 +194,8 @@ def test_session_columns_and_project_names(
 ) -> None:
     sessions = [
         Session(
-            f"agentbox-aabb/{i}",
-            "agentbox-aabb",
+            f"devbox-aabb/{i}",
+            "devbox-aabb",
             "pi" if i % 2 == 0 else "claude",
             project,
             tmp_path,
@@ -221,26 +231,26 @@ def test_session_columns_use_terminal_character_widths(tmp_path: Path) -> None:
 
 
 def test_picker_cancel(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("agentbox.cli.require_terminal", lambda: None)
-    monkeypatch.setattr("agentbox.cli.shutil.which", lambda _: "/bin/fzf")
+    monkeypatch.setattr("devbox.cli.require_terminal", lambda: None)
+    monkeypatch.setattr("devbox.cli.shutil.which", lambda _: "/bin/fzf")
     monkeypatch.setattr(
-        "agentbox.cli.subprocess.run", lambda *a, **kw: subprocess.CompletedProcess(a, 130, "", "")
+        "devbox.cli.subprocess.run", lambda *a, **kw: subprocess.CompletedProcess(a, 130, "", "")
     )
     with pytest.raises(KeyboardInterrupt):
         select(["pi"], "Harnesses", str)
 
 
 def test_unknown_harness() -> None:
-    with pytest.raises(AgentboxError, match="Unknown harness"):
+    with pytest.raises(DevboxError, match="Unknown harness"):
         get_harness("not-installed")
 
 
 def test_stop_explicit_id_needs_no_picker(tmp_path: Path) -> None:
     engine = FakeEngine()
-    engine.rows = [Container("agentbox-aabb", "running", "project", "pi", "now")]
+    engine.rows = [Container("devbox-aabb", "running", "project", "pi", "now")]
     app = App(engine, Store(tmp_path))
     dispatch(argparse.Namespace(action="stop", id="aab"), app)
-    assert engine.calls == [("stop", "agentbox-aabb")]
+    assert engine.calls == [("stop", "devbox-aabb")]
 
 
 def test_kill_all_noninteractive_requires_yes(
@@ -249,7 +259,7 @@ def test_kill_all_noninteractive_requires_yes(
     engine = FakeEngine()
     engine.rows = [Container("ours", "running", "project", "pi", "now")]
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-    with pytest.raises(AgentboxError, match="terminal"):
+    with pytest.raises(DevboxError, match="terminal"):
         dispatch(argparse.Namespace(action="kill-all", yes=False), App(engine, Store(tmp_path)))
     assert not engine.calls
 
@@ -261,8 +271,8 @@ def test_cli_text_is_platform_neutral() -> None:
 
 
 def test_missing_fzf_hint_is_platform_neutral(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("agentbox.cli.require_terminal", lambda: None)
-    monkeypatch.setattr("agentbox.cli.shutil.which", lambda _: None)
-    with pytest.raises(AgentboxError, match="requires fzf") as error:
+    monkeypatch.setattr("devbox.cli.require_terminal", lambda: None)
+    monkeypatch.setattr("devbox.cli.shutil.which", lambda _: None)
+    with pytest.raises(DevboxError, match="requires fzf") as error:
         select(["first"], "Harnesses", str)
     assert "brew" not in str(error.value)

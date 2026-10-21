@@ -6,11 +6,11 @@ from typing import Any
 
 import pytest
 
-from agentbox.app import App, accent, mount, tmux_config
-from agentbox.config import Harness, Project
-from agentbox.engine import Container, Engine
-from agentbox.errors import AgentboxError
-from agentbox.state import Session, Store
+from devbox.app import App, accent, mount, tmux_config
+from devbox.config import Harness, Project
+from devbox.engine import Container, Engine
+from devbox.errors import DevboxError
+from devbox.state import Session, Store
 
 
 class FakeEngine(Engine):
@@ -87,7 +87,7 @@ def test_new_composes_images_and_mounts_only_selected_paths(
         "tmux",
         "-u",
         "-f",
-        "/home/agent/.agentbox/tmux.conf",
+        "/home/agent/.devbox/tmux.conf",
         "new-session",
         "-d",
         "-s",
@@ -98,8 +98,8 @@ def test_new_composes_images_and_mounts_only_selected_paths(
     )
     assert list(startup[15:]) == list(harness.command)
     home = app.store.directory(id) / "home"
-    assert (home / ".pi/agent/npm").readlink() == Path("/opt/agentbox/prepared/.pi/agent/npm")
-    assert "prefix C-a" in (home / ".agentbox/tmux.conf").read_text()
+    assert (home / ".pi/agent/npm").readlink() == Path("/opt/devbox/prepared/.pi/agent/npm")
+    assert "prefix C-a" in (home / ".devbox/tmux.conf").read_text()
 
 
 def test_git_identity_is_passed_as_environment(
@@ -126,8 +126,8 @@ def test_resume_snapshots_and_forks(project: Project, harness: Harness, tmp_path
     session = Session(f"{original_id}/original", original_id, "pi", str(project.cwd), source)
     id = app.new(project, harness, no_config=True, session=session)
     home = app.store.directory(id) / "home"
-    assert (home / ".agentbox/resume.jsonl").read_text() == source.read_text()
-    assert engine.calls[-1][-2:] == ("--fork", "/home/agent/.agentbox/resume.jsonl")
+    assert (home / ".devbox/resume.jsonl").read_text() == source.read_text()
+    assert engine.calls[-1][-2:] == ("--fork", "/home/agent/.devbox/resume.jsonl")
 
 
 def test_failed_start_removes_vm_and_volumes_but_retains_state(
@@ -139,11 +139,11 @@ def test_failed_start_removes_vm_and_volumes_but_retains_state(
 
     def fail_tmux(*args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         if "tmux" in args:
-            raise AgentboxError("startup failed")
+            raise DevboxError("startup failed")
         return call(*args, **kwargs)
 
     monkeypatch.setattr(engine, "call", fail_tmux)
-    with pytest.raises(AgentboxError, match="startup failed"):
+    with pytest.raises(DevboxError, match="startup failed"):
         app.new(project, harness, no_config=True)
     assert [c[0] for c in engine.calls[-3:]] == ["stop", "delete", "volume"]
     assert len(list(app.store.instances.glob("*/metadata.json"))) == 1
@@ -180,7 +180,7 @@ def test_accent_is_stable_and_status_cannot_inject_tmux_commands() -> None:
 
 @pytest.mark.parametrize("path", ["/a,b", "/a\nb"])
 def test_mount_rejects_cli_delimiters(path: str) -> None:
-    with pytest.raises(AgentboxError):
+    with pytest.raises(DevboxError):
         mount(Path(path), "/workspace")
 
 
@@ -211,6 +211,6 @@ def test_builds_and_describes_the_host_architecture(
     id = app.new(project, harness, no_config=True)
     builds = [call for call in engine.calls if call[0] == "build"]
     assert [b[b.index("--platform") + 1] for b in builds] == ["linux/amd64"] * 3
-    text = (app.store.directory(id) / "home/.agentbox/environment.md").read_text()
-    assert f"agentbox instance {id}, a Linux AMD64 VM, as a non-root user." in text
+    text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()
+    assert f"devbox instance {id}, a Linux AMD64 VM, as a non-root user." in text
     assert "Do not assume host tools" in text

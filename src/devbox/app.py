@@ -11,10 +11,10 @@ import tempfile
 import time
 from pathlib import Path, PurePosixPath
 
-from agentbox.config import ASSETS, Harness, Project, git_output, relative
-from agentbox.engine import MANAGED, Container, Engine, host_platform
-from agentbox.errors import AgentboxError
-from agentbox.state import (
+from devbox.config import ASSETS, Harness, Project, git_output, relative
+from devbox.engine import MANAGED, Container, Engine, host_platform
+from devbox.errors import DevboxError
+from devbox.state import (
     Session,
     Store,
     build_files,
@@ -24,7 +24,7 @@ from agentbox.state import (
     snapshot_session,
 )
 
-PREPARED = PurePosixPath("/opt/agentbox/prepared")
+PREPARED = PurePosixPath("/opt/devbox/prepared")
 PALETTE = (24, 25, 29, 53, 60, 88, 94, 96, 130)
 # Terminal capabilities the guest cannot detect itself; manifests and profiles override them.
 INHERITED = ("COLORTERM",)
@@ -32,7 +32,7 @@ INHERITED = ("COLORTERM",)
 
 def mount(source: Path | str, target: str, *, type: str = "bind") -> tuple[str, str]:
     if any(c in str(source) + target for c in ",\n\r"):
-        raise AgentboxError("Mount paths cannot contain commas or newlines")
+        raise DevboxError("Mount paths cannot contain commas or newlines")
     return "--mount", f"type={type},source={source},target={target}"
 
 
@@ -81,7 +81,7 @@ class App:
             {"files": files, "args": args, "platform": host_platform()}, sort_keys=True
         )
         variant = hashlib.sha256(inputs.encode()).hexdigest()[:12]
-        return f"agentbox-{harness.name}-{self._image_key(project)}-prepared-{variant}:latest"
+        return f"devbox-{harness.name}-{self._image_key(project)}-prepared-{variant}:latest"
 
     def _build_args(self, harness: Harness) -> dict[str, str]:
         """Match the host's harness version; Containerfiles default to a pinned one."""
@@ -97,8 +97,8 @@ class App:
         self, project: Project, harness: Harness, files: dict[str, str], args: dict[str, str]
     ) -> str:
         key = self._image_key(project)
-        base = f"agentbox-project-{key}:latest"
-        runtime = f"agentbox-runtime-{key}:latest"
+        base = f"devbox-project-{key}:latest"
+        runtime = f"devbox-runtime-{key}:latest"
         image = self._prepared_image(project, harness, files, args)
         started = time.monotonic()
         print("Preparing environment; subsequent launches reuse the prepared image.", flush=True)
@@ -113,7 +113,7 @@ class App:
         # Stop a builder we start: it holds gigabytes of RAM and launches don't need it.
         started_builder = not self.engine.builder_running()
         try:
-            with tempfile.TemporaryDirectory(prefix="agentbox-build-") as temp:
+            with tempfile.TemporaryDirectory(prefix="devbox-build-") as temp:
                 # Only harness assets and hook-selected public declarations enter this context.
                 context = Path(temp) / "harness"
                 shutil.copytree(
@@ -164,9 +164,9 @@ class App:
         session: Session | None = None,
     ) -> str:
         if self.store.root.is_relative_to(project.root):
-            raise AgentboxError("Keep agentbox state outside the shared project directory")
+            raise DevboxError("Keep devbox state outside the shared project directory")
         if session and not harness.resume_args:
-            raise AgentboxError(f"{harness.name} does not support local session resumption")
+            raise DevboxError(f"{harness.name} does not support local session resumption")
         inherited = {key: os.environ[key] for key in INHERITED if key in os.environ}
         env = {**inherited, **project.env, **harness.env}
         self.engine.require_running()
@@ -199,7 +199,7 @@ class App:
             # Harnesses that resume by ID choose where their snapshot must live.
             target = relative(
                 run_hook(harness, "resume_file", session_id, str(project.cwd))
-                or ".agentbox/resume.jsonl"
+                or ".devbox/resume.jsonl"
             )
             snapshot_session(
                 session.path, home / target, root=self.store.directory(session.instance) / "home"
@@ -210,17 +210,17 @@ class App:
                 )
                 for arg in harness.resume_args
             )
-        (home / ".agentbox").mkdir(exist_ok=True)
+        (home / ".devbox").mkdir(exist_ok=True)
         architecture = host_platform().removeprefix("linux/").upper()
-        (home / ".agentbox/environment.md").write_text(
-            f"You are running in agentbox instance {id}, a Linux {architecture} VM, as a non-root user.\n"
+        (home / ".devbox/environment.md").write_text(
+            f"You are running in devbox instance {id}, a Linux {architecture} VM, as a non-root user.\n"
             f"The whole host checkout {project.root} is writable at that same path, including .git.\n"
             "Follow the project's worktree and landing policies; this is not a branch protection boundary.\n"
             "Declared build/import outputs are guest-local and will disappear if the container is removed.\n"
             "Any previous session's processes, temporary files and OS assumptions do not carry over.\n"
             "There is no host shell bridge. Do not assume host tools or the host editor are available.\n"
         )
-        (home / ".agentbox/tmux.conf").write_text(tmux_config(id, project.root.name, harness.name))
+        (home / ".devbox/tmux.conf").write_text(tmux_config(id, project.root.name, harness.name))
         metadata = {
             "id": id,
             "project": str(project.cwd),
@@ -254,9 +254,9 @@ class App:
                 "--label",
                 f"{MANAGED}=1",
                 "--label",
-                f"dev.agentbox.project={project.root}",
+                f"dev.devbox.project={project.root}",
                 "--label",
-                f"dev.agentbox.harness={harness.name}",
+                f"dev.devbox.harness={harness.name}",
                 *mount(project.root, str(project.root)),
                 *mount(home, "/home/agent"),
                 *flags,
@@ -289,7 +289,7 @@ class App:
                 "tmux",
                 "-u",
                 "-f",
-                "/home/agent/.agentbox/tmux.conf",
+                "/home/agent/.devbox/tmux.conf",
                 "new-session",
                 "-d",
                 "-s",
@@ -300,7 +300,7 @@ class App:
                 *command,
                 env=secrets,
             )
-        except (AgentboxError, KeyboardInterrupt):
+        except (DevboxError, KeyboardInterrupt):
             # Retain state for diagnosis, but do not leak a VM or its volumes.
             self.engine.remove(id)
             raise
@@ -313,13 +313,13 @@ class App:
 
     def attach(self, container: Container) -> None:
         if container.state != "running":
-            raise AgentboxError(
+            raise DevboxError(
                 f"{container.id} is stopped; resume a saved conversation in a new container"
             )
         if self.engine.exec(
             container.id, "tmux", "has-session", "-t", "agent", check=False
         ).returncode:
-            raise AgentboxError(
+            raise DevboxError(
                 "Harness session has exited. Use shell to inspect, or resume saved history."
             )
         print("Detach with Ctrl-a, then d. The harness will keep running.", flush=True)
@@ -327,7 +327,7 @@ class App:
 
     def shell(self, container: Container) -> None:
         if container.state != "running":
-            raise AgentboxError(f"{container.id} is stopped")
+            raise DevboxError(f"{container.id} is stopped")
         metadata = self.store.metadata(container.id)
         self.engine.connect(container.id, "/bin/bash", cwd=metadata["project"])
 

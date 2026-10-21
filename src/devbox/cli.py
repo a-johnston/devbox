@@ -17,25 +17,25 @@ from pathlib import Path
 
 import argcomplete
 
-from agentbox import __version__
-from agentbox.app import App
-from agentbox.config import Harness, Project, harnesses
-from agentbox.engine import Container
-from agentbox.errors import AgentboxError
-from agentbox.state import Session, Store
+from devbox import __version__
+from devbox.app import App
+from devbox.config import Harness, Project, harnesses
+from devbox.engine import Container
+from devbox.errors import DevboxError
+from devbox.state import Session, Store
 
 
 def require_terminal() -> None:
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        raise AgentboxError("A terminal is required; supply an ID/harness, or use new --detach")
+        raise DevboxError("A terminal is required; supply an ID/harness, or use new --detach")
 
 
 def select[T](items: Sequence[T], prompt: str, label: Callable[[T], str]) -> T:
     if not items:
-        raise AgentboxError(f"No eligible {prompt.lower()}")
+        raise DevboxError(f"No eligible {prompt.lower()}")
     require_terminal()
     if shutil.which("fzf") is None:
-        raise AgentboxError("Interactive selection requires fzf, or supply an explicit argument")
+        raise DevboxError("Interactive selection requires fzf, or supply an explicit argument")
     rows = [f"{i}\t{label(item)}" for i, item in enumerate(items)]
     result = subprocess.run(
         [
@@ -55,7 +55,7 @@ def select[T](items: Sequence[T], prompt: str, label: Callable[[T], str]) -> T:
     if result.returncode in (1, 130):
         raise KeyboardInterrupt
     if result.returncode:
-        raise AgentboxError("fzf failed")
+        raise DevboxError("fzf failed")
     return items[int(result.stdout.split("\t", 1)[0])]
 
 
@@ -70,10 +70,10 @@ def match[T](
         return select(items, prompt, label)
     exact = [item for item in items if key(item) == value]
     candidates = exact or [
-        item for item in items if key(item).removeprefix("agentbox-").startswith(value)
+        item for item in items if key(item).removeprefix("devbox-").startswith(value)
     ]
     if len(candidates) != 1:
-        raise AgentboxError(f"{value!r} matches {len(candidates)} {prompt.lower()}; use a full ID")
+        raise DevboxError(f"{value!r} matches {len(candidates)} {prompt.lower()}; use a full ID")
     return candidates[0]
 
 
@@ -156,7 +156,7 @@ def get_harness(name: str | None) -> Harness:
     if name is None:
         return select(list(available.values()), "Harnesses", lambda h: h.name)
     if name not in available:
-        raise AgentboxError(f"Unknown harness {name!r}; available: {', '.join(available)}")
+        raise DevboxError(f"Unknown harness {name!r}; available: {', '.join(available)}")
     return available[name]
 
 
@@ -241,11 +241,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         argcomplete.autocomplete(command_parser)
         args = command_parser.parse_args(argv)
         if args.action == "completion":
-            print(argcomplete.shellcode(["agentbox"], shell=args.shell))
+            print(argcomplete.shellcode(["devbox"], shell=args.shell))
         else:
             dispatch(args, App(store=Store(args.state_dir)))
-    except (AgentboxError, OSError) as exc:
-        print(f"agentbox: {exc}", file=sys.stderr)
+    except (DevboxError, OSError) as exc:
+        print(f"devbox: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         return 130

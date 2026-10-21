@@ -8,11 +8,11 @@ from typing import Any
 import pytest
 from test_app import FakeEngine
 
-from agentbox.app import App
-from agentbox.config import Harness, Project
-from agentbox.engine import Engine
-from agentbox.errors import AgentboxError
-from agentbox.state import Store, build_files, host_version
+from devbox.app import App
+from devbox.config import Harness, Project
+from devbox.engine import Engine
+from devbox.errors import DevboxError
+from devbox.state import Store, build_files, host_version
 
 
 def test_second_new_never_starts_or_checks_builder(
@@ -37,11 +37,11 @@ def test_failed_preparation_does_not_publish_or_create_instance(
 
     def fail_build(*args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         if args[0] == "build":
-            raise AgentboxError("intentional build failure")
+            raise DevboxError("intentional build failure")
         return call(*args, **kwargs)
 
     monkeypatch.setattr(engine, "call", fail_build)
-    with pytest.raises(AgentboxError, match="intentional"):
+    with pytest.raises(DevboxError, match="intentional"):
         app.new(project, harness, no_config=True)
     assert engine.builder_state == "stopped"
     assert not engine.images
@@ -52,7 +52,7 @@ def test_failed_preparation_does_not_publish_or_create_instance(
 def test_invalid_package_settings_fail_before_build(harness: Harness, packages: object) -> None:
     harness.seed_dir.mkdir()
     (harness.seed_dir / "settings.json").write_text(json.dumps({"packages": packages}))
-    with pytest.raises(AgentboxError, match="settings.json is invalid"):
+    with pytest.raises(DevboxError, match="settings.json is invalid"):
         build_files(harness)
 
 
@@ -77,7 +77,7 @@ def test_only_a_builder_we_started_is_stopped(
     assert sum(c[:2] == ("builder", "stop") for c in engine.calls) == stops
 
 
-@pytest.mark.parametrize("failure", [AgentboxError("failed"), KeyboardInterrupt()])
+@pytest.mark.parametrize("failure", [DevboxError("failed"), KeyboardInterrupt()])
 def test_builder_stopped_on_failure_or_cancellation(
     project: Project,
     harness: Harness,
@@ -104,7 +104,7 @@ def test_image_lookup_does_not_misclassify_service_failure(monkeypatch: pytest.M
         "call",
         lambda *a, **kw: subprocess.CompletedProcess(a, 1, "", "XPC connection invalid"),
     )
-    with pytest.raises(AgentboxError, match="Cannot check"):
+    with pytest.raises(DevboxError, match="Cannot check"):
         engine.image_exists("image")
 
 
@@ -146,7 +146,7 @@ def test_package_declarations_reject_obvious_secrets_and_invalid_specs(
 ) -> None:
     harness.seed_dir.mkdir()
     (harness.seed_dir / "settings.json").write_text(json.dumps({"packages": [source]}))
-    with pytest.raises(AgentboxError):
+    with pytest.raises(DevboxError):
         build_files(harness)
 
 
@@ -183,7 +183,7 @@ def version_command(output: str, code: int = 0) -> tuple[str, ...]:
         (version_command("1.3.0-beta.2"), "1.3.0-beta.2"),
         (version_command("1.3.0", code=1), None),
         (version_command("dev; rm -rf /"), None),
-        (("agentbox-missing-harness-cli",), None),
+        (("devbox-missing-harness-cli",), None),
         ((), None),
     ],
 )
@@ -220,6 +220,6 @@ def test_unsupported_host_fails_before_building(
 ) -> None:
     monkeypatch.setattr("platform.machine", lambda: "riscv64")
     engine = FakeEngine()
-    with pytest.raises(AgentboxError, match="riscv64"):
+    with pytest.raises(DevboxError, match="riscv64"):
         App(engine, Store(tmp_path / "state")).new(project, harness, no_config=True)
     assert not any(call[0] == "build" for call in engine.calls)

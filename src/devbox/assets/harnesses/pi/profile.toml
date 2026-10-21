@@ -1,5 +1,5 @@
 name = "pi"
-command = ["pi", "--append-system-prompt", "/home/agent/.agentbox/environment.md"]
+command = ["pi", "--append-system-prompt", "/home/agent/.devbox/environment.md"]
 # Always fork the snapshot, so the source session never has two writers.
 resume_args = ["--fork", "{session}"]
 state_dir = ".pi/agent"

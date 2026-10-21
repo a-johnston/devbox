@@ -86,6 +86,22 @@ The project's Containerfile installs project dependencies only. Agentbox compose
 terminal/runtime layer and then the selected harness layer. Images are standard OCI Linux images;
 only the host lifecycle adapter depends on Apple's CLI.
 
+### Developing Agentbox inside Agentbox
+
+This checkout includes a commented [`.agentbox.toml`](.agentbox.toml) documenting all project options
+and a minimal [`.agentbox/Containerfile`](.agentbox/Containerfile) with Python and uv. From macOS,
+run `agentbox new pi --project ~/code/agentbox`. In the guest, run:
+
+```sh
+uv sync --locked                       # downloads the Python from .python-version
+uv run pytest                          # no running container service required
+uv run prek run --all-files
+```
+
+The guest's `.venv`, test/lint caches and `dist` are isolated from the host and other VMs.
+The image contains no project source or harness installation; the checkout is mounted at launch.
+Apple `container` lifecycle and integration checks still run on macOS, not nested inside the guest.
+
 ### Preparation versus launch
 
 The first `new` prepares a missing image. Subsequent `new`/`resume` calls reuse it **without any

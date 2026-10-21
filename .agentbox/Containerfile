@@ -1,0 +1,7 @@
+# Project dependencies only; Agentbox adds the terminal runtime and selected harness.
+FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates python3 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+# Run `uv sync --locked` in the mounted checkout as the guest user. uv downloads
+# the development Python from .python-version; no source or host venv is baked in.

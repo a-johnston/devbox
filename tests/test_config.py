@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -5,6 +6,19 @@ import pytest
 
 from agentbox.config import Harness, Project, harnesses
 from agentbox.errors import AgentboxError
+
+
+def test_self_hosting_manifest(tmp_path: Path) -> None:
+    checkout = Path(__file__).resolve().parents[1]
+    shutil.copy(checkout / ".agentbox.toml", tmp_path)
+    shutil.copytree(checkout / ".agentbox", tmp_path / ".agentbox")
+    project = Project.discover(tmp_path)
+    assert project.containerfile == tmp_path / ".agentbox/Containerfile"
+    assert project.context == tmp_path / ".agentbox"
+    assert project.artifacts == (".venv", ".pytest_cache", ".ruff_cache", "dist")
+    assert project.prepare_commands == ("git", "uv")
+    assert project.env == {"UV_LINK_MODE": "copy", "PYTHONDONTWRITEBYTECODE": "1"}
+    assert (project.cpus, project.memory, project.builder_memory) == (4, "8G", "4G")
 
 
 def test_discovery_from_subdirectory(repository: Path) -> None:

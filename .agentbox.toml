@@ -1,0 +1,38 @@
+# Project manifest, discovered upwards from the working directory. In-repo Git
+# worktrees can fall back to the primary checkout's manifest. Required schema version:
+version = 1
+
+[image]
+# Paths are relative to this manifest, not the shell's working directory.
+containerfile = ".agentbox/Containerfile" # Default: "Containerfile".
+context = ".agentbox"                   # Default: ".". Keep source/.git/worktrees out of builds.
+# Run `agentbox build pi` after changing image inputs; launches reuse prepared images.
+
+[container]
+# Agent VM capacity (these are the defaults), not an idle-memory target.
+cpus = 4                               # Positive integer.
+memory = "8G"                          # Positive size, optionally suffixed K, M or G.
+
+[builder]
+# Separate image-builder RAM (default: "4G"), with the same size syntax as above.
+# A builder Agentbox starts is stopped after preparation unless --keep-builder is used.
+# An already-running builder is reused without changing its settings.
+memory = "4G"
+
+[workspace]
+# Relative, non-overlapping directories masked with VM-local storage in every
+# checkout, including newly created in-repo worktrees. Host contents are not copied
+# or modified, apart from creating empty mount points. Caches survive stop/attach,
+# but are discarded with the VM. Default: [] (no masking).
+# In particular, never reuse the host's macOS .venv in the Linux guest.
+artifacts = [".venv", ".pytest_cache", ".ruff_cache", "dist"]
+# Executable names (not paths or shell commands) to wrap with preparation before
+# execution. These do NOT run setup commands; run `uv sync --locked` in the guest.
+# git also prepares after `git worktree add`. Default: [].
+prepare_commands = ["git", "uv"]
+
+[environment]
+# Explicit guest environment only; host variables are not broadly forwarded.
+# Values must be strings. Default: {}. Never put credentials in this tracked file.
+UV_LINK_MODE = "copy"                   # uv cache and mounted .venv may be on different filesystems.
+PYTHONDONTWRITEBYTECODE = "1"           # Keep __pycache__ files out of the shared source tree.

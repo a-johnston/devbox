@@ -167,6 +167,40 @@ def test_catalog_title_ignores_invalid_and_incomplete_records(tmp_path: Path) ->
     assert row.title == "Complete title"
 
 
+def test_catalog_survives_broken_profiles_and_loads_hooks_once(
+    tmp_path: Path, harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    profiles = tmp_path / "config/agentbox/harnesses"
+    (profiles / "broken").mkdir(parents=True)
+    (profiles / "broken/profile.toml").write_text('name = "broken"\n')
+    custom = profiles / "custom"
+    custom.mkdir()
+    (custom / "profile.toml").write_text(
+        (harness.directory / "profile.toml").read_text().replace('name = "pi"', 'name = "custom"')
+    )
+    (custom / "Containerfile").write_text("FROM scratch\n")
+    loads = tmp_path / "loads"
+    (custom / "hooks.py").write_text(
+        f"from pathlib import Path\n"
+        f"with Path({str(loads)!r}).open('a') as f:\n    f.write('x')\n"
+        "def session_title(records):\n    raise TypeError('broken hook')\n"
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    store = Store(tmp_path / "state")
+    for name in ("pi", "custom", "custom", "broken"):
+        _, directory = store.create()
+        (directory / "metadata.json").write_text(
+            json.dumps({"harness": name, "project": "/project", "session_dir": "sessions"})
+        )
+        (directory / "home/sessions").mkdir(parents=True)
+        (directory / "home/sessions/valid.jsonl").write_text(
+            '{"type":"session","id":"conversation"}\n{"type":"session_info","name":"Named"}\n'
+        )
+    titles = sorted((row.harness, row.title or "") for row in store.sessions())
+    assert titles == [("broken", ""), ("custom", ""), ("custom", ""), ("pi", "Named")]
+    assert loads.read_text() == "x"
+
+
 def test_catalog_does_not_follow_session_symlinks(tmp_path: Path) -> None:
     store = Store(tmp_path / "state")
     _, directory = store.create()

@@ -8,7 +8,7 @@ import re
 import secrets
 import shutil
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,7 +67,7 @@ class Store:
         if not self.instances.exists():
             return []
         sessions = []
-        profiles = harnesses()
+        hooks = title_hooks()
         for directory in sorted(self.instances.iterdir()):
             if not (directory / "metadata.json").is_file():
                 continue
@@ -84,13 +84,11 @@ class Store:
                 except (AgentboxError, OSError, ValueError, AttributeError):
                     continue
                 title = None
-                profile = profiles.get(metadata["harness"])
-                if profile:
+                hook = hooks.get(metadata["harness"])
+                if hook:
                     # A title is optional; keep the conversation resumable if it cannot be read.
-                    with suppress(AgentboxError, OSError, ValueError):
-                        title = clean_title(
-                            run_hook(profile, "session_title", session_records(path, home))
-                        )
+                    with suppress(Exception):
+                        title = clean_title(hook(session_records(path, home)))
                 sessions.append(
                     Session(
                         f"{directory.name}/{session_id}",
@@ -152,6 +150,16 @@ def seed_config(harness: Harness, home: Path) -> list[str]:
         target.chmod(0o600)
         messages.append(name)
     return messages + (run_hook(harness, "adapt_seed", destination) or [])
+
+
+def title_hooks() -> dict[str, Callable[..., Any]]:
+    """Load each harness's title adapter once; a broken profile or hook only loses titles."""
+    hooks = {}
+    for name, harness in harnesses(strict=False).items():
+        with suppress(Exception):
+            if hook := harness.hook("session_title"):
+                hooks[name] = hook
+    return hooks
 
 
 def clean_title(value: Any) -> str | None:

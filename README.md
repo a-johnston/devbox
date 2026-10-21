@@ -184,6 +184,7 @@ User profiles override or add to the built-ins in `$XDG_CONFIG_HOME/agentbox/har
   `session_title(records)` optionally returns a saved display title (or `None`); `records` is a
   streaming iterator of complete JSON objects from the transcript. Malformed, incomplete, and
   oversized records (over 64 KiB) are skipped. Extract title metadata only, not prompt text.
+  Invalid profiles and failing title hooks only drop titles; listing and resuming still work.
 
 Each `prepared_dirs` entry is symlinked from the home to `/opt/agentbox/prepared/<path>` in the
 image. Every container gets its own writable copy.

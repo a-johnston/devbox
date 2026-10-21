@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -20,6 +21,15 @@ HOST_SETTINGS = (
     "prompts",
     "themes",
 )
+
+
+def session_title(records: Iterable[dict[str, Any]]) -> str | None:
+    """Pi's /name and extensions append session_info records; the latest name wins."""
+    title = None
+    for record in records:
+        if record.get("type") == "session_info" and isinstance(record.get("name"), str):
+            title = record["name"]
+    return title
 
 
 def _settings(path: Path) -> dict[str, Any]:

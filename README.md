@@ -148,6 +148,19 @@ Removing containers never removes this state. `resume` snapshots a session into 
 the harness forks it, so the original never has two writers. Delete an instance directory yourself
 to discard its conversations **and copied credentials**.
 
+The `resume` picker and `sessions` list show the harness, project path, title, then the full
+session ID (explicit IDs and prefixes still work as before):
+
+```text
+pi  /path/to/project  Fix login flow  agentbox-aabbccdd/session-id
+```
+
+Titles come from saved harness metadata: Pi session names (`/name`, including names set by
+extensions), or Claude custom titles (`/rename`), automatic titles, and session summaries, in
+that preference order. The latest title of each kind wins. Sessions without a saved title show
+`(untitled)`; prompt and tool-output text is never used as a fallback. Titles are single-line,
+terminal-safe, and limited to 100 characters. `sessions --json` includes a nullable `title` field.
+
 ## Additional harnesses
 
 User profiles override or add to the built-ins in `$XDG_CONFIG_HOME/agentbox/harnesses/<name>/`:
@@ -163,6 +176,9 @@ User profiles override or add to the built-ins in `$XDG_CONFIG_HOME/agentbox/har
 - Optional `hooks.py`: host-side `build_files(seed_dir)` returns extra build-context files (keyed
   into the image name), `adapt_seed(state_dir)` adjusts copied config, and
   `resume_file(session_id, cwd)` places the resume snapshot (default `.agentbox/resume.jsonl`).
+  `session_title(records)` optionally returns a saved display title (or `None`); `records` is a
+  streaming iterator of complete JSON objects from the transcript. Malformed, incomplete, and
+  oversized records (over 64 KiB) are skipped. Extract title metadata only, not prompt text.
 
 Each `prepared_dirs` entry is symlinked from the home to `/opt/agentbox/prepared/<path>` in the
 image. Every container gets its own writable copy.

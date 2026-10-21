@@ -81,7 +81,7 @@ def container_label(container: Container) -> str:
 
 
 def session_label(session: Session) -> str:
-    return f"{session.id}  {session.harness}  {session.project}"
+    return f"{session.harness}  {session.project}  {session.title or '(untitled)'}  {session.id}"
 
 
 def parser() -> argparse.ArgumentParser:

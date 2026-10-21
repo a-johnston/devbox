@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -8,10 +9,10 @@ import pytest
 from test_app import FakeEngine
 
 from agentbox.app import App
-from agentbox.cli import dispatch, get_harness, main, match, parser, select
+from agentbox.cli import dispatch, get_harness, main, match, parser, select, session_label
 from agentbox.engine import Container
 from agentbox.errors import AgentboxError
-from agentbox.state import Store
+from agentbox.state import Session, Store
 
 
 def test_new_defaults_to_current_project() -> None:
@@ -120,6 +121,41 @@ def test_picker_uses_fzf(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda *a, **kw: subprocess.CompletedProcess(a, 0, "1\tsecond\n", ""),
     )
     assert select(["first", "second"], "Harnesses", str) == "second"
+
+
+@pytest.mark.parametrize("title", ["Fix login", None])
+def test_session_listing_and_picker(
+    title: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    session = Session(
+        "agentbox-aabb/conversation", "agentbox-aabb", "pi", "/project", tmp_path, title
+    )
+    expected = f"pi  /project  {title or '(untitled)'}  agentbox-aabb/conversation"
+    assert session_label(session) == expected
+    app = App(FakeEngine(), Store(tmp_path))
+    monkeypatch.setattr(app.store, "sessions", lambda: [session])
+    dispatch(parser().parse_args(["sessions"]), app)
+    assert capsys.readouterr().out == expected + "\n"
+    dispatch(parser().parse_args(["sessions", "--json"]), app)
+    (row,) = json.loads(capsys.readouterr().out)
+    assert row["title"] == title
+    assert row["id"] == session.id
+
+    monkeypatch.setattr("agentbox.cli.require_terminal", lambda: None)
+    monkeypatch.setattr("agentbox.cli.shutil.which", lambda _: "/bin/fzf")
+
+    def pick(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert kwargs["input"] == f"0\t{expected}\n"
+        return subprocess.CompletedProcess(args, 0, f"0\t{expected}\n", "")
+
+    monkeypatch.setattr("agentbox.cli.subprocess.run", pick)
+    assert match([session], None, "Sessions", lambda s: s.id, session_label) == session
+    assert (
+        match([session], "aabb/conversation", "Sessions", lambda s: s.id, session_label) == session
+    )
 
 
 def test_picker_cancel(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 # These run host commands, refer to host paths or need host-installed plugins.
 HOST_SETTINGS = (
@@ -17,6 +19,20 @@ HOST_SETTINGS = (
     "enabledPlugins",
     "extraKnownMarketplaces",
 )
+
+
+def session_title(records: Iterable[dict[str, Any]]) -> str | None:
+    """Prefer an explicit /rename over Claude's automatic title or session summary."""
+    titles = {}
+    fields = {"custom-title": "customTitle", "ai-title": "aiTitle", "summary": "summary"}
+    for record in records:
+        kind = record.get("type")
+        if not isinstance(kind, str) or kind not in fields:
+            continue
+        value = record.get(fields[kind])
+        if isinstance(value, str) and value.strip():
+            titles[kind] = value
+    return titles.get("custom-title") or titles.get("ai-title") or titles.get("summary")
 
 
 def adapt_seed(state_dir: Path) -> list[str]:

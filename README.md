@@ -79,7 +79,8 @@ base. Agentbox layers a terminal runtime and the selected harness on top.
 
 Each `artifacts` path in the primary checkout is covered by a container-local volume, so Linux build
 outputs never mix with the host's. Host contents are hidden, not copied or changed; empty mount-point
-directories may appear on the host. Volumes survive `stop` and are deleted by `rm`.
+directories may appear on the host. Tracked files under an artifact path (such as a
+`.worktrees/.gdignore`) are checked out into the volume. Volumes survive `stop` and are deleted by `rm`.
 
 Listing `.worktrees` makes worktrees created inside the container guest-local, so their build outputs
 are too. Host worktrees there are hidden from the guest, so launch from the primary checkout.

@@ -70,6 +70,9 @@ def test_new_composes_images_and_mounts_only_selected_paths(
     chown = next(call for call in engine.calls if "chown" in " ".join(call))
     assert chown[:4] == ("exec", "--user", "root", id)
     assert chown[-3:] == tuple(str(project.root / a) for a in (".godot", "tests/bin", "tests/obj"))
+    restore = next(call for call in engine.calls if "git ls-files" in " ".join(call))
+    assert restore[:4] == ("exec", "--user", "agent", id)
+    assert restore[-4:] == (str(project.root), ".godot", "tests/bin", "tests/obj")
     startup = engine.calls[-1]
     assert startup[:4] == ("exec", "--user", "agent", id)
     assert startup[4:15] == (

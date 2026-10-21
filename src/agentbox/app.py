@@ -216,6 +216,17 @@ class App:
                     *artifacts,
                     user="root",
                 )
+                # Restore tracked files (e.g. .worktrees/.gdignore) that the volumes hide,
+                # so they don't appear deleted to the guest.
+                self.engine.exec(
+                    id,
+                    "sh",
+                    "-c",
+                    'cd "$1" && shift && git ls-files -z -- "$@" | xargs -0 -r git checkout --',
+                    "sh",
+                    str(project.root),
+                    *project.artifacts,
+                )
             self.engine.exec(
                 id,
                 "tmux",

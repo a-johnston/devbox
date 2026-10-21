@@ -24,6 +24,16 @@ from agentbox.errors import AgentboxError
 from agentbox.state import Session, Store
 
 
+class CommandCompletionFinder(argcomplete.CompletionFinder):
+    """Suggest canonical commands while accepting aliases already typed by the user."""
+
+    def _get_subparser_completions(
+        self, parser: argparse._SubParsersAction, cword_prefix: str
+    ) -> list[str]:
+        completions = super()._get_subparser_completions(parser, cword_prefix)
+        return [name for name in completions if parser.choices[name].get_default("action") == name]
+
+
 def require_terminal() -> None:
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         raise AgentboxError("A terminal is required; supply an ID/harness, or use new --detach")
@@ -253,7 +263,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     os.umask(0o077)
     try:
         command_parser = parser()
-        argcomplete.autocomplete(command_parser)
+        CommandCompletionFinder()(command_parser)
         args = command_parser.parse_args(argv)
         if args.action == "completion":
             print(argcomplete.shellcode(["agentbox"], shell=args.shell))

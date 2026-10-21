@@ -16,6 +16,13 @@ uv run prek run --all-files
 `prek.toml` uses local/system hooks that explicitly invoke `uv run`, not isolated hook environments.
 Run `uv run pytest` after every source change, and run all prek hooks before requesting landing approval.
 
+When dependencies change, update `uv.lock` alongside `pyproject.toml` and run `uv sync --locked`
+in the affected checkout/worktree. After landing, also sync the primary checkout's `.venv`.
+An editable install picks up source edits, but does not automatically install new dependencies:
+if runtime dependencies change and Agentbox is installed with `uv tool`, refresh that separate
+managed environment with `uv tool install --editable . --force` from the primary checkout.
+Verify the installed tool's executable as well as `uv run` commands; they use separate environments.
+
 ## Development workflow
 
 Make project changes on a new branch in an in-repo worktree, created before the first edit:

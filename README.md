@@ -72,9 +72,10 @@ eval "$(agentbox completion zsh)"
 agentbox completion fish | source
 ```
 
-Restart the shell or source its startup file. Prefix commands also support completion, for example
-`agentbox n --<TAB>`. Completion does not start the container service or change saved state; live
-container/session IDs are not dynamically completed.
+Restart the shell or source its startup file. Command completion suggests only full names, not
+prefix aliases: `agentbox n<TAB>` completes to `new`. Already-typed prefix commands still support
+option completion, for example `agentbox n --<TAB>`. Completion does not start the container service
+or change saved state; live container/session IDs are not dynamically completed.
 
 Omitting a harness, container ID or session ID opens fzf. Explicit arguments bypass pickers.
 Selection requires a terminal; there is no hidden prompt in noninteractive invocations. `new` and

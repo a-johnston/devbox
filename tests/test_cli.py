@@ -98,16 +98,61 @@ def test_completion_script_does_not_create_state(
         ("agentbox c ", "fish"),
     ],
 )
-def test_shell_completion(line: str, expected: str, tmp_path: Path) -> None:
+@pytest.mark.parametrize("shell", ["bash", "zsh", "fish"])
+def test_shell_completion(line: str, expected: str, tmp_path: Path, shell: str) -> None:
+    assert expected in complete(line, tmp_path, shell=shell)
+
+
+@pytest.mark.parametrize("shell", ["bash", "zsh", "fish"])
+@pytest.mark.parametrize(
+    ("prefix", "expected"),
+    [
+        ("n", {"new"}),
+        ("r", {"rm", "resume"}),
+        ("s", {"shell", "stop", "sessions"}),
+        ("co", {"completion"}),
+        (
+            "",
+            {
+                "new",
+                "build",
+                "attach",
+                "shell",
+                "stop",
+                "rm",
+                "ls",
+                "sessions",
+                "resume",
+                "kill-all",
+                "completion",
+            },
+        ),
+    ],
+)
+def test_command_completion_omits_prefix_aliases(
+    prefix: str, expected: set[str], shell: str, tmp_path: Path
+) -> None:
+    completions = complete(f"agentbox {prefix}", tmp_path, shell=shell)
+    assert {value for value in completions if not value.startswith("-")} == expected
+
+
+def test_completion_does_not_filter_prefix_like_filenames(tmp_path: Path) -> None:
+    (tmp_path / "n").touch()
+    assert "n" in complete("agentbox --state-dir ", tmp_path)
+
+
+def complete(line: str, tmp_path: Path, *, shell: str = "bash") -> list[str]:
     # Exercise the real entry point in a subprocess: argcomplete owns descriptors
     # 8/9 and exits with os._exit(), which must not interfere with pytest's capture.
     output = tmp_path / "completions"
     state = tmp_path / "state"
     result = subprocess.run(
         [sys.executable, "-m", "agentbox.cli"],
+        cwd=tmp_path,
         env={
             **os.environ,
             "_ARGCOMPLETE": "1",
+            "_ARGCOMPLETE_SHELL": shell,
             "COMP_LINE": line,
             "COMP_POINT": str(len(line)),
             "_ARGCOMPLETE_STDOUT_FILENAME": str(output),
@@ -119,8 +164,10 @@ def test_shell_completion(line: str, expected: str, tmp_path: Path) -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert expected in output.read_text().split("\v")
     assert not state.exists()
+    values = output.read_text().split("\v")
+    # Zsh receives command:description pairs; compare only the inserted text.
+    return [value.partition(":")[0] for value in values] if shell == "zsh" else values
 
 
 def test_prefix_selection() -> None:

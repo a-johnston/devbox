@@ -65,7 +65,7 @@ The facts below about Podman come from its documentation, not from running it. T
 **Interfaces:**
 - Produces: `builder_memory() -> str` in `agentbox.engine` (Task 2 moves it to `agentbox.apple`): `os.environ.get("AGENTBOX_BUILDER_MEMORY", "4G")`, validated with `config.size(value, "AGENTBOX_BUILDER_MEMORY")`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 - `test_config.py`: line 20 becomes `assert (project.cpus, project.memory) == (4, "8G")`; remove the `[builder]` parametrize case; replace `test_builder_memory_is_independent` with:
 
@@ -79,16 +79,16 @@ def test_builder_table_is_ignored(repository: Path) -> None:
 - `test_preparation.py`: replace `test_explicit_build_rebuilds_with_builder_memory` with a test that sets `AGENTBOX_BUILDER_MEMORY=2G`, runs `app.build(...)`, unsets it, and runs it again. Assert that the `--memory` values of the build calls are `["2G"] * 3 + ["4G"] * 3`, and that both builds return the same image name (builder memory isn't an image variant).
 - `test_engine.py`: `AGENTBOX_BUILDER_MEMORY=lots` → `builder_memory()` raises `AgentboxError` matching `AGENTBOX_BUILDER_MEMORY`.
 
-- [ ] **Step 2: Run them and confirm they fail**
+- [x] **Step 2: Run them and confirm they fail**
 
 Run: `uv run pytest tests/test_config.py tests/test_preparation.py tests/test_engine.py -q`
 Expected: failures for `test_builder_table_is_ignored` (the garbage value raises), the env-memory test, and an `ImportError` for `builder_memory`.
 
-- [ ] **Step 3: Implement** as described in Files/Interfaces. In the README, remove `[builder]` from the manifest example, and in "Image preparation" add: "On macOS the builder gets `AGENTBOX_BUILDER_MEMORY` (default `4G`)."
+- [x] **Step 3: Implement** as described in Files/Interfaces. In the README, remove `[builder]` from the manifest example, and in "Image preparation" add: "On macOS the builder gets `AGENTBOX_BUILDER_MEMORY` (default `4G`)."
 
-- [ ] **Step 4: Run the full suite** — `uv run pytest -q`, all pass.
+- [x] **Step 4: Run the full suite** — `uv run pytest -q`, all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src tests .agentbox.toml README.md
@@ -117,7 +117,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `select_engine() -> Engine` (Task 4 fills it in; in Task 2 it returns `AppleEngine()`).
 - Produces, in `agentbox.apple`: `class AppleEngine(CliEngine)` with `isolation = "VM"`. It holds today's methods (`require_running`, `image_exists`, `build`, `builder_running`, `containers`, `exec`, `connect`, `remove`, `volumes`) plus `stop(id)` (`call("stop", id)`), `run(spec)`, and `building()`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_engine.py`: change the import to `from agentbox.apple import AppleEngine`, use `AppleEngine()` where `Engine()` was used, and add:
 
@@ -166,12 +166,12 @@ def test_apple_run_translates_spec(monkeypatch: pytest.MonkeyPatch) -> None:
 
 `tests/test_app.py`: `class FakeEngine(AppleEngine)`; `from agentbox.engine import Container, mount`; drop `mount` from the `agentbox.app` import.
 
-- [ ] **Step 2: Run them and confirm they fail**
+- [x] **Step 2: Run them and confirm they fail**
 
 Run: `uv run pytest -q`
 Expected: collection errors (`No module named 'agentbox.apple'`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - Move the Apple methods into `apple.py` unchanged, except: `builder_memory()` (from Task 1) moves to `apple.py` along with `build`; update the `test_engine.py` import, and the `require_running`/install messages stay Apple-specific (`install_hint = "Apple's container CLI is required: https://github.com/apple/container"`).
 - `AppleEngine.building()` is a `contextlib.contextmanager`: `started = not self.builder_running()`, then `yield`, and in `finally`, `if started: self.call("builder", "stop", check=False)`. Keep the comment "Stop a builder we start: it holds gigabytes of RAM and launches don't need it."
@@ -181,12 +181,12 @@ Expected: collection errors (`No module named 'agentbox.apple'`).
 - `App.__init__(self, engine: Engine | None = None, ...)`: `self.engine = engine or select_engine()`.
 - `cli.py`: `app.engine.stop(container.id)`.
 
-- [ ] **Step 4: Run the full suite**
+- [x] **Step 4: Run the full suite**
 
 Run: `uv run pytest -q`
 Expected: all pass, with no edits to existing assertions besides imports and the `FakeEngine` base.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src tests
@@ -220,15 +220,15 @@ Command translation (each line is one test in `test_podman.py`, with `call` or `
 | `stop(id)` | `("stop", id)`. |
 | `remove(id)` | `("stop", id)` with `check=False`, then `("rm", id)`, then `("volume", "ls", "--filter", f"label=dev.agentbox.instance={id}", "--format", "{{.Name}}")`, then `("volume", "rm", name)` for each line printed. |
 
-- [ ] **Step 1: Write the failing tests**, one per row (`test_podman_require_running_reports_info_failure`, `test_podman_image_exists_distinguishes_absent_from_error` with return codes 0/1/125, `test_podman_build_argv`, `test_podman_run_creates_labelled_volumes_then_runs_with_keep_id`, `test_podman_containers_filters_by_label_and_maps_rows` with one unlabelled row and states `running`/`exited`, `test_podman_exec_passes_secret_names_only`, `test_podman_connect_strips_outer_tmux`, `test_podman_remove_deletes_only_labelled_volumes`). For `remove`, also cover a `volume ls` that prints nothing.
+- [x] **Step 1: Write the failing tests**, one per row (`test_podman_require_running_reports_info_failure`, `test_podman_image_exists_distinguishes_absent_from_error` with return codes 0/1/125, `test_podman_build_argv`, `test_podman_run_creates_labelled_volumes_then_runs_with_keep_id`, `test_podman_containers_filters_by_label_and_maps_rows` with one unlabelled row and states `running`/`exited`, `test_podman_exec_passes_secret_names_only`, `test_podman_connect_strips_outer_tmux`, `test_podman_remove_deletes_only_labelled_volumes`). For `remove`, also cover a `volume ls` that prints nothing.
 
-- [ ] **Step 2: Run them and confirm they fail** — `uv run pytest tests/test_podman.py -q` → `No module named 'agentbox.podman'`.
+- [x] **Step 2: Run them and confirm they fail** — `uv run pytest tests/test_podman.py -q` → `No module named 'agentbox.podman'`.
 
-- [ ] **Step 3: Implement** `podman.py` to the table. Share the TMUX-stripping logic with Apple by moving it into a `CliEngine.connect_argv`-style helper, if that reads cleaner than duplicating three lines (builder's call).
+- [x] **Step 3: Implement** `podman.py` to the table. Share the TMUX-stripping logic with Apple by moving it into a `CliEngine.connect_argv`-style helper, if that reads cleaner than duplicating three lines (builder's call).
 
-- [ ] **Step 4: Run the full suite** — `uv run pytest -q`, all pass.
+- [x] **Step 4: Run the full suite** — `uv run pytest -q`, all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/agentbox/podman.py tests/test_podman.py src/agentbox/engine.py
@@ -245,15 +245,15 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Modify: `README.md` (intro, Install, Security scope, Development)
 - Test: `tests/test_engine.py`, `tests/test_app.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 - `test_select_engine` parametrized over `(sys.platform, AGENTBOX_ENGINE, expected class)`: `("darwin", None, AppleEngine)`, `("linux", None, PodmanEngine)`, `("darwin", "podman", PodmanEngine)`, `("linux", "apple", AppleEngine)`.
 - `test_select_engine_rejects_unknown`: `AGENTBOX_ENGINE=docker` → `AgentboxError` matching `AGENTBOX_ENGINE`; `sys.platform = "win32"` with no override → `AgentboxError` matching `win32`.
 - `test_app.py`: with a `FakeEngine` whose `isolation = "container"`, `environment.md` contains `"a Linux ARM64 container"` (with `platform.machine` patched to `arm64`). The existing amd64 test keeps "VM" (FakeEngine defaults to Apple's `isolation`).
 
-- [ ] **Step 2: Run them and confirm they fail.**
+- [x] **Step 2: Run them and confirm they fail.**
 
-- [ ] **Step 3: Implement.** `select_engine` imports `apple`/`podman` inside the function, to avoid a circular import. In `environment.md`: `f"..., a Linux {architecture} {self.engine.isolation}, as a non-root user."`.
+- [x] **Step 3: Implement.** `select_engine` imports `apple`/`podman` inside the function, to avoid a circular import. In `environment.md`: `f"..., a Linux {architecture} {self.engine.isolation}, as a non-root user."`.
 
   README:
   - Intro: "inside lightweight Linux VMs using Apple's `container` on macOS, or rootless Podman containers on Linux."
@@ -261,9 +261,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - Security scope: "On macOS each container is its own VM. On Linux, rootless Podman containers share the host kernel but run in your user namespace, with the host user mapped to the guest `agent`; files the agent creates in the checkout are owned by you." Keep the rest.
   - Development: "`uv run pytest` needs neither container service."
 
-- [ ] **Step 4: Run the full suite and the hooks** — `uv run pytest -q && uv run prek run --all-files; echo $?` → all pass, `0`.
+- [x] **Step 4: Run the full suite and the hooks** — `uv run pytest -q && uv run prek run --all-files; echo $?` → all pass, `0`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src tests README.md
@@ -276,14 +276,46 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 Manual checks with real Podman. If a check fails, add a failing translation test to `tests/test_podman.py` that reproduces the wrong argv or parse, fix it, and ledger a ruling that names the corrected assumption. Run each check from a checkout of this branch with `uv run agentbox …`.
 
-- [ ] **Step 1: Prerequisites.** `podman info --format '{{.Host.Security.Rootless}} {{.Host.CgroupsVersion}}'` → `true v2`.
-- [ ] **Step 2: Lifecycle.** `uv run agentbox new pi --detach --project .` (this repo) succeeds and prints the start time. `uv run agentbox ls` shows it as `running`. `podman ps --all --filter label=dev.agentbox.managed=1 --format json` matches the fields `containers()` parses. A second `new` prints "Using prepared image" (`image exists` works). `podman exec <id> ps -o pid,comm 1` shows `catatonit` as PID 1.
-- [ ] **Step 3: Ownership.** `uv run agentbox shell <id>`, then `id` → `uid=10001(agent)`. `touch probe && mkdir -p .worktrees/x`, then exit. On the host, `stat -c %U probe` prints your username. Same for a file the harness writes under `~/.local/share/agentbox/instances/<id>/home`. Clean up `probe`. If ownership is wrong, check `podman inspect <id> --format '{{.HostConfig.IDMappings}}'` and fix `AGENT_USERNS`.
-- [ ] **Step 4: Secrets.** With `CLAUDE_CODE_OAUTH_TOKEN=dummy-value uv run agentbox new claude --detach`, `podman exec --user agent <id> sh -c 'cat /proc/$(pgrep -f "^claude")/environ | tr "\0" "\n" | grep CLAUDE_CODE_OAUTH_TOKEN'` shows `dummy-value`, and `podman inspect <id> | grep -c dummy-value` prints `0` (it isn't in the container config). Remove the container.
-- [ ] **Step 5: Volumes and removal.** `podman volume ls --filter label=dev.agentbox.instance=<id>` lists one volume per artifact path. Inside the guest, `.venv` is writable by `agent` and contains no `lost+found`. `uv run agentbox rm <id>` removes the container and exactly those volumes, `podman volume ls` shows no other volumes touched, and `uv run agentbox sessions` still lists its conversations.
-- [ ] **Step 6: Attach.** `uv run agentbox attach <id>` attaches to tmux; Ctrl-a d returns to the host shell; `agentbox stop` and then `attach` refuses (the state is `exited`).
-- [ ] **Step 7: rouge-legacy.** `uv run agentbox build claude --project ~/godot/rouge-legacy` downloads `…_linux_x86_64.zip` and the checksum passes (`TARGETARCH` set by Podman). In a new container, `godot --headless --version` prints `4.8.beta1.mono.official…`, and `dotnet test` inside the guest passes.
-- [ ] **Step 8: Measure (input to phase 4).** Record in the ledger: the start time `new` prints for pi and claude, and `podman stats --no-stream` memory for an idle claude container and for a rouge-legacy container after `godot --headless --import`.
-- [ ] **Step 9: Commit any fixes** (each with its test). Then run `uv run prek run --all-files` and check it exits 0.
+- [x] **Step 1: Prerequisites.** `podman info --format '{{.Host.Security.Rootless}} {{.Host.CgroupsVersion}}'` → `true v2`.
+- [x] **Step 2: Lifecycle.** `uv run agentbox new pi --detach --project .` (this repo) succeeds and prints the start time. `uv run agentbox ls` shows it as `running`. `podman ps --all --filter label=dev.agentbox.managed=1 --format json` matches the fields `containers()` parses. A second `new` prints "Using prepared image" (`image exists` works). `podman exec <id> ps -o pid,comm 1` shows `catatonit` as PID 1.
+- [x] **Step 3: Ownership.** `uv run agentbox shell <id>`, then `id` → `uid=10001(agent)`. `touch probe && mkdir -p .worktrees/x`, then exit. On the host, `stat -c %U probe` prints your username. Same for a file the harness writes under `~/.local/share/agentbox/instances/<id>/home`. Clean up `probe`. If ownership is wrong, check `podman inspect <id> --format '{{.HostConfig.IDMappings}}'` and fix `AGENT_USERNS`.
+- [x] **Step 4: Secrets.** With `CLAUDE_CODE_OAUTH_TOKEN=dummy-value uv run agentbox new claude --detach`, `podman exec --user agent <id> sh -c 'cat /proc/$(pgrep -f "^claude")/environ | tr "\0" "\n" | grep CLAUDE_CODE_OAUTH_TOKEN'` shows `dummy-value`, and `podman inspect <id> | grep -c dummy-value` prints `0` (it isn't in the container config). Remove the container.
+- [x] **Step 5: Volumes and removal.** `podman volume ls --filter label=dev.agentbox.instance=<id>` lists one volume per artifact path. Inside the guest, `.venv` is writable by `agent` and contains no `lost+found`. `uv run agentbox rm <id>` removes the container and exactly those volumes, `podman volume ls` shows no other volumes touched, and `uv run agentbox sessions` still lists its conversations.
+- [x] **Step 6: Attach.** `uv run agentbox attach <id>` attaches to tmux; Ctrl-a d returns to the host shell; `agentbox stop` and then `attach` refuses (the state is `exited`).
+- [x] **Step 7: rouge-legacy.** `uv run agentbox build claude --project ~/godot/rouge-legacy` downloads `…_linux_x86_64.zip` and the checksum passes (`TARGETARCH` set by Podman). In a new container, `godot --headless --version` prints `4.8.beta1.mono.official…`, and `dotnet test` inside the guest passes.
+- [x] **Step 8: Measure (input to phase 4).** Record in the ledger: the start time `new` prints for pi and claude, and `podman stats --no-stream` memory for an idle claude container and for a rouge-legacy container after `godot --headless --import`.
+- [x] **Step 9: Commit any fixes** (each with its test). Then run `uv run prek run --all-files` and check it exits 0.
 
 Ask for landing approval with the ledger's rulings and the Step 8 measurements. Ask about squashing (the branch will have several commits).
+
+## Outcome (2026-10-21, on the Arch PC)
+
+Implemented after the agentbox → devbox rename, so every name above reads with `devbox`
+(`devbox.*` modules, `DevboxError`, `dev.devbox.*` labels, `.devbox.toml`, `DEVBOX_ENGINE`,
+`DEVBOX_BUILDER_MEMORY`). Rulings that differ from the tasks above:
+
+- `Engine` is an abstract base class instead of a `Protocol` plus `CliEngine`. `call`, `run`,
+  `exec`, `connect` and `stop` are shared, since both CLIs take the same flags; Podman adds
+  `run_options = ("--userns", AGENT_USERNS)`. `mount` lives in `engine.py`, `builder_memory` in
+  `apple.py`.
+- `container_ids()` (orphaned-state cleanup, added on `main` after this plan) is part of the
+  interface. Podman lists every container's name with `ps --all --format json` and refuses cleanup
+  on unexpected JSON, like Apple.
+- `PodmanEngine.remove` uses `rm --ignore`, so cleaning up after a failed `new` still deletes the
+  labelled volumes when the container was never created.
+- `Container.created` comes from Podman's `Created` epoch (ISO 8601, local time); `CreatedAt` is a
+  relative phrase such as "Less than a second ago".
+- `podman run` failures that mention `org.freedesktop.systemd1` explain the cause: Podman's systemd
+  cgroup manager needs the systemd user bus. On this PC `DBUS_SESSION_BUS_ADDRESS` pointed at a
+  separate `/tmp/dbus-…` daemon; `unix:path=$XDG_RUNTIME_DIR/bus` works.
+
+Integration checks (Podman 6.1.4, crun, rootless, cgroup v2): steps 1–6 pass. PID 1 is
+`podman-init`; `agent` is uid 10001 and its files in the checkout and instance home are owned by the
+host user; the forwarded token reaches the harness and is absent from `podman inspect` and saved
+state; artifact volumes are labelled, writable by `agent` and removed by `rm`/`kill-all`, leaving an
+unrelated container and volume alone; a failed start leaves no container or volumes. Step 7 was not
+run: rouge-legacy has no devbox manifest on this PC or on `origin/main`.
+
+Step 8 (input to phase 4, crun): first `new pi` prepared the image in 36.7s and started in 1.1s;
+later launches started in 0.5s (pi) and 0.8s (claude). Idle memory: 99 MB (pi), 90 MB (claude, with
+a dummy token).

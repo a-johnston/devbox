@@ -97,13 +97,18 @@ def parser() -> argparse.ArgumentParser:
         )
         command.add_argument("harness", nargs="?")
         command.add_argument("--project", type=Path, default=Path("."))
+        command.add_argument(
+            "--no-config",
+            action="store_true",
+            help="Do not import host harness settings, packages or credentials",
+        )
+        command.add_argument(
+            "--keep-builder",
+            action="store_true",
+            help="Leave a builder we start running after preparation",
+        )
         if name == "new":
             command.add_argument("--detach", action="store_true", help="Create without attaching")
-            command.add_argument(
-                "--no-config",
-                action="store_true",
-                help="Do not copy host harness settings/credentials",
-            )
     for name in ("attach", "shell", "stop", "rm"):
         command = commands.add_parser(name)
         command.add_argument("id", nargs="?", help="Full or unambiguous short container ID")
@@ -117,6 +122,7 @@ def parser() -> argparse.ArgumentParser:
     )
     command.add_argument("--detach", action="store_true")
     command.add_argument("--no-config", action="store_true")
+    command.add_argument("--keep-builder", action="store_true")
     command = commands.add_parser(
         "kill-all", help="Stop/remove only managed containers; retain saved history"
     )
@@ -138,11 +144,15 @@ def dispatch(args: argparse.Namespace, app: App) -> None:
         harness = get_harness(args.harness)
         project = Project.discover(args.project)
         if args.action == "build":
-            print(app.build(project, harness))
+            print(
+                app.build(
+                    project, harness, no_config=args.no_config, keep_builder=args.keep_builder
+                )
+            )
             return
         if not args.detach:
             require_terminal()
-        id = app.new(project, harness, no_config=args.no_config)
+        id = app.new(project, harness, no_config=args.no_config, keep_builder=args.keep_builder)
         if not args.detach:
             app.attach(next(c for c in app.engine.containers() if c.id == id))
         return
@@ -160,7 +170,11 @@ def dispatch(args: argparse.Namespace, app: App) -> None:
             require_terminal()
         project = Project.discover(args.project or Path(session.project))
         id = app.new(
-            project, get_harness(session.harness), no_config=args.no_config, session=session
+            project,
+            get_harness(session.harness),
+            no_config=args.no_config,
+            session=session,
+            keep_builder=args.keep_builder,
         )
         if not args.detach:
             app.attach(next(c for c in app.engine.containers() if c.id == id))

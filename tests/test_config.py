@@ -82,6 +82,7 @@ def test_overlapping_artifacts_rejected(repository: Path) -> None:
         "\n[container]\ncpus = true\n",
         '\n[container]\nmemory = "garbage"\n',
         "\n[environment]\nX = 3\n",
+        '\n[builder]\nmemory = "garbage"\n',
     ],
 )
 def test_invalid_resources_and_environment(repository: Path, suffix: str) -> None:
@@ -89,6 +90,28 @@ def test_invalid_resources_and_environment(repository: Path, suffix: str) -> Non
         stream.write(suffix)
     with pytest.raises(AgentboxError):
         Project.discover(repository)
+
+
+def test_builder_memory_is_independent(repository: Path) -> None:
+    with (repository / ".agentbox.toml").open("a") as stream:
+        stream.write('\n[builder]\nmemory = "2G"\n')
+    project = Project.discover(repository)
+    assert project.builder_memory == "2G"
+    assert project.memory == "8G"
+
+
+@pytest.mark.parametrize("path", [".pi/agent", ".pi/agent/sessions", ".pi/agent/sessions/cache"])
+def test_prepared_dirs_cannot_cover_sessions(tmp_path: Path, harness: Harness, path: str) -> None:
+    (tmp_path / "Containerfile").write_text("FROM ubuntu:24.04\n")
+    (tmp_path / "profile.toml").write_text(
+        (harness.directory / "profile.toml")
+        .read_text()
+        .replace(
+            'prepared_dirs = [".pi/agent/npm", ".pi/agent/git"]', f'prepared_dirs = ["{path}"]'
+        )
+    )
+    with pytest.raises(AgentboxError, match="overlap"):
+        Harness.load(tmp_path)
 
 
 def test_missing_config(tmp_path: Path) -> None:

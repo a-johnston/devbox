@@ -93,13 +93,40 @@ def prepare(config: dict, cache_root: Path = CACHE) -> None:
             subprocess.run(["/usr/bin/mount", "--bind", str(cache), str(target)], check=True)
 
 
+def prepare_packages(
+    config: dict,
+    cache_root: Path = CACHE,
+    templates: Path = Path("/opt/agentbox/prepared"),
+    home: Path = Path("/home/agent"),
+) -> None:
+    """Give this VM writable Linux packages without copying them over VirtioFS.
+
+    Only these disposable directories cover the private home mount. Settings,
+    auth and transcripts remain host-backed; mutations cannot affect other VMs.
+    """
+    for relative in config.get("prepared_dirs", []):
+        target = target_directory(home, relative)
+        if os.path.ismount(target):
+            continue
+        source = templates / relative
+        if not source.is_dir():
+            raise ValueError(f"Prepared package template missing: {relative}; rebuild the image")
+        cache = cache_root / "harness" / relative
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        if not cache.exists():
+            subprocess.run(["/usr/bin/cp", "-a", str(source), str(cache)], check=True)
+        subprocess.run(["/usr/bin/mount", "--bind", str(cache), str(target)], check=True)
+
+
 def main() -> None:
     if os.geteuid() != 0:
         raise SystemExit("Run through the configured sudo helper")
     os.umask(0o022)
     with Path("/run/agentbox-prepare.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        prepare(json.loads(CONFIG.read_text()))
+        config = json.loads(CONFIG.read_text())
+        prepare_packages(config)
+        prepare(config)
 
 
 if __name__ == "__main__":

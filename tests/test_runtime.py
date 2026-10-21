@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -26,6 +27,41 @@ def test_preparation_does_not_copy_host_artifacts(
     assert calls[0][:2] == ["/usr/bin/mount", "--bind"]
     assert list(Path(calls[0][2]).iterdir()) == []
     assert calls[0][3] == str(output)
+
+
+def test_prepared_packages_are_private_guest_copies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    templates, home, cache = (tmp_path / name for name in ("templates", "home", "cache"))
+    source = templates / ".pi/agent/npm"
+    source.mkdir(parents=True)
+    (source / "package.json").write_text("prepared")
+    (source / "link").symlink_to("package.json")
+    target = home / ".pi/agent/npm"
+    target.mkdir(parents=True)
+    (target / "host-only").write_text("host cache must not be copied")
+    auth = home / ".pi/agent/auth.json"
+    auth.write_text("private")
+    calls = []
+
+    def run(args: list[str], **kwargs: object) -> None:
+        calls.append(args)
+        if args[0] == "/usr/bin/cp":
+            shutil.copytree(args[2], args[3], symlinks=True)
+
+    monkeypatch.setattr(prepare.subprocess, "run", run)
+    prepare.prepare_packages({"prepared_dirs": [".pi/agent/npm"]}, cache, templates, home)
+    clone = cache / "harness/.pi/agent/npm"
+    assert (clone / "link").is_symlink()
+    assert (clone / "package.json").read_text() == "prepared"
+    assert not (clone / "host-only").exists()
+    (clone / "package.json").write_text("changed by this VM")
+    assert (source / "package.json").read_text() == "prepared"
+    assert auth.read_text() == "private"
+    assert calls[-1] == ["/usr/bin/mount", "--bind", str(clone), str(target)]
+    monkeypatch.setattr(prepare.os.path, "ismount", lambda p: True)
+    prepare.prepare_packages({"prepared_dirs": [".pi/agent/npm"]}, cache, templates, home)
+    assert len(calls) == 2
 
 
 def test_symlink_artifact_is_rejected(tmp_path: Path) -> None:

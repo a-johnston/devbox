@@ -19,6 +19,13 @@ def test_new_defaults_to_current_project() -> None:
     assert args.detach
 
 
+@pytest.mark.parametrize("action", ["new", "build", "resume"])
+def test_preparation_options(action: str) -> None:
+    args = parser().parse_args([action, "--keep-builder", "--no-config"])
+    assert args.keep_builder
+    assert args.no_config
+
+
 def test_prefix_selection() -> None:
     assert (
         match(["agentbox-aabb", "agentbox-bbcc"], "aab", "Containers", str, str) == "agentbox-aabb"

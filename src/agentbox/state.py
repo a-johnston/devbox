@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO
+from urllib.parse import urlsplit
 
 from agentbox.config import Harness
 from agentbox.errors import AgentboxError
@@ -99,6 +100,49 @@ class Store:
                     )
                 )
         return sessions
+
+
+def package_sources(harness: Harness, *, no_config: bool = False) -> tuple[str, ...]:
+    """Only portable package declarations enter images, never private settings/auth."""
+    source = harness.seed_dir / "settings.json"
+    if (
+        no_config
+        or harness.name != "pi"
+        or "settings.json" not in harness.seed_files
+        or source.is_symlink()
+        or not source.is_file()
+    ):
+        return ()
+    try:
+        data = json.loads(source.read_text())
+        result = set()
+        packages = data.get("packages", [])
+        if not isinstance(packages, list):
+            raise ValueError("packages must be an array")
+        for package in packages:
+            value = package if isinstance(package, str) else package.get("source", "")
+            if not value.startswith(("npm:", "git:", "https://", "http://")):
+                continue
+            # Declarations are visible in image layers and build logs. Reject
+            # URL credentials/query strings rather than accidentally baking tokens.
+            url = value.removeprefix("git:").removeprefix("npm:")
+            if "://" in url:
+                parsed = urlsplit(url)
+                if parsed.username or parsed.password or parsed.query:
+                    raise AgentboxError(
+                        "Prepared package URLs must not contain credentials or query strings"
+                    )
+            if any(c in value for c in "\n\r\x00") or (
+                value.startswith("npm:")
+                and not re.fullmatch(
+                    r"npm:(?:@[A-Za-z0-9_.-]+/)?[A-Za-z0-9_][A-Za-z0-9_.-]*(?:@[^:/\s]+)?", value
+                )
+            ):
+                raise AgentboxError("Invalid portable package declaration")
+            result.add(value)
+        return tuple(sorted(result))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise AgentboxError("Pi settings.json is invalid; fix it or use --no-config") from exc
 
 
 def seed_config(harness: Harness, home: Path) -> list[str]:

@@ -17,6 +17,8 @@ class FakeEngine(Engine):
         self.calls: list[tuple[str, ...]] = []
         self.connections: list[tuple[str, ...]] = []
         self.rows: list[Container] = []
+        self.images: set[str] = set()
+        self.builder_state = "stopped"
 
     def require_running(self) -> None:
         pass
@@ -25,7 +27,30 @@ class FakeEngine(Engine):
         self, *args: str, capture: bool = True, check: bool = True
     ) -> subprocess.CompletedProcess[str]:
         self.calls.append(args)
-        return subprocess.CompletedProcess(args, 0, "", "")
+        if args[:2] == ("image", "inspect") and args[2] not in self.images:
+            return subprocess.CompletedProcess(args, 1, "", f"Error: image not found: {args[2]}")
+        if args[:2] == ("builder", "start"):
+            self.builder_state = "running"
+        if args[:2] == ("builder", "stop"):
+            self.builder_state = "stopped"
+        if args[0] == "build":
+            self.images.add(args[args.index("--tag") + 1])
+        output = (
+            json.dumps(
+                [
+                    {
+                        "id": "buildkit",
+                        "configuration": {
+                            "labels": {"com.apple.container.resource.role": "builder"}
+                        },
+                        "status": {"state": self.builder_state},
+                    }
+                ]
+            )
+            if args[0] == "list"
+            else ""
+        )
+        return subprocess.CompletedProcess(args, 0, output, "")
 
     def containers(self) -> list[Container]:
         return self.rows

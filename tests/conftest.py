@@ -1,5 +1,6 @@
 import os
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,11 @@ def isolated_git_environment(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.delenv(key)
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+
+@pytest.fixture(autouse=True)
+def isolated_builder_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("agentbox.engine.BUILDER_LOCK", tmp_path / "builder.lock")
 
 
 @pytest.fixture
@@ -59,5 +65,5 @@ def project(repository: Path) -> Project:
 
 
 @pytest.fixture
-def harness() -> Harness:
-    return Harness.load(ASSETS / "harnesses/pi")
+def harness(tmp_path: Path) -> Harness:
+    return replace(Harness.load(ASSETS / "harnesses/pi"), seed_dir=tmp_path / "host-config")

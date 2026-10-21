@@ -4,6 +4,7 @@ command = ["pi", "--append-system-prompt", "/home/agent/.agentbox/environment.md
 resume_args = ["--fork", "{session}"]
 state_dir = ".pi/agent"
 session_dir = ".pi/agent/sessions"
+prepared_dirs = [".pi/agent/npm", ".pi/agent/git"]
 seed_dir = "~/.pi/agent"
 seed_files = ["settings.json", "keybindings.json", "models.json", "auth.json", "AGENTS.md", "AGENTS.override.md", "APPEND_SYSTEM.md"]
 

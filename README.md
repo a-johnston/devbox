@@ -37,7 +37,8 @@ agentbox kill-all                        # confirm stop/removal of our container
 agentbox kill-all --yes                  # explicit noninteractive cleanup
 agentbox sessions                       # saved conversations, even from removed containers
 agentbox resume [session-id]             # snapshot + fork into a NEW container
-agentbox build pi                       # build/cache images without creating a container
+agentbox build pi                       # explicitly prepare/rebuild the environment
+agentbox build pi --keep-builder        # opt out of owned-builder cleanup
 ```
 
 Omitting a harness, container ID or session ID opens fzf. Explicit arguments bypass pickers.
@@ -68,7 +69,10 @@ context = ".agentbox"                  # small context: don't send assets/.git t
 
 [container]
 cpus = 4
-memory = "8G"
+memory = "8G"                        # guest RAM capacity, not an idle-footprint promise
+
+[builder]
+memory = "4G"                        # independent image-builder capacity (default)
 
 [workspace]
 artifacts = [".godot", "tests/bin", "tests/obj"]
@@ -80,8 +84,35 @@ DOTNET_CLI_TELEMETRY_OPTOUT = "1"
 
 The project's Containerfile installs project dependencies only. Agentbox composes a cached common
 terminal/runtime layer and then the selected harness layer. Images are standard OCI Linux images;
-only the host lifecycle adapter depends on Apple's CLI. New instances rebuild through BuildKit's
-cache so edits to configuration and Containerfiles are picked up.
+only the host lifecycle adapter depends on Apple's CLI.
+
+### Preparation versus launch
+
+The first `new` prepares a missing image. Subsequent `new`/`resume` calls reuse it **without any
+BuildKit startup, build, or OCI/tar export**. The image is scoped to the project, state store, harness,
+and selected personal package sources; changing only models, credentials or package resource filters
+does not rebuild it. `--no-config` uses a package-free variant. Removing an image makes the next
+launch prepare it again.
+
+Use `agentbox build pi` after changing a Containerfile, build context, runtime/harness implementation,
+or other image inputs. Ordinary source edits do not require it. Explicit builds refresh unpinned
+personal packages; package versions remain at that snapshot until rebuilt. There is deliberately no
+background freshness check, full-repository hash scan, or automatic base-image update on launch.
+Existing pre-preparation Agentbox images are rebuilt once into the new prepared-image namespace.
+
+The builder is leased under a per-user lock shared across all Agentbox projects and `--state-dir`
+values. A builder already running is left alone, including its resource settings. If Agentbox starts
+it, it attempts to **stop** it after success, failure or Ctrl-C, preserving its disk cache and images.
+`--keep-builder` on `build`, `new` or `resume` retains it intentionally. SIGKILL/host crashes cannot run
+cleanup; use `container builder stop` once no build is active. Apple's shared builder has no exclusive
+ownership lease: raw `container build` jobs do not participate in our lock and must not overlap an
+Agentbox-owned temporary builder. Start it yourself beforehand or use `--keep-builder` when sharing.
+
+Builder capacity is separate from guest capacity. Neither is an idle-memory target: Linux file cache
+can retain substantial memory inside a VM after a build. Guest-available memory and host RSS alone
+are not substitutes for macOS physical-footprint accounting. No builder is needed to keep agents alive.
+CLI timings distinguish environment preparation from VM/runtime readiness; the latter is **not** a
+claim that Pi has finished rendering its UI.
 
 ### Generated-directory isolation
 
@@ -107,8 +138,18 @@ mounted worktrees. Use the host's editor for graphical playtesting.
 Each instance has its **own writable harness state**, not a shared writable harness home. Pi's profile
 copies selected files from `~/.pi/agent`: preferences, keybindings, model definitions, saved auth and
 user instructions. It does not import host sessions, trust decisions, MCP servers, installed package
-trees, local extensions, or your whole home. Remote npm/git package declarations are retained and Pi
-installs their Linux dependencies inside the VM. Host-specific settings are omitted with a notice.
+trees, local extensions, or your whole home. Portable personal npm/git package declarations are
+prepared as Linux dependencies in the harness image, with no copied settings or credentials in the
+build context. Package declarations/layers are image-visible: use credential-free sources, not URLs
+containing tokens. Private registry/SSH authentication is not forwarded to builds. Host-specific
+settings are omitted with a notice.
+
+At startup, prepared npm/git directories are cloned to private VM-local writable storage and cover
+only those directories in the instance home. This avoids copying package trees through the host
+filesystem on every launch. Settings, auth and sessions remain private and host-backed. Package edits
+cannot affect another VM or the image seed; stop retains them, removal discards them. Project-scoped
+packages still follow Pi's trust flow and are not preinstalled merely by reading an untrusted project.
+Pi's `fd` executable is provisioned in the image rather than downloaded on first launch.
 
 Use `--no-config` to skip imports and `/login` inside Pi instead. Copied auth and configuration do not
 sync back to the host. OAuth refresh/revocation behavior varies by provider: you may need to log in
@@ -166,6 +207,13 @@ with `{session}`, relative state/session directories beneath `/home/agent`, sele
 environment variables. Its Containerfile takes global `ARG RUNTIME_IMAGE` and derives from that image.
 The runtime image already provides the agent user, tmux and the entrypoint; preserve them. Install
 Linux dependencies rather than mounting host binaries or `node_modules`.
+
+Optional `prepared_dirs` lists relative home directories to seed from matching paths beneath
+`/opt/agentbox/prepared` in the image. These directories get private writable guest-local copies;
+they may not overlap each other or the durable `session_dir`. Images for custom profiles must provide
+those templates. The generated `package-sources.json` in a harness build context contains only selected
+portable personal Pi package sources (empty for other harnesses); the included Pi build helper consumes
+it. Additional harness package discovery needs its own adapter, not Pi settings assumptions.
 
 The current session catalog handles local **JSONL** conversations; remote-only harnesses can omit
 resume support. Harnesses with another storage format will need a small catalog adapter rather than

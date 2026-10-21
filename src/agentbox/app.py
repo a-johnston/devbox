@@ -7,6 +7,8 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import tempfile
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -15,7 +17,7 @@ from pathlib import Path
 from agentbox.config import ASSETS, Harness, Project, git_output
 from agentbox.engine import MANAGED, OWNER, Container, Engine
 from agentbox.errors import AgentboxError
-from agentbox.state import Session, Store, seed_config, snapshot_session
+from agentbox.state import Session, Store, package_sources, seed_config, snapshot_session
 
 PALETTE = (24, 25, 29, 53, 60, 88, 94, 96, 130)
 
@@ -60,50 +62,88 @@ class App:
             fcntl.flock(lock, fcntl.LOCK_EX)
             yield
 
-    def build(self, project: Project, harness: Harness) -> str:
-        with self._project_lock(project):
-            return self._build(project, harness)
+    def _prepared_image(self, project: Project, harness: Harness, packages: tuple[str, ...]) -> str:
+        # A separate namespace prevents old, unprepared images from taking the fast path.
+        variant = hashlib.sha256(json.dumps(packages).encode()).hexdigest()[:12]
+        return f"agentbox-{harness.name}-{self._image_key(project)}-prepared-{variant}:latest"
 
-    def _build(self, project: Project, harness: Harness) -> str:
+    def build(
+        self,
+        project: Project,
+        harness: Harness,
+        *,
+        no_config: bool = False,
+        keep_builder: bool = False,
+    ) -> str:
+        packages = package_sources(harness, no_config=no_config)
+        with self._project_lock(project):
+            return self._build(project, harness, packages, keep_builder=keep_builder)
+
+    def _build(
+        self,
+        project: Project,
+        harness: Harness,
+        packages: tuple[str, ...],
+        *,
+        keep_builder: bool = False,
+    ) -> str:
         self.engine.require_running()
         key = self._image_key(project)
         base = f"agentbox-project-{key}:latest"
         runtime = f"agentbox-runtime-{key}:latest"
-        image = f"agentbox-{harness.name}-{key}:latest"
+        image = self._prepared_image(project, harness, packages)
         common = (
             "--platform",
             "linux/arm64",
             "--memory",
-            project.memory,
+            project.builder_memory,
             "--cpus",
             str(project.cpus),
         )
-        for tag, file, context, extra in (
-            (base, project.containerfile, project.context, ()),
-            (
-                runtime,
-                ASSETS / "runtime/Containerfile",
-                ASSETS / "runtime",
-                ("--build-arg", f"PROJECT_IMAGE={base}"),
+        started = time.monotonic()
+        print("Preparing environment; subsequent launches reuse the prepared image.", flush=True)
+        with (
+            self.engine.builder(
+                memory=project.builder_memory, cpus=project.cpus, keep=keep_builder
             ),
-            (
-                image,
-                harness.directory / "Containerfile",
-                harness.directory,
-                ("--build-arg", f"RUNTIME_IMAGE={runtime}"),
-            ),
+            tempfile.TemporaryDirectory(prefix="agentbox-build-") as temp,
         ):
-            self.engine.call(
-                "build",
-                *common,
-                "--tag",
-                tag,
-                "--file",
-                str(file),
-                *extra,
-                str(context),
-                capture=False,
-            )
+            # Only harness assets and public package declarations enter this context.
+            context = Path(temp) / "harness"
+            shutil.copytree(harness.directory, context)
+            (context / "package-sources.json").write_text(json.dumps(packages) + "\n")
+            for tag, file, source, extra in (
+                (base, project.containerfile, project.context, ()),
+                (
+                    runtime,
+                    ASSETS / "runtime/Containerfile",
+                    ASSETS / "runtime",
+                    ("--build-arg", f"PROJECT_IMAGE={base}"),
+                ),
+                (
+                    image,
+                    context / "Containerfile",
+                    context,
+                    (
+                        "--build-arg",
+                        f"RUNTIME_IMAGE={runtime}",
+                        "--build-arg",
+                        f"PREPARE_REVISION={time.time_ns()}",
+                    ),
+                ),
+            ):
+                self.engine.call(
+                    "build",
+                    *common,
+                    "--tag",
+                    tag,
+                    "--file",
+                    str(file),
+                    *extra,
+                    str(source),
+                    capture=False,
+                )
+        print(f"Environment prepared in {time.monotonic() - started:.1f}s", flush=True)
         return image
 
     def new(
@@ -113,23 +153,38 @@ class App:
         *,
         no_config: bool = False,
         session: Session | None = None,
+        keep_builder: bool = False,
     ) -> str:
         if self.store.root.is_relative_to(project.root):
             raise AgentboxError("Keep agentbox state outside the shared project directory")
         # Hold the same lock through container creation, so another launch cannot
         # replace a shared image tag between our build and container run.
         with self._project_lock(project):
-            return self._new(project, harness, no_config=no_config, session=session)
+            return self._new(
+                project, harness, no_config=no_config, session=session, keep_builder=keep_builder
+            )
 
     def _new(
-        self, project: Project, harness: Harness, *, no_config: bool, session: Session | None
+        self,
+        project: Project,
+        harness: Harness,
+        *,
+        no_config: bool,
+        session: Session | None,
+        keep_builder: bool,
     ) -> str:
         if session and not harness.resume_args:
             raise AgentboxError(f"{harness.name} does not support local session resumption")
         env = {**project.env, **harness.env}
         if "PATH" in env or "HOME" in env:
             raise AgentboxError("Project/harness environment must not override PATH or HOME")
-        image = self._build(project, harness)
+        self.engine.require_running()
+        packages = package_sources(harness, no_config=no_config)
+        image = self._prepared_image(project, harness, packages)
+        if self.engine.image_exists(image):
+            print("Using prepared image; BuildKit not needed.", flush=True)
+        else:
+            image = self._build(project, harness, packages, keep_builder=keep_builder)
         id, directory = self.store.create()
         home = directory / "home"
         (home / harness.session_dir).mkdir(parents=True, exist_ok=True)
@@ -163,6 +218,7 @@ class App:
             "cwd": str(project.cwd),
             "artifacts": project.artifacts,
             "prepare_commands": project.prepare_commands,
+            "prepared_dirs": harness.prepared_dirs,
             "command": command,
             "git_identity": {
                 key: value
@@ -186,6 +242,7 @@ class App:
         flags: list[str] = []
         for key, value in env.items():
             flags.extend(("--env", f"{key}={value}"))
+        started = time.monotonic()
         try:
             self.engine.call(
                 "run",
@@ -214,6 +271,10 @@ class App:
                 image,
             )
             self._wait_ready(id)
+            print(
+                f"VM/runtime ready in {time.monotonic() - started:.1f}s; starting {harness.name}.",
+                flush=True,
+            )
             self.engine.exec(
                 id,
                 "tmux",

@@ -100,6 +100,7 @@ class Project:
     env: dict[str, str]
     cpus: int = 4
     memory: str = "8G"
+    builder_memory: str = "4G"
 
     @classmethod
     def discover(cls, directory: Path) -> Project:
@@ -127,6 +128,7 @@ class Project:
         image = table(data.get("image", {}), "image")
         workspace = table(data.get("workspace", {}), "workspace")
         container = table(data.get("container", {}), "container")
+        builder = table(data.get("builder", {}), "builder")
         context = (config.parent / text(image.get("context", "."), "image.context")).resolve()
         containerfile = (
             config.parent / text(image.get("containerfile", "Containerfile"), "image.containerfile")
@@ -146,6 +148,9 @@ class Project:
             raise AgentboxError("prepare_commands must contain executable names, not paths")
         cpus = container.get("cpus", 4)
         memory = text(container.get("memory", "8G"), "container.memory")
+        builder_memory = text(builder.get("memory", "4G"), "builder.memory")
+        if not re.fullmatch(r"[1-9][0-9]*[KMG]?", builder_memory):
+            raise AgentboxError("Invalid builder.memory size (e.g. '4G')")
         if type(cpus) is not int or cpus < 1 or not re.fullmatch(r"[1-9][0-9]*[KMG]?", memory):
             raise AgentboxError("Invalid CPU count or memory size (e.g. cpus = 4, memory = '8G')")
         return cls(
@@ -159,6 +164,7 @@ class Project:
             environment(data.get("environment", {})),
             cpus,
             memory,
+            builder_memory,
         )
 
 
@@ -173,6 +179,7 @@ class Harness:
     seed_dir: Path
     seed_files: tuple[str, ...]
     env: dict[str, str]
+    prepared_dirs: tuple[str, ...] = ()
 
     @classmethod
     def load(cls, directory: Path) -> Harness:
@@ -184,6 +191,17 @@ class Harness:
         resume = strings(data.get("resume_args", []), "resume_args")
         if not command or (resume and not any("{session}" in arg for arg in resume)):
             raise AgentboxError("Harness needs a command and {session} in resume_args")
+        prepared = tuple(
+            relative(v) for v in strings(data.get("prepared_dirs", []), "prepared_dirs")
+        )
+        session_dir = relative(text(data.get("session_dir"), "session_dir"))
+        for i, path in enumerate(prepared):
+            if any(
+                PurePosixPath(path).is_relative_to(other)
+                or PurePosixPath(other).is_relative_to(path)
+                for other in (*prepared[:i], session_dir)
+            ):
+                raise AgentboxError("Prepared directories must not overlap each other or sessions")
         if not (directory / "Containerfile").is_file():
             raise AgentboxError(f"Missing {directory / 'Containerfile'}")
         return cls(
@@ -192,10 +210,11 @@ class Harness:
             command,
             resume,
             relative(text(data.get("state_dir"), "state_dir")),
-            relative(text(data.get("session_dir"), "session_dir")),
+            session_dir,
             Path(text(data.get("seed_dir"), "seed_dir")).expanduser(),
             tuple(relative(v) for v in strings(data.get("seed_files", []), "seed_files")),
             environment(data.get("environment", {})),
+            prepared,
         )
 
 

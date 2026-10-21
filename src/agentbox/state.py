@@ -68,7 +68,8 @@ class Store:
                 continue
             metadata = self.metadata(directory.name)
             home = directory / "home"
-            for path in sorted((home / metadata["session_dir"]).rglob("*.jsonl")):
+            glob = metadata.get("session_glob", "**/*.jsonl")
+            for path in sorted((home / metadata["session_dir"]).glob(glob)):
                 # Display metadata, never prompt text or credentials from the transcript.
                 try:
                     header = json.loads(read_session(path, home, header=True))

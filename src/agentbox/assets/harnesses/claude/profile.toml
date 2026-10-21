@@ -1,0 +1,15 @@
+name = "claude"
+command = ["claude", "--append-system-prompt-file", "/home/agent/.agentbox/environment.md"]
+# Claude resumes by ID; always fork, so the source session never has two writers.
+resume_args = ["--resume", "{session_id}", "--fork-session"]
+state_dir = ".claude"
+session_dir = ".claude/projects"
+# Top-level transcripts only, not subagent transcripts nested beside them.
+session_glob = "*/*.jsonl"
+seed_dir = "~/.claude"
+# macOS keeps credentials in the Keychain; .credentials.json only exists on Linux hosts.
+seed_files = ["settings.json", "keybindings.json", "CLAUDE.md", ".credentials.json"]
+
+[environment]
+# The image's install is root-owned; rebuild with `agentbox build claude` instead.
+DISABLE_AUTOUPDATER = "1"

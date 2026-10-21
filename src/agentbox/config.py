@@ -161,6 +161,7 @@ class Harness:
     seed_files: tuple[str, ...]
     env: dict[str, str]
     prepared_dirs: tuple[str, ...] = ()
+    session_glob: str = "**/*.jsonl"
 
     @classmethod
     def load(cls, directory: Path) -> Harness:
@@ -170,8 +171,12 @@ class Harness:
             raise AgentboxError(f"Invalid harness name: {name!r}")
         command = strings(data.get("command"), "command")
         resume = strings(data.get("resume_args", []), "resume_args")
-        if not command or (resume and not any("{session}" in arg for arg in resume)):
-            raise AgentboxError("Harness needs a command and {session} in resume_args")
+        if not command or (
+            resume and not any("{session}" in arg or "{session_id}" in arg for arg in resume)
+        ):
+            raise AgentboxError(
+                "Harness needs a command and {session} or {session_id} in resume_args"
+            )
         prepared = tuple(
             relative(v) for v in strings(data.get("prepared_dirs", []), "prepared_dirs")
         )
@@ -191,6 +196,7 @@ class Harness:
             tuple(relative(v) for v in strings(data.get("seed_files", []), "seed_files")),
             environment(data.get("environment", {})),
             prepared,
+            relative(text(data.get("session_glob", "**/*.jsonl"), "session_glob")),
         )
 
     def hook(self, name: str) -> Callable[..., Any] | None:

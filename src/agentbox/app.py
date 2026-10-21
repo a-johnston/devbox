@@ -10,10 +10,17 @@ import tempfile
 import time
 from pathlib import Path, PurePosixPath
 
-from agentbox.config import ASSETS, Harness, Project, git_output
+from agentbox.config import ASSETS, Harness, Project, git_output, relative
 from agentbox.engine import MANAGED, Container, Engine
 from agentbox.errors import AgentboxError
-from agentbox.state import Session, Store, build_files, seed_config, snapshot_session
+from agentbox.state import (
+    Session,
+    Store,
+    build_files,
+    run_hook,
+    seed_config,
+    snapshot_session,
+)
 
 PREPARED = PurePosixPath("/opt/agentbox/prepared")
 PALETTE = (24, 25, 29, 53, 60, 88, 94, 96, 130)
@@ -140,19 +147,26 @@ class App:
             imported = seed_config(harness, home)
             if imported:
                 print("Seeded isolated config copy: " + ", ".join(imported), flush=True)
-        for relative in harness.prepared_dirs:
+        for prepared in harness.prepared_dirs:
             # Image-local and copy-on-write per container, never through the host mount.
-            link = home / relative
+            link = home / prepared
             link.parent.mkdir(parents=True, exist_ok=True)
-            link.symlink_to(PREPARED / relative)
+            link.symlink_to(PREPARED / prepared)
         command = list(harness.command)
         if session:
-            target = home / ".agentbox/resume.jsonl"
+            session_id = session.id.split("/", 1)[1]
+            # Harnesses that resume by ID choose where their snapshot must live.
+            target = relative(
+                run_hook(harness, "resume_file", session_id, str(project.cwd))
+                or ".agentbox/resume.jsonl"
+            )
             snapshot_session(
-                session.path, target, root=self.store.directory(session.instance) / "home"
+                session.path, home / target, root=self.store.directory(session.instance) / "home"
             )
             command.extend(
-                arg.replace("{session}", "/home/agent/.agentbox/resume.jsonl")
+                arg.replace("{session}", f"/home/agent/{target}").replace(
+                    "{session_id}", session_id
+                )
                 for arg in harness.resume_args
             )
         (home / ".agentbox").mkdir(exist_ok=True)
@@ -172,6 +186,7 @@ class App:
             "harness": harness.name,
             "config": str(project.config),
             "session_dir": harness.session_dir,
+            "session_glob": harness.session_glob,
             "image": image,
             "resumed_from": session.id if session else None,
         }

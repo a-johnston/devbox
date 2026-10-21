@@ -2,7 +2,7 @@
 
 Run coding harnesses inside lightweight Linux VMs using [Apple's `container`](https://github.com/apple/container).
 The project is mounted writable at its original path; the rest of your home stays on the host.
-Pi is the included harness. The name is provisional.
+Pi and Claude Code are the included harnesses. The name is provisional.
 
 ## Install
 
@@ -29,6 +29,7 @@ agentbox completion fish | source       # ~/.config/fish/config.fish
 
 ```sh
 agentbox new pi                         # --project defaults to .; omit the harness for a picker
+agentbox new claude
 agentbox new pi --detach
 agentbox ls                             # managed containers, including stopped ones
 agentbox attach [id]                    # IDs accept unique prefixes; omit for a picker
@@ -103,6 +104,12 @@ Host-specific settings and local packages are dropped with a notice. Portable np
 declarations are installed into the image at build time, so they must not contain credentials.
 `--no-config` skips all of this; use `/login` inside Pi instead.
 
+For Claude Code, these are `settings.json`, `keybindings.json`, `CLAUDE.md` and, on Linux hosts,
+`.credentials.json` from `~/.claude`. Hooks, status line, credential helpers, plugins and extra
+directories are dropped with a notice. macOS keeps Claude credentials in the Keychain, so run
+`/login` inside each new container. The CLI version is pinned in its Containerfile and the
+in-container auto-updater is disabled.
+
 Only Git `user.name`/`user.email` are passed in (as `GIT_AUTHOR_*`/`GIT_COMMITTER_*`). No host
 environment is forwarded beyond what the manifest and profile declare.
 
@@ -124,12 +131,14 @@ to discard its conversations **and copied credentials**.
 
 User profiles override or add to the built-ins in `$XDG_CONFIG_HOME/agentbox/harnesses/<name>/`:
 
-- `profile.toml`: the command, optional `resume_args` with `{session}`, `state_dir`/`session_dir`
-  under `/home/agent`, `seed_dir` and `seed_files` to copy, `environment`, and optional
-  `prepared_dirs`. Follow [the Pi profile](src/agentbox/assets/harnesses/pi/profile.toml).
+- `profile.toml`: the command, optional `resume_args` with `{session}` (snapshot path) or
+  `{session_id}`, `state_dir`/`session_dir` under `/home/agent`, optional `session_glob` (default
+  `**/*.jsonl`), `seed_dir` and `seed_files` to copy, `environment`, and optional `prepared_dirs`.
+  Follow [the Pi profile](src/agentbox/assets/harnesses/pi/profile.toml).
 - `Containerfile`: takes `ARG RUNTIME_IMAGE` and builds `FROM` it.
 - Optional `hooks.py`: host-side `build_files(seed_dir)` returns extra build-context files (keyed
-  into the image name), and `adapt_seed(state_dir)` adjusts copied config.
+  into the image name), `adapt_seed(state_dir)` adjusts copied config, and
+  `resume_file(session_id, cwd)` places the resume snapshot (default `.agentbox/resume.jsonl`).
 
 Each `prepared_dirs` entry is symlinked from the home to `/opt/agentbox/prepared/<path>` in the
 image. Every container gets its own writable copy.

@@ -200,3 +200,17 @@ def test_colorterm_is_inherited_unless_overridden(
     run = next(call for call in engine.calls if call[0] == "run")
     assert "COLORTERM=24bit" in run
     assert "COLORTERM=truecolor" not in run
+
+
+def test_builds_and_describes_the_host_architecture(
+    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("platform.machine", lambda: "x86_64")
+    engine = FakeEngine()
+    app = App(engine, Store(tmp_path / "state"))
+    id = app.new(project, harness, no_config=True)
+    builds = [call for call in engine.calls if call[0] == "build"]
+    assert [b[b.index("--platform") + 1] for b in builds] == ["linux/amd64"] * 3
+    text = (app.store.directory(id) / "home/.agentbox/environment.md").read_text()
+    assert f"agentbox instance {id}, a Linux AMD64 VM, as a non-root user." in text
+    assert "Do not assume host tools" in text

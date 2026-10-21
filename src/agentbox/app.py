@@ -12,7 +12,7 @@ import time
 from pathlib import Path, PurePosixPath
 
 from agentbox.config import ASSETS, Harness, Project, git_output, relative
-from agentbox.engine import MANAGED, Container, Engine
+from agentbox.engine import MANAGED, Container, Engine, host_platform
 from agentbox.errors import AgentboxError
 from agentbox.state import (
     Session,
@@ -77,7 +77,9 @@ class App:
         self, project: Project, harness: Harness, files: dict[str, str], args: dict[str, str]
     ) -> str:
         # A separate namespace prevents old, unprepared images from taking the fast path.
-        inputs = json.dumps({"files": files, "args": args}, sort_keys=True)
+        inputs = json.dumps(
+            {"files": files, "args": args, "platform": host_platform()}, sort_keys=True
+        )
         variant = hashlib.sha256(inputs.encode()).hexdigest()[:12]
         return f"agentbox-{harness.name}-{self._image_key(project)}-prepared-{variant}:latest"
 
@@ -143,6 +145,7 @@ class App:
                         file,
                         source,
                         layer_args,
+                        platform=host_platform(),
                         memory=project.builder_memory,
                         cpus=project.cpus,
                     )
@@ -208,13 +211,14 @@ class App:
                 for arg in harness.resume_args
             )
         (home / ".agentbox").mkdir(exist_ok=True)
+        architecture = host_platform().removeprefix("linux/").upper()
         (home / ".agentbox/environment.md").write_text(
-            f"You are running in agentbox instance {id}, a Linux ARM64 VM, as a non-root user.\n"
+            f"You are running in agentbox instance {id}, a Linux {architecture} VM, as a non-root user.\n"
             f"The whole host checkout {project.root} is writable at that same path, including .git.\n"
             "Follow the project's worktree and landing policies; this is not a branch protection boundary.\n"
             "Declared build/import outputs are guest-local and will disappear if the container is removed.\n"
             "Any previous session's processes, temporary files and OS assumptions do not carry over.\n"
-            "There is no host shell bridge. Do not assume macOS tools or the host editor are available.\n"
+            "There is no host shell bridge. Do not assume host tools or the host editor are available.\n"
         )
         (home / ".agentbox/tmux.conf").write_text(tmux_config(id, project.root.name, harness.name))
         metadata = {

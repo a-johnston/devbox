@@ -34,9 +34,7 @@ def select[T](items: Sequence[T], prompt: str, label: Callable[[T], str]) -> T:
         raise AgentboxError(f"No eligible {prompt.lower()}")
     require_terminal()
     if shutil.which("fzf") is None:
-        raise AgentboxError(
-            "Interactive selection requires fzf (brew install fzf), or supply an explicit argument"
-        )
+        raise AgentboxError("Interactive selection requires fzf, or supply an explicit argument")
     rows = [f"{i}\t{label(item)}" for i, item in enumerate(items)]
     result = subprocess.run(
         [
@@ -87,7 +85,7 @@ def session_label(session: Session) -> str:
 
 
 def parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Coding harnesses in disposable Apple containers")
+    p = argparse.ArgumentParser(description="Coding harnesses in disposable containers")
     p.add_argument("--version", action="version", version=__version__)
     p.add_argument("--state-dir", type=Path, help="Override the durable state directory")
     commands = p.add_subparsers(dest="action", required=True)

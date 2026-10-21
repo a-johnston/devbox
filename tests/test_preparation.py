@@ -203,3 +203,23 @@ def test_host_version_is_a_build_arg_and_image_variant(
     fallback = app.build(project, harness)
     assert not any("HARNESS_VERSION" in arg for arg in engine.calls[-2])
     assert fallback not in (first, upgraded)
+
+
+def test_architecture_is_an_image_variant(
+    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = App(FakeEngine(), Store(tmp_path / "state"))
+    monkeypatch.setattr("platform.machine", lambda: "arm64")
+    arm = app._prepared_image(project, harness, {}, {})
+    monkeypatch.setattr("platform.machine", lambda: "x86_64")
+    assert app._prepared_image(project, harness, {}, {}) != arm
+
+
+def test_unsupported_host_fails_before_building(
+    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("platform.machine", lambda: "riscv64")
+    engine = FakeEngine()
+    with pytest.raises(AgentboxError, match="riscv64"):
+        App(engine, Store(tmp_path / "state")).new(project, harness, no_config=True)
+    assert not any(call[0] == "build" for call in engine.calls)

@@ -154,3 +154,17 @@ def test_kill_all_noninteractive_requires_yes(
     with pytest.raises(AgentboxError, match="terminal"):
         dispatch(argparse.Namespace(action="kill-all", yes=False), App(engine, Store(tmp_path)))
     assert not engine.calls
+
+
+def test_cli_text_is_platform_neutral() -> None:
+    text = parser().format_help()
+    assert "Apple" not in text
+    assert "Coding harnesses in disposable containers" in text
+
+
+def test_missing_fzf_hint_is_platform_neutral(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("agentbox.cli.require_terminal", lambda: None)
+    monkeypatch.setattr("agentbox.cli.shutil.which", lambda _: None)
+    with pytest.raises(AgentboxError, match="requires fzf") as error:
+        select(["first"], "Harnesses", str)
+    assert "brew" not in str(error.value)

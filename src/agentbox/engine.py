@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -13,6 +14,20 @@ from typing import Any
 from agentbox.errors import AgentboxError
 
 MANAGED = "dev.agentbox.managed"
+PLATFORMS = {
+    "arm64": "linux/arm64",
+    "aarch64": "linux/arm64",
+    "x86_64": "linux/amd64",
+    "amd64": "linux/amd64",
+}
+
+
+def host_platform() -> str:
+    """Images build natively; there is no cross-architecture emulation."""
+    machine = platform.machine()
+    if machine.lower() not in PLATFORMS:
+        raise AgentboxError(f"Unsupported host architecture: {machine!r}")
+    return PLATFORMS[machine.lower()]
 
 
 @dataclass(frozen=True)
@@ -66,14 +81,22 @@ class Engine:
         raise AgentboxError(f"Cannot check prepared image: {result.stderr.strip()}")
 
     def build(
-        self, tag: str, file: Path, context: Path, args: dict[str, str], *, memory: str, cpus: int
+        self,
+        tag: str,
+        file: Path,
+        context: Path,
+        args: dict[str, str],
+        *,
+        platform: str,
+        memory: str,
+        cpus: int,
     ) -> None:
         """Starts the builder if needed; the resources apply to (and may restart) it."""
         flags = [flag for key, value in args.items() for flag in ("--build-arg", f"{key}={value}")]
         self.call(
             "build",
             "--platform",
-            "linux/arm64",
+            platform,
             "--memory",
             memory,
             "--cpus",

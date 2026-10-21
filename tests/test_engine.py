@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from agentbox.engine import MANAGED, Engine
+from agentbox.engine import MANAGED, Engine, host_platform
 from agentbox.errors import AgentboxError
 
 
@@ -74,3 +74,24 @@ def test_connect_replaces_process_and_strips_outer_tmux(monkeypatch: pytest.Monk
         "agent",
     ]
     assert "TMUX" not in env
+
+
+@pytest.mark.parametrize(
+    "machine,expected",
+    [
+        ("arm64", "linux/arm64"),
+        ("aarch64", "linux/arm64"),
+        ("x86_64", "linux/amd64"),
+        ("AMD64", "linux/amd64"),
+    ],
+)
+def test_host_platform(monkeypatch: pytest.MonkeyPatch, machine: str, expected: str) -> None:
+    monkeypatch.setattr("platform.machine", lambda: machine)
+    assert host_platform() == expected
+
+
+@pytest.mark.parametrize("machine", ["riscv64", "armv7l", ""])
+def test_unsupported_host_platform(monkeypatch: pytest.MonkeyPatch, machine: str) -> None:
+    monkeypatch.setattr("platform.machine", lambda: machine)
+    with pytest.raises(AgentboxError, match="Unsupported host architecture"):
+        host_platform()

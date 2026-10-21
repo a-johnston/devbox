@@ -10,7 +10,10 @@ Pi and Claude Code are the included harnesses.
 Requires [uv](https://docs.astral.sh/uv/), and [fzf](https://github.com/junegunn/fzf) for
 interactive pickers, plus a container engine:
 
-- **macOS** (Apple silicon): Apple's `container` **1.5+**. Start it with `container system start`.
+- **macOS** (Apple silicon): Apple's `container` **1.5+**. When its service isn't running,
+  Devbox offers to run `container system start` if both stdin and stdout are terminals.
+  The prompt defaults to **No**; confirming starts the service and rechecks it before continuing.
+  Startup failures stop the command. For non-interactive use, start the service yourself first.
 - **Linux** (x86_64 or arm64): rootless Podman **4.3+** with cgroup v2. On Arch,
   `sudo pacman -S podman fzf uv`. Your user needs `/etc/subuid` and `/etc/subgid` entries
   (`sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $USER`); there is no

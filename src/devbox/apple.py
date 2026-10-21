@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -26,8 +27,25 @@ class AppleEngine(Engine):
 
     def require_running(self) -> None:
         result = self.call("system", "status", check=False)
+        if not result.returncode and "not running" not in result.stdout:
+            return
+        message = "Start Apple's container service first: container system start"
+        if not sys.stdin.isatty() or not sys.stdout.isatty():
+            raise DevboxError(message)
+        try:
+            answer = input("Apple's container service isn't running. Start it now? [y/N] ")
+        except EOFError:
+            answer = ""
+        if answer.strip().lower() not in {"y", "yes"}:
+            raise DevboxError(message)
+        self.call("system", "start", capture=False)
+        result = self.call("system", "status", check=False)
         if result.returncode or "not running" in result.stdout:
-            raise DevboxError("Start Apple's container service first: container system start")
+            detail = (result.stderr or result.stdout).strip()
+            raise DevboxError(
+                "Apple's container service is still unavailable after container system start"
+                + (f": {detail}" if detail else "")
+            )
 
     def image_exists(self, reference: str) -> bool:
         result = self.call("image", "inspect", reference, check=False)

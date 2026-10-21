@@ -46,6 +46,7 @@ def test_remove_deletes_only_this_containers_volumes(monkeypatch: pytest.MonkeyP
 
 
 def test_stopped_service_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     monkeypatch.setattr(
         subprocess,
         "run",

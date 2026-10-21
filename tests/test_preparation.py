@@ -3,6 +3,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 from test_app import FakeEngine
@@ -34,7 +35,7 @@ def test_failed_preparation_does_not_publish_or_create_instance(
     app = App(engine, Store(tmp_path / "state"))
     call = engine.call
 
-    def fail_build(*args: str, **kwargs: bool) -> subprocess.CompletedProcess[str]:
+    def fail_build(*args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         if args[0] == "build":
             raise AgentboxError("intentional build failure")
         return call(*args, **kwargs)
@@ -160,7 +161,7 @@ def test_build_context_never_contains_private_settings(
     engine = FakeEngine()
     call = engine.call
 
-    def inspect(*args: str, **kwargs: bool) -> subprocess.CompletedProcess[str]:
+    def inspect(*args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         if args[0] == "build" and "PREPARE_REVISION=" in " ".join(args):
             context = Path(args[-1])
             assert (context / "package-sources.txt").read_text() == "npm:example@1\n"

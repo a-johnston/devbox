@@ -17,6 +17,7 @@ def claude(tmp_path: Path) -> Harness:
         Harness.load(ASSETS / "harnesses/claude"),
         seed_dir=tmp_path / "host-config",
         version_command=(),
+        secrets=(),
     )
 
 
@@ -34,7 +35,7 @@ def test_seed_drops_host_specific_settings(tmp_path: Path, claude: Harness) -> N
         )
     )
     (claude.seed_dir / "CLAUDE.md").write_text("instructions")
-    (claude.seed_dir / ".claude.json").write_text("{}")
+    (claude.seed_dir / ".claude.json").write_text('{"mcpServers": {"host": {}}}')
     home = tmp_path / "home"
     messages = seed_config(claude, home)
     assert "omitted host-specific setting hooks" in messages
@@ -42,7 +43,10 @@ def test_seed_drops_host_specific_settings(tmp_path: Path, claude: Harness) -> N
     settings = json.loads((home / ".claude/settings.json").read_text())
     assert settings == {"model": "opus", "permissions": {"allow": ["Bash(ls)"]}}
     assert (home / ".claude/CLAUDE.md").read_text() == "instructions"
-    assert not (home / ".claude/.claude.json").exists()
+    # The host's global config (projects, MCP servers) is never copied.
+    assert json.loads((home / ".claude/.claude.json").read_text()) == {
+        "hasCompletedOnboarding": True
+    }
 
 
 def test_invalid_settings_fail(tmp_path: Path, claude: Harness) -> None:

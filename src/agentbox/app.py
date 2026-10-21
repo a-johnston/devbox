@@ -11,6 +11,7 @@ import tempfile
 import time
 from pathlib import Path, PurePosixPath
 
+from agentbox import keychain
 from agentbox.config import ASSETS, Harness, Project, git_output, relative
 from agentbox.engine import MANAGED, Container, Engine
 from agentbox.errors import AgentboxError
@@ -169,6 +170,10 @@ class App:
             print("Using prepared image; BuildKit not needed.", flush=True)
         else:
             image = self._build(project, harness, files, args)
+        # Only the harness process receives these: not the container config or saved state.
+        secrets = {} if no_config else keychain.load(harness)
+        if secrets:
+            print("Using stored credentials: " + ", ".join(secrets), flush=True)
         id, directory = self.store.create()
         home = directory / "home"
         (home / harness.session_dir).mkdir(parents=True, exist_ok=True)
@@ -285,6 +290,7 @@ class App:
                 str(project.cwd),
                 "--",
                 *command,
+                env=secrets,
             )
         except (AgentboxError, KeyboardInterrupt):
             # Retain state for diagnosis, but do not leak a VM or its volumes.

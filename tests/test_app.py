@@ -2,6 +2,7 @@ import json
 import subprocess
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -20,14 +21,20 @@ class FakeEngine(Engine):
         self.rows: list[Container] = []
         self.images: set[str] = set()
         self.builder_state = "stopped"
+        self.env: dict[str, str] | None = None
 
     def require_running(self) -> None:
         pass
 
     def call(
-        self, *args: str, capture: bool = True, check: bool = True
+        self,
+        *args: str,
+        capture: bool = True,
+        check: bool = True,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         self.calls.append(args)
+        self.env = env
         if args[:2] == ("image", "inspect") and args[2] not in self.images:
             return subprocess.CompletedProcess(args, 1, "", f"Error: image not found: {args[2]}")
         if args[:2] == ("builder", "stop"):
@@ -130,7 +137,7 @@ def test_failed_start_removes_vm_and_volumes_but_retains_state(
     app = App(engine, Store(tmp_path / "state"))
     call = engine.call
 
-    def fail_tmux(*args: str, **kwargs: bool) -> subprocess.CompletedProcess[str]:
+    def fail_tmux(*args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         if "tmux" in args:
             raise AgentboxError("startup failed")
         return call(*args, **kwargs)

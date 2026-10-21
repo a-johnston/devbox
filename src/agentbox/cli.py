@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import shutil
@@ -16,7 +17,7 @@ from pathlib import Path
 
 import argcomplete
 
-from agentbox import __version__
+from agentbox import __version__, keychain
 from agentbox.app import App
 from agentbox.config import Harness, Project, harnesses
 from agentbox.engine import Container
@@ -121,6 +122,11 @@ def parser() -> argparse.ArgumentParser:
         "kill-all", help="Stop/remove only managed containers; retain saved history"
     )
     command.add_argument("--yes", action="store_true", help="Skip confirmation")
+    command = commands.add_parser(
+        "secret", help="Store a harness's declared credentials in the macOS Keychain"
+    )
+    command.add_argument("harness", nargs="?")
+    command.add_argument("--remove", action="store_true", help="Delete the stored credentials")
     command = commands.add_parser("completion", help="Print shell completion setup")
     command.add_argument("shell", choices=("bash", "zsh", "fish"))
     return p
@@ -147,6 +153,21 @@ def dispatch(args: argparse.Namespace, app: App) -> None:
         id = app.new(project, harness, no_config=args.no_config)
         if not args.detach:
             app.attach(next(c for c in app.engine.containers() if c.id == id))
+        return
+    if args.action == "secret":
+        harness = get_harness(args.harness)
+        if not harness.secrets:
+            raise AgentboxError(f"{harness.name} declares no secrets")
+        for name in harness.secrets:
+            if args.remove:
+                removed = keychain.remove(harness, name)
+                print(f"{'Removed' if removed else 'No stored'} {harness.name} {name}.")
+                continue
+            value = (
+                getpass.getpass(f"{name}: ") if sys.stdin.isatty() else sys.stdin.readline()
+            ).strip()
+            keychain.store(harness, name, value)
+            print(f"Stored {harness.name} {name} in the Keychain.")
         return
     if args.action in ("sessions", "resume"):
         sessions = app.store.sessions()

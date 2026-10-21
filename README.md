@@ -40,6 +40,7 @@ agentbox kill-all [--yes]
 agentbox sessions                       # saved conversations, including from removed containers
 agentbox resume [session-id]            # fork a saved conversation into a new container
 agentbox build pi                       # rebuild the environment image
+agentbox secret claude                  # store a harness token in the macOS Keychain
 ```
 
 Inside the container, **Ctrl-a, then d** detaches and returns to the host shell; the harness keeps
@@ -110,8 +111,21 @@ declarations are installed into the image at build time, so they must not contai
 
 For Claude Code, these are `settings.json`, `keybindings.json`, `CLAUDE.md` and, on Linux hosts,
 `.credentials.json` from `~/.claude`. Hooks, status line, credential helpers, plugins and extra
-directories are dropped with a notice. macOS keeps Claude credentials in the Keychain, so run
-`/login` inside each new container. The in-container auto-updater is disabled.
+directories are dropped with a notice, and first-run onboarding is skipped. The in-container
+auto-updater is disabled.
+
+The host's Claude login lives in the macOS Keychain and is never copied: a shared login would
+rotate tokens out from under the host. Instead, create a separate long-lived token once and store
+it for agentbox:
+
+```sh
+claude setup-token                      # prints a token valid for a year
+agentbox secret claude                  # paste it; stored in the login Keychain
+```
+
+New Claude containers then start logged in. The token is passed only to the harness process's
+environment (not the container configuration, image or saved state). Without one, use `/login`
+inside the container. `agentbox secret claude --remove` deletes it; `--no-config` skips it.
 
 Only Git `user.name`/`user.email` (as `GIT_AUTHOR_*`/`GIT_COMMITTER_*`) and `COLORTERM` are passed
 in; the manifest and profile can override `COLORTERM`. No other host environment is forwarded beyond
@@ -138,7 +152,9 @@ User profiles override or add to the built-ins in `$XDG_CONFIG_HOME/agentbox/har
 - `profile.toml`: the command, optional `resume_args` with `{session}` (snapshot path) or
   `{session_id}`, `state_dir`/`session_dir` under `/home/agent`, optional `session_glob` (default
   `**/*.jsonl`), `seed_dir` and `seed_files` to copy, `environment`, optional `prepared_dirs`,
-  and an optional host `version_command` whose version is passed as the `HARNESS_VERSION` build arg.
+  an optional host `version_command` whose version is passed as the `HARNESS_VERSION` build arg,
+  and optional `secrets`: environment variable names whose values `agentbox secret` keeps in the
+  Keychain.
   Follow [the Pi profile](src/agentbox/assets/harnesses/pi/profile.toml).
 - `Containerfile`: takes `ARG RUNTIME_IMAGE` and builds `FROM` it.
 - Optional `hooks.py`: host-side `build_files(seed_dir)` returns extra build-context files (keyed
@@ -151,8 +167,8 @@ image. Every container gets its own writable copy.
 ## Security scope
 
 The VM protects unmounted host files and processes, **not the repository**. The agent can rewrite
-history, change hooks and scripts you later run on the host, use copied credentials, and reach the
-network. There is no host shell bridge, socket or SSH agent. Treat manifests, Containerfiles and
+history, change hooks and scripts you later run on the host, use copied or stored credentials, and
+reach the network. There is no host shell bridge, socket or SSH agent. Treat manifests, Containerfiles and
 harness profiles as trusted executable configuration.
 
 ## Development

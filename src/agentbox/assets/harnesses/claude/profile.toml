@@ -11,6 +11,11 @@ seed_dir = "~/.claude"
 # macOS keeps credentials in the Keychain; .credentials.json only exists on Linux hosts.
 seed_files = ["settings.json", "keybindings.json", "CLAUDE.md", ".credentials.json"]
 
+# A long-lived token from `claude setup-token`, stored with `agentbox secret claude`.
+secrets = ["CLAUDE_CODE_OAUTH_TOKEN"]
+
 [environment]
+# Keeps the global .claude.json inside the seeded state directory.
+CLAUDE_CONFIG_DIR = "/home/agent/.claude"
 # The image's install is root-owned; it follows the host version on the next launch instead.
 DISABLE_AUTOUPDATER = "1"

@@ -163,6 +163,7 @@ class Harness:
     prepared_dirs: tuple[str, ...] = ()
     session_glob: str = "**/*.jsonl"
     version_command: tuple[str, ...] = ()
+    secrets: tuple[str, ...] = ()
 
     @classmethod
     def load(cls, directory: Path) -> Harness:
@@ -199,6 +200,7 @@ class Harness:
             prepared,
             relative(text(data.get("session_glob", "**/*.jsonl"), "session_glob")),
             strings(data.get("version_command", []), "version_command"),
+            tuple(environment({name: "" for name in strings(data.get("secrets", []), "secrets")})),
         )
 
     def hook(self, name: str) -> Callable[..., Any] | None:

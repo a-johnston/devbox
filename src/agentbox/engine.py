@@ -29,11 +29,19 @@ class Engine:
         self.executable = executable
 
     def call(
-        self, *args: str, capture: bool = True, check: bool = True
+        self,
+        *args: str,
+        capture: bool = True,
+        check: bool = True,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         try:
             result = subprocess.run(
-                [self.executable, *args], text=True, capture_output=capture, check=False
+                [self.executable, *args],
+                text=True,
+                capture_output=capture,
+                check=False,
+                env={**os.environ, **env} if env else None,
             )
         except FileNotFoundError as exc:
             raise AgentboxError(
@@ -107,9 +115,16 @@ class Engine:
             ) from exc
 
     def exec(
-        self, id: str, *args: str, user: str = "agent", check: bool = True
+        self,
+        id: str,
+        *args: str,
+        user: str = "agent",
+        check: bool = True,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        return self.call("exec", "--user", user, id, *args, check=check)
+        """Named variables are inherited from this process, keeping values out of arguments."""
+        flags = [flag for name in env or {} for flag in ("--env", name)]
+        return self.call("exec", "--user", user, *flags, id, *args, check=check, env=env)
 
     def connect(self, id: str, *args: str, cwd: str | None = None) -> None:
         """Replace the wrapper; detaching the tmux client returns to the host shell."""

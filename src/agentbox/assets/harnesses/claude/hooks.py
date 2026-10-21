@@ -20,7 +20,10 @@ HOST_SETTINGS = (
 
 
 def adapt_seed(state_dir: Path) -> list[str]:
-    """Drop host-specific settings from the copied settings.json."""
+    """Skip first-run login so a stored token applies; drop host-specific settings."""
+    # Onboarding insists on its own login flow even when CLAUDE_CODE_OAUTH_TOKEN is set.
+    # Without a token, Claude still starts and offers /login.
+    (state_dir / ".claude.json").write_text('{"hasCompletedOnboarding": true}\n')
     path = state_dir / "settings.json"
     if not path.is_file():
         return []

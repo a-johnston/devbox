@@ -278,6 +278,7 @@ class App:
             self.engine.exec(
                 id,
                 "tmux",
+                "-u",
                 "-f",
                 "/etc/agentbox/tmux.conf",
                 "new-session",
@@ -320,7 +321,7 @@ class App:
                 "Harness session has exited. Use shell to inspect, or resume saved history."
             )
         print("Detach with Ctrl-a, then d. The harness will keep running.", flush=True)
-        self.engine.connect(container.id, "tmux", "attach-session", "-t", "agent")
+        self.engine.connect(container.id, "tmux", "-u", "attach-session", "-t", "agent")
 
     def shell(self, container: Container) -> None:
         if container.state != "running":

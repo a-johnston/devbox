@@ -77,7 +77,20 @@ def test_new_composes_images_and_mounts_only_selected_paths(
     config = json.loads((app.store.directory(id) / "control/project.json").read_text())
     assert config["artifacts"] == [".godot", "tests/bin", "tests/obj"]
     assert config["cwd"] == str(project.cwd)
-    assert any("new-session" in call for call in engine.calls)
+    startup = next(call for call in engine.calls if "new-session" in call)
+    assert startup[startup.index("tmux") :] == (
+        "tmux",
+        "-u",
+        "-f",
+        "/etc/agentbox/tmux.conf",
+        "new-session",
+        "-d",
+        "-s",
+        "agent",
+        "-c",
+        str(project.cwd),
+        "/opt/agentbox/launch.py",
+    )
 
 
 def test_resume_snapshots_and_forks(project: Project, harness: Harness, tmp_path: Path) -> None:
@@ -117,7 +130,7 @@ def test_attach_connects_directly_to_tmux(tmp_path: Path) -> None:
     app = App(engine, Store(tmp_path))
     container = Container("ours", "running", "project", "pi", "now")
     app.attach(container)
-    assert engine.connections == [("ours", "tmux", "attach-session", "-t", "agent")]
+    assert engine.connections == [("ours", "tmux", "-u", "attach-session", "-t", "agent")]
 
 
 def test_kill_all_retains_state(tmp_path: Path) -> None:

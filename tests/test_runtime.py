@@ -29,6 +29,109 @@ def test_preparation_does_not_copy_host_artifacts(
     assert calls[0][3] == str(output)
 
 
+@pytest.mark.parametrize("already_mounted", [False, True])
+def test_preparation_skips_worktrees_inside_artifact_mounts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, already_mounted: bool
+) -> None:
+    root = tmp_path / "repo"
+    local = root / "sandboxes/feature"
+    shared = root / "sandboxes-other/feature"
+    local.mkdir(parents=True)
+    shared.mkdir(parents=True)
+    artifacts = [".venv", "dist", "sandboxes"]
+    expected = {checkout / artifact for checkout in (root, shared) for artifact in artifacts}
+    mounted = set(expected) if already_mounted else set()
+    calls = []
+
+    def mount(args: list[str], **kwargs: object) -> None:
+        calls.append(args)
+        mounted.add(Path(args[3]))
+
+    monkeypatch.setattr(prepare, "worktrees", lambda root: [root, local, shared])
+    monkeypatch.setattr(prepare, "trust_worktrees", lambda roots: None)
+    monkeypatch.setattr(prepare.os, "chown", lambda *a: None)
+    monkeypatch.setattr(prepare.os.path, "ismount", lambda path: path in mounted)
+    monkeypatch.setattr(prepare.subprocess, "run", mount)
+    config = {"root": str(root), "artifacts": artifacts}
+    prepare.prepare(config, tmp_path / "cache")
+    prepare.prepare(config, tmp_path / "cache")
+    assert mounted == expected
+    assert len(calls) == (0 if already_mounted else len(expected))
+    assert list(local.iterdir()) == []
+
+
+def test_preparation_does_not_recreate_hidden_host_worktrees(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    trees = root / "sandboxes"
+    hidden = trees / "feature"
+    hidden.mkdir(parents=True)
+    (hidden / "host-only").write_text("host")
+    host_trees = tmp_path / "host-sandboxes"
+    calls = []
+
+    def mount(args: list[str], **kwargs: object) -> None:
+        calls.append(args)
+        if Path(args[3]) == trees:
+            # Simulate the bind mount hiding an existing host worktree.
+            trees.rename(host_trees)
+            trees.mkdir()
+
+    monkeypatch.setattr(prepare, "worktrees", lambda root: [root, hidden])
+    monkeypatch.setattr(prepare, "trust_worktrees", lambda roots: None)
+    monkeypatch.setattr(prepare.os, "chown", lambda *a: None)
+    monkeypatch.setattr(prepare.os.path, "ismount", lambda path: False)
+    monkeypatch.setattr(prepare.subprocess, "run", mount)
+    prepare.prepare({"root": str(root), "artifacts": [".venv", "sandboxes"]}, tmp_path / "cache")
+    assert len(calls) == 2
+    assert list(trees.iterdir()) == []
+    assert (host_trees / "feature/host-only").read_text() == "host"
+
+
+def test_preparation_handles_nested_worktrees_listed_before_parents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    parent = root / "shared/parent"
+    child = parent / "sandboxes/child"
+    child.mkdir(parents=True)
+    calls = []
+    monkeypatch.setattr(prepare, "worktrees", lambda root: [root, child, parent])
+    monkeypatch.setattr(prepare, "trust_worktrees", lambda roots: None)
+    monkeypatch.setattr(prepare.os, "chown", lambda *a: None)
+    monkeypatch.setattr(prepare.os.path, "ismount", lambda path: False)
+    monkeypatch.setattr(prepare.subprocess, "run", lambda args, **kw: calls.append(args))
+    prepare.prepare({"root": str(root), "artifacts": [".venv", "sandboxes"]}, tmp_path / "cache")
+    assert {Path(call[3]) for call in calls} == {
+        checkout / artifact for checkout in (root, parent) for artifact in (".venv", "sandboxes")
+    }
+    assert list(child.iterdir()) == []
+
+
+def test_preparation_skips_artifact_targets_beneath_other_checkout_mounts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    tree = root / "shared/feature"
+    tree.mkdir(parents=True)
+    calls = []
+    monkeypatch.setattr(prepare, "worktrees", lambda root: [root, tree])
+    monkeypatch.setattr(prepare, "trust_worktrees", lambda roots: None)
+    monkeypatch.setattr(prepare.os, "chown", lambda *a: None)
+    monkeypatch.setattr(prepare.os.path, "ismount", lambda path: False)
+    monkeypatch.setattr(prepare.subprocess, "run", lambda args, **kw: calls.append(args))
+    prepare.prepare(
+        {"root": str(root), "artifacts": ["shared/feature/build", "build/output"]},
+        tmp_path / "cache",
+    )
+    assert {Path(call[3]) for call in calls} == {
+        root / "shared/feature/build",
+        root / "build/output",
+        tree / "shared/feature/build",
+    }
+
+
 def test_prepared_packages_are_private_guest_copies(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -138,7 +138,19 @@ uv run prek run --all-files
 ```
 
 The guest's `.venv`, test/lint caches and `dist` are isolated from the host and other VMs.
-The image contains no project source or harness installation; the checkout is mounted at launch.
+This repo also declares `.worktrees` as VM-local storage: launch from the primary checkout, then
+create worktrees inside the guest. Existing host worktrees under `.worktrees` are hidden, not copied
+or modified. Guest worktrees can be removed normally with `git worktree remove`, without unmounting
+individual build outputs. Their files are not visible to the host's editor or other VMs.
+
+**Commit work before removing the container.** Git objects and refs remain in the shared `.git`, but
+uncommitted worktree contents disappear with the VM. Worktree registrations are also shared; after
+removing a VM, use `git worktree prune` to clean stale registrations, but only when no other VM is
+using guest-local worktrees for this checkout. Worktree files survive stop/attach on the same VM.
+To adopt this setup, rebuild with `agentbox build pi` and launch a new container; existing VMs keep
+their original configuration and mounts.
+
+The image contains no project source or harness installation; the primary checkout is mounted at launch.
 Apple `container` lifecycle and integration checks still run on macOS, not nested inside the guest.
 
 ### Preparation versus launch
@@ -173,8 +185,11 @@ claim that Pi has finished rendering its UI.
 
 A plain bind mount cannot exclude children. The guest preparation helper bind-mounts VM-local
 cache directories over the declared artifact paths, without copying host contents. It applies to
-all in-repo worktrees, including worktrees created after launch. The helper runs before the declared
-commands and after `git worktree add` (even if a hook fails after checkout). Empty mount-point directories may be created on
+all in-repo worktrees, including worktrees created after launch. A worktree or artifact target already
+covered by a configured artifact mount needs no additional mounts: its contents are already VM-local.
+This is generic artifact handling; projects choose their own paths, including whether to isolate a
+whole worktree directory. The helper runs before the declared commands and after `git worktree add`
+(even if a hook fails after checkout). Empty mount-point directories may be created on
 the host; generated contents stay in the VM. This is directory masking, not a general filesystem
 filter: commands that bypass the shims by absolute path must not build a newly created worktree
 until preparation has run.
@@ -185,8 +200,10 @@ mounts. This is not a claim of a hardened guest-user/root boundary; the security
 and what you share with it. Artifact paths may not traverse symlinks or overlap one another.
 
 Caches survive reconnects and remain on a stopped VM's disk; removing the VM deletes them. Each fresh
-container/worktree must import Godot assets once. Remove containers before removing/renaming their
-mounted worktrees. Use the host's editor for graphical playtesting.
+container/worktree must import Godot assets once. For host-backed worktrees with individual artifact
+mounts, remove containers before removing/renaming those worktrees. Worktrees wholly inside a VM-local
+artifact directory have no nested artifact mounts and can be removed directly inside that VM.
+Use the host's editor for graphical playtesting with host-backed files.
 
 ## Configuration and credentials
 

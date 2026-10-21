@@ -81,16 +81,24 @@ def prepare(config: dict, cache_root: Path = CACHE) -> None:
     root = Path(config["root"])
     checkouts = worktrees(root)
     trust_worktrees(checkouts)
-    for checkout in checkouts:
+    masked: list[Path] = []
+    # Prepare ancestors first, even when Git lists a nested worktree before its parent.
+    for checkout in sorted(checkouts, key=lambda path: len(path.parts)):
+        if any(checkout.is_relative_to(parent) for parent in masked):
+            # The entire checkout is guest-local. Do not create redundant mounts
+            # or recreate host worktrees hidden by a newly mounted artifact directory.
+            continue
         key = hashlib.sha256(str(checkout).encode()).hexdigest()[:20]
         for artifact in config["artifacts"]:
             target = target_directory(checkout, artifact)
-            if os.path.ismount(target):
+            if any(target.is_relative_to(parent) for parent in masked):
                 continue
-            cache = cache_root / key / artifact
-            cache.mkdir(parents=True, exist_ok=True)
-            os.chown(cache, 10001, 10001)
-            subprocess.run(["/usr/bin/mount", "--bind", str(cache), str(target)], check=True)
+            if not os.path.ismount(target):
+                cache = cache_root / key / artifact
+                cache.mkdir(parents=True, exist_ok=True)
+                os.chown(cache, 10001, 10001)
+                subprocess.run(["/usr/bin/mount", "--bind", str(cache), str(target)], check=True)
+            masked.append(target)
 
 
 def prepare_packages(

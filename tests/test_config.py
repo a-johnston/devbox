@@ -15,7 +15,7 @@ def test_self_hosting_manifest(tmp_path: Path) -> None:
     project = Project.discover(tmp_path)
     assert project.containerfile == tmp_path / ".agentbox/Containerfile"
     assert project.context == tmp_path / ".agentbox"
-    assert project.artifacts == (".venv", ".pytest_cache", ".ruff_cache", "dist")
+    assert project.artifacts == (".venv", ".pytest_cache", ".ruff_cache", "dist", ".worktrees")
     assert project.prepare_commands == ("git", "uv")
     assert project.env == {
         "UV_LINK_MODE": "copy",

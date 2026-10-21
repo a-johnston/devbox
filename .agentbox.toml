@@ -25,7 +25,11 @@ memory = "4G"
 # or modified, apart from creating empty mount points. Caches survive stop/attach,
 # but are discarded with the VM. Default: [] (no masking).
 # In particular, never reuse the host's macOS .venv in the Linux guest.
-artifacts = [".venv", ".pytest_cache", ".ruff_cache", "dist"]
+# This repo also keeps .worktrees VM-local. Create worktrees from inside the guest;
+# host worktrees there are hidden. Commit before removing the VM: uncommitted work
+# is disposable, while Git objects/refs and worktree registrations remain shared.
+# Covered worktrees need no separate artifact mounts and can be removed normally.
+artifacts = [".venv", ".pytest_cache", ".ruff_cache", "dist", ".worktrees"]
 # Executable names (not paths or shell commands) to wrap with preparation before
 # execution. These do NOT run setup commands; run `uv sync --locked` in the guest.
 # git also prepares after `git worktree add`. Default: [].

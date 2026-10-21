@@ -57,11 +57,13 @@ def test_secrets_reach_only_the_harness_process(project, secretive, tmp_path, mo
     home = app.store.directory(id)
     assert not any("s3cret" in p.read_text() for p in home.rglob("*") if p.is_file())
 
+
 def test_no_config_skips_secrets(project, secretive, tmp_path, monkeypatch):
     monkeypatch.setenv("HARNESS_TOKEN", "s3cret")
     engine = FakeEngine()
     App(engine, Store(tmp_path / "state")).new(project, secretive, no_config=True)
     assert "--env" not in engine.calls[-1][:5]
+
 
 @pytest.mark.parametrize("value", [None, ""])
 def test_unset_or_empty_secrets_are_skipped(secretive, monkeypatch, value):
@@ -71,10 +73,12 @@ def test_unset_or_empty_secrets_are_skipped(secretive, monkeypatch, value):
         monkeypatch.setenv("HARNESS_TOKEN", value)
     assert environment_secrets(secretive) == {}
 
+
 def test_only_declared_secrets_are_forwarded(secretive, monkeypatch):
     monkeypatch.setenv("HARNESS_TOKEN", "s3cret")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "other")
     assert environment_secrets(secretive) == {"HARNESS_TOKEN": "s3cret"}
+
 
 def test_secret_command_is_gone():
     with pytest.raises(SystemExit):

@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -106,6 +107,21 @@ def build_files(harness: Harness, *, no_config: bool = False) -> dict[str, str]:
     if any("/" in name or name.startswith(".") for name in files):
         raise AgentboxError(f"{harness.name} hooks returned an invalid build file name")
     return files
+
+
+def host_version(harness: Harness) -> str | None:
+    """The harness version installed on the host, so the guest can match it."""
+    if not harness.version_command:
+        return None
+    try:
+        result = subprocess.run(
+            harness.version_command, capture_output=True, text=True, timeout=10, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    # Only a plain semantic version may reach a build argument and package spec.
+    found = re.search(r"\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?\b", result.stdout)
+    return found.group() if found and result.returncode == 0 else None
 
 
 def seed_config(harness: Harness, home: Path) -> list[str]:

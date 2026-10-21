@@ -60,4 +60,9 @@ def project(repository: Path) -> Project:
 
 @pytest.fixture
 def harness(tmp_path: Path) -> Harness:
-    return replace(Harness.load(ASSETS / "harnesses/pi"), seed_dir=tmp_path / "host-config")
+    # Never run the host's harness CLI from unit tests.
+    return replace(
+        Harness.load(ASSETS / "harnesses/pi"),
+        seed_dir=tmp_path / "host-config",
+        version_command=(),
+    )

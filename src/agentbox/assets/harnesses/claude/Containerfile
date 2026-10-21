@@ -2,7 +2,8 @@ ARG RUNTIME_IMAGE
 FROM node:24.14.0-bookworm-slim AS node
 FROM ${RUNTIME_IMAGE}
 COPY --from=node /usr/local/ /usr/local/
-ARG CLAUDE_CODE_VERSION=2.1.304
+# Agentbox passes the host's `claude --version` when available; this is the fallback.
+ARG HARNESS_VERSION=2.1.304
 # The postinstall script selects the native binary for this platform.
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+RUN npm install -g @anthropic-ai/claude-code@${HARNESS_VERSION} \
     && rm -rf /root/.npm

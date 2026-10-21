@@ -18,6 +18,7 @@ from agentbox.state import (
     Session,
     Store,
     build_files,
+    host_version,
     run_hook,
     seed_config,
     snapshot_session,
@@ -67,22 +68,41 @@ class App:
     def _image_key(self, project: Project) -> str:
         return hashlib.sha256(f"{self.store.root}:{project.root}".encode()).hexdigest()[:12]
 
-    def _prepared_image(self, project: Project, harness: Harness, files: dict[str, str]) -> str:
+    def _prepared_image(
+        self, project: Project, harness: Harness, files: dict[str, str], args: dict[str, str]
+    ) -> str:
         # A separate namespace prevents old, unprepared images from taking the fast path.
-        variant = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()[:12]
+        inputs = json.dumps({"files": files, "args": args}, sort_keys=True)
+        variant = hashlib.sha256(inputs.encode()).hexdigest()[:12]
         return f"agentbox-{harness.name}-{self._image_key(project)}-prepared-{variant}:latest"
+
+    def _build_args(self, harness: Harness) -> dict[str, str]:
+        """Match the host's harness version; Containerfiles default to a pinned one."""
+        version = host_version(harness)
+        return {"HARNESS_VERSION": version} if version else {}
 
     def build(self, project: Project, harness: Harness, *, no_config: bool = False) -> str:
         self.engine.require_running()
-        return self._build(project, harness, build_files(harness, no_config=no_config))
+        files = build_files(harness, no_config=no_config)
+        return self._build(project, harness, files, self._build_args(harness))
 
-    def _build(self, project: Project, harness: Harness, files: dict[str, str]) -> str:
+    def _build(
+        self, project: Project, harness: Harness, files: dict[str, str], args: dict[str, str]
+    ) -> str:
         key = self._image_key(project)
         base = f"agentbox-project-{key}:latest"
         runtime = f"agentbox-runtime-{key}:latest"
-        image = self._prepared_image(project, harness, files)
+        image = self._prepared_image(project, harness, files, args)
         started = time.monotonic()
         print("Preparing environment; subsequent launches reuse the prepared image.", flush=True)
+        if harness.version_command:
+            version = args.get("HARNESS_VERSION")
+            print(
+                f"Installing {harness.name} {version} to match the host."
+                if version
+                else f"No host {harness.name} version found; installing the pinned default.",
+                flush=True,
+            )
         # Stop a builder we start: it holds gigabytes of RAM and launches don't need it.
         started_builder = not self.engine.builder_running()
         try:
@@ -94,7 +114,7 @@ class App:
                 )
                 for name, content in files.items():
                     (context / name).write_text(content)
-                for tag, file, source, args in (
+                for tag, file, source, layer_args in (
                     (base, project.containerfile, project.context, {}),
                     (
                         runtime,
@@ -106,14 +126,18 @@ class App:
                         image,
                         context / "Containerfile",
                         context,
-                        {"RUNTIME_IMAGE": runtime, "PREPARE_REVISION": str(time.time_ns())},
+                        {
+                            **args,
+                            "RUNTIME_IMAGE": runtime,
+                            "PREPARE_REVISION": str(time.time_ns()),
+                        },
                     ),
                 ):
                     self.engine.build(
                         tag,
                         file,
                         source,
-                        args,
+                        layer_args,
                         memory=project.builder_memory,
                         cpus=project.cpus,
                     )
@@ -139,11 +163,12 @@ class App:
         env = {**inherited, **project.env, **harness.env}
         self.engine.require_running()
         files = build_files(harness, no_config=no_config)
-        image = self._prepared_image(project, harness, files)
+        args = self._build_args(harness)
+        image = self._prepared_image(project, harness, files, args)
         if self.engine.image_exists(image):
             print("Using prepared image; BuildKit not needed.", flush=True)
         else:
-            image = self._build(project, harness, files)
+            image = self._build(project, harness, files, args)
         id, directory = self.store.create()
         home = directory / "home"
         (home / harness.session_dir).mkdir(parents=True, exist_ok=True)

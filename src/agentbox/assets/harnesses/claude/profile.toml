@@ -6,10 +6,11 @@ state_dir = ".claude"
 session_dir = ".claude/projects"
 # Top-level transcripts only, not subagent transcripts nested beside them.
 session_glob = "*/*.jsonl"
+version_command = ["claude", "--version"]
 seed_dir = "~/.claude"
 # macOS keeps credentials in the Keychain; .credentials.json only exists on Linux hosts.
 seed_files = ["settings.json", "keybindings.json", "CLAUDE.md", ".credentials.json"]
 
 [environment]
-# The image's install is root-owned; rebuild with `agentbox build claude` instead.
+# The image's install is root-owned; it follows the host version on the next launch instead.
 DISABLE_AUTOUPDATER = "1"

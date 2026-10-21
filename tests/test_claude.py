@@ -13,7 +13,11 @@ from agentbox.state import Session, Store, seed_config
 
 @pytest.fixture
 def claude(tmp_path: Path) -> Harness:
-    return replace(Harness.load(ASSETS / "harnesses/claude"), seed_dir=tmp_path / "host-config")
+    return replace(
+        Harness.load(ASSETS / "harnesses/claude"),
+        seed_dir=tmp_path / "host-config",
+        version_command=(),
+    )
 
 
 def test_seed_drops_host_specific_settings(tmp_path: Path, claude: Harness) -> None:

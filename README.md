@@ -96,6 +96,10 @@ reuse it without starting the builder. Run `agentbox build <harness>` after chan
 build context or Agentbox itself; it also refreshes unpinned harness packages. If Agentbox starts
 the builder, it stops it again afterwards. A builder that was already running is left running.
 
+Pi and Claude Code install the same version as `pi --version`/`claude --version` on the host, so
+upgrading on the host prepares a matching image at the next launch. Without a host installation,
+the version pinned in the harness Containerfile is used.
+
 ## Harness config and credentials
 
 Each container gets its **own copy** of selected harness config files. For Pi, these are settings,
@@ -107,8 +111,7 @@ declarations are installed into the image at build time, so they must not contai
 For Claude Code, these are `settings.json`, `keybindings.json`, `CLAUDE.md` and, on Linux hosts,
 `.credentials.json` from `~/.claude`. Hooks, status line, credential helpers, plugins and extra
 directories are dropped with a notice. macOS keeps Claude credentials in the Keychain, so run
-`/login` inside each new container. The CLI version is pinned in its Containerfile and the
-in-container auto-updater is disabled.
+`/login` inside each new container. The in-container auto-updater is disabled.
 
 Only Git `user.name`/`user.email` (as `GIT_AUTHOR_*`/`GIT_COMMITTER_*`) and `COLORTERM` are passed
 in; the manifest and profile can override `COLORTERM`. No other host environment is forwarded beyond
@@ -134,7 +137,8 @@ User profiles override or add to the built-ins in `$XDG_CONFIG_HOME/agentbox/har
 
 - `profile.toml`: the command, optional `resume_args` with `{session}` (snapshot path) or
   `{session_id}`, `state_dir`/`session_dir` under `/home/agent`, optional `session_glob` (default
-  `**/*.jsonl`), `seed_dir` and `seed_files` to copy, `environment`, and optional `prepared_dirs`.
+  `**/*.jsonl`), `seed_dir` and `seed_files` to copy, `environment`, optional `prepared_dirs`,
+  and an optional host `version_command` whose version is passed as the `HARNESS_VERSION` build arg.
   Follow [the Pi profile](src/agentbox/assets/harnesses/pi/profile.toml).
 - `Containerfile`: takes `ARG RUNTIME_IMAGE` and builds `FROM` it.
 - Optional `hooks.py`: host-side `build_files(seed_dir)` returns extra build-context files (keyed

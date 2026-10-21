@@ -2,12 +2,13 @@ ARG RUNTIME_IMAGE
 FROM node:24.14.0-bookworm-slim AS node
 FROM ${RUNTIME_IMAGE}
 COPY --from=node /usr/local/ /usr/local/
-ARG PI_VERSION=1.3.0
+# Agentbox passes the host's `pi --version` when available; this is the fallback.
+ARG HARNESS_VERSION=1.3.0
 # Build tools support native Linux dependencies in selected Pi extension packages.
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential python3-venv fd-find \
     && (command -v fd >/dev/null || ln -s /usr/bin/fdfind /usr/local/bin/fd) \
     && rm -rf /var/lib/apt/lists/* \
-    && npm install -g --ignore-scripts @earendil-works/pi-coding-agent@${PI_VERSION}
+    && npm install -g --ignore-scripts @earendil-works/pi-coding-agent@${HARNESS_VERSION}
 # Replaced in the build context by hooks.build_files unless --no-config is used.
 COPY package-sources.txt /tmp/
 # Explicit builds refresh unpinned packages; normal launches reuse this image.

@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from agentbox.app import App
 from agentbox.config import Harness, Project
 from agentbox.engine import Engine
 from agentbox.errors import AgentboxError
-from agentbox.state import Store, build_files
+from agentbox.state import Store, build_files, host_version
 
 
 def test_second_new_never_starts_or_checks_builder(
@@ -123,12 +124,12 @@ def test_package_variant_ignores_private_config_and_filters(
     assert files == {"package-sources.txt": "npm:example@1\nnpm:other\n"}
     assert build_files(harness, no_config=True) == {}
     app = App(FakeEngine(), Store(tmp_path / "state"))
-    image = app._prepared_image(project, harness, files)
+    image = app._prepared_image(project, harness, files, {})
     settings.write_text(
         json.dumps({"packages": ["npm:other", "npm:example@1"], "apiKey": "different"})
     )
-    assert app._prepared_image(project, harness, build_files(harness)) == image
-    assert app._prepared_image(project, harness, {}) != image
+    assert app._prepared_image(project, harness, build_files(harness), {}) == image
+    assert app._prepared_image(project, harness, {}, {}) != image
 
 
 @pytest.mark.parametrize(
@@ -168,3 +169,36 @@ def test_build_context_never_contains_private_settings(
 
     monkeypatch.setattr(engine, "call", inspect)
     App(engine, Store(tmp_path / "state")).build(project, harness)
+
+
+def version_command(output: str, code: int = 0) -> tuple[str, ...]:
+    return (sys.executable, "-c", f"print({output!r}); raise SystemExit({code})")
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        (version_command("2.1.304 (Claude Code)"), "2.1.304"),
+        (version_command("1.3.0-beta.2"), "1.3.0-beta.2"),
+        (version_command("1.3.0", code=1), None),
+        (version_command("dev; rm -rf /"), None),
+        (("agentbox-missing-harness-cli",), None),
+        ((), None),
+    ],
+)
+def test_host_version(harness: Harness, command: tuple[str, ...], expected: str | None) -> None:
+    assert host_version(replace(harness, version_command=command)) == expected
+
+
+def test_host_version_is_a_build_arg_and_image_variant(
+    project: Project, harness: Harness, tmp_path: Path
+) -> None:
+    engine = FakeEngine()
+    app = App(engine, Store(tmp_path / "state"))
+    first = app.build(project, replace(harness, version_command=version_command("1.3.0")))
+    assert "HARNESS_VERSION=1.3.0" in engine.calls[-2]
+    upgraded = app.build(project, replace(harness, version_command=version_command("1.4.0")))
+    assert upgraded != first
+    fallback = app.build(project, harness)
+    assert not any("HARNESS_VERSION" in arg for arg in engine.calls[-2])
+    assert fallback not in (first, upgraded)

@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from devbox.engine import MANAGED, Container, Engine, RunSpec
+from devbox.engine import MANAGED, Container, Engine, Image, RunSpec, image_labels, image_strings
 from devbox.errors import DevboxError
 
 INSTANCE = "dev.devbox.instance"
@@ -57,8 +57,12 @@ class PodmanEngine(Engine):
         *,
         platform: str,
         cpus: int,
+        labels: dict[str, str],
     ) -> None:
-        flags = [flag for key, value in args.items() for flag in ("--build-arg", f"{key}={value}")]
+        flags = [
+            *(flag for key, value in args.items() for flag in ("--build-arg", f"{key}={value}")),
+            *(flag for key, value in labels.items() for flag in ("--label", f"{key}={value}")),
+        ]
         self.call(
             "build",
             "--platform",
@@ -71,6 +75,50 @@ class PodmanEngine(Engine):
             str(context),
             capture=False,
         )
+
+    def images(self) -> list[Image]:
+        result = self.call("image", "list", "--all", "--no-trunc", "--format", "json")
+        try:
+            rows = json.loads(result.stdout)
+            if not isinstance(rows, list):
+                raise ValueError("Expected images")
+            ids = image_strings([row["Id"] for row in rows])
+            images = []
+            # Inspect includes all tags, digests and config labels, even for dangling images.
+            for id in dict.fromkeys(ids):
+                result = self.call("image", "inspect", id)
+                inspected = json.loads(result.stdout)
+                if not isinstance(inspected, list) or len(inspected) != 1:
+                    raise ValueError("Expected one inspected image")
+                row = inspected[0]
+                (actual_id,) = image_strings([row["Id"]])
+                if actual_id.removeprefix("sha256:") != id.removeprefix("sha256:"):
+                    raise ValueError("Image identity changed")
+                tags = image_strings(row.get("RepoTags") or [])
+                digests = image_strings(row.get("RepoDigests") or [])
+                labels = image_labels(row["Config"])
+                for reference in tags or (id,):
+                    images.append(Image(reference, actual_id, labels, (*tags, *digests)))
+            return images
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise DevboxError("Cannot safely determine existing images; refusing cleanup") from exc
+
+    def container_images(self) -> set[str]:
+        try:
+            return set(
+                image_strings(
+                    [
+                        value
+                        for row in self._rows("--no-trunc")
+                        for value in (row["Image"], row["ImageID"])
+                    ]
+                )
+            )
+        except (ValueError, KeyError, TypeError) as exc:
+            raise DevboxError("Cannot safely determine container images; refusing cleanup") from exc
+
+    def remove_image(self, reference: str) -> None:
+        self.call("image", "rm", "--", reference)
 
     def run(self, spec: RunSpec) -> None:
         # Labelled up front, so removal finds them even if the container never starts.

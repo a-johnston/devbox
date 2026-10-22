@@ -44,7 +44,7 @@ def test_failed_preparation_does_not_publish_or_create_instance(
     with pytest.raises(DevboxError, match="intentional"):
         app.new(project, harness, no_config=True)
     assert engine.builder_state == "stopped"
-    assert not engine.images
+    assert not engine.built_images
     assert not app.store.instances.exists()
 
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from devbox.config import size
-from devbox.engine import MANAGED, Container, Engine
+from devbox.engine import MANAGED, Container, Engine, Image, image_labels, image_strings
 from devbox.errors import DevboxError
 
 
@@ -74,9 +74,13 @@ class AppleEngine(Engine):
         *,
         platform: str,
         cpus: int,
+        labels: dict[str, str],
     ) -> None:
         """Starts the builder if needed; the resources apply to (and may restart) it."""
-        flags = [flag for key, value in args.items() for flag in ("--build-arg", f"{key}={value}")]
+        flags = [
+            *(flag for key, value in args.items() for flag in ("--build-arg", f"{key}={value}")),
+            *(flag for key, value in labels.items() for flag in ("--label", f"{key}={value}")),
+        ]
         self.call(
             "build",
             "--platform",
@@ -93,6 +97,65 @@ class AppleEngine(Engine):
             str(context),
             capture=False,
         )
+
+    def images(self) -> list[Image]:
+        result = self.call("image", "list", "--format", "json")
+        try:
+            rows = json.loads(result.stdout)
+            if not isinstance(rows, list):
+                raise ValueError("Expected images")
+            images = []
+            for row in rows:
+                config = row["configuration"]
+                reference, id = image_strings([config["name"], config["descriptor"]["digest"]])
+                variants = row["variants"]
+                if not isinstance(variants, list) or not variants:
+                    raise ValueError("Expected image variants")
+                # Build labels live in OCI config, NOT descriptor annotations.
+                # Ignore attestations, but require consistent labels on all runnable platforms.
+                labels = []
+                aliases = []
+                for variant in variants:
+                    aliases.append(variant["digest"])
+                    if variant["platform"]["os"] == "unknown":
+                        continue
+                    labels.append(image_labels(variant["config"].get("config")))
+                image_strings(aliases)
+                if not labels:
+                    raise ValueError("Expected runnable image variant")
+                common = {
+                    key: value
+                    for key, value in labels[0].items()
+                    if all(label.get(key) == value for label in labels)
+                }
+                images.append(Image(reference, id, common, tuple(aliases)))
+            return images
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            raise DevboxError("Cannot safely determine existing images; refusing cleanup") from exc
+
+    def container_images(self) -> set[str]:
+        result = self.call("list", "--all", "--format", "json")
+        try:
+            rows = json.loads(result.stdout)
+            if not isinstance(rows, list):
+                raise ValueError("Expected containers")
+            return set(
+                image_strings(
+                    [
+                        value
+                        for row in rows
+                        for value in (
+                            row["configuration"]["image"]["reference"],
+                            row["configuration"]["image"]["descriptor"]["digest"],
+                        )
+                    ]
+                )
+            )
+        except (ValueError, KeyError, TypeError) as exc:
+            raise DevboxError("Cannot safely determine container images; refusing cleanup") from exc
+
+    def remove_image(self, reference: str) -> None:
+        self.call("image", "delete", "--", reference)
 
     def builder_running(self) -> bool:
         result = self.call("builder", "status", "--format", "json", check=False)

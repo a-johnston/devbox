@@ -12,7 +12,19 @@ import time
 from pathlib import Path, PurePosixPath
 
 from devbox.config import ASSETS, Harness, Project, git_output, relative
-from devbox.engine import MANAGED, Container, Engine, RunSpec, host_platform, select_engine
+from devbox.engine import (
+    IMAGE_KIND,
+    IMAGE_SCHEMA,
+    IMAGE_STORE,
+    MANAGED,
+    Container,
+    Engine,
+    Image,
+    RunSpec,
+    host_platform,
+    image_identity,
+    select_engine,
+)
 from devbox.errors import DevboxError
 from devbox.state import (
     Instance,
@@ -65,6 +77,14 @@ class App:
         self.engine = engine or select_engine()
         self.store = store or Store()
 
+    @property
+    def image_owner(self) -> dict[str, str]:
+        return {
+            MANAGED: "1",
+            IMAGE_STORE: hashlib.sha256(str(self.store.root).encode()).hexdigest(),
+            IMAGE_SCHEMA: "1",
+        }
+
     def _image_key(self, project: Project) -> str:
         return hashlib.sha256(f"{self.store.root}:{project.root}".encode()).hexdigest()[:12]
 
@@ -73,7 +93,13 @@ class App:
     ) -> str:
         # A separate namespace prevents old, unprepared images from taking the fast path.
         inputs = json.dumps(
-            {"files": files, "args": args, "platform": host_platform()}, sort_keys=True
+            {
+                "files": files,
+                "args": args,
+                "platform": host_platform(),
+                "ownership": self.image_owner,
+            },
+            sort_keys=True,
         )
         variant = hashlib.sha256(inputs.encode()).hexdigest()[:12]
         return f"devbox-{harness.name}-{self._image_key(project)}-prepared-{variant}:latest"
@@ -116,15 +142,17 @@ class App:
             )
             for name, content in files.items():
                 (context / name).write_text(content)
-            for tag, file, source, layer_args in (
-                (base, project.containerfile, project.context, {}),
+            for kind, tag, file, source, layer_args in (
+                ("project", base, project.containerfile, project.context, {}),
                 (
+                    "runtime",
                     runtime,
                     ASSETS / "runtime/Containerfile",
                     ASSETS / "runtime",
                     {"PROJECT_IMAGE": base},
                 ),
                 (
+                    "prepared",
                     image,
                     context / "Containerfile",
                     context,
@@ -142,6 +170,12 @@ class App:
                     layer_args,
                     platform=host_platform(),
                     cpus=project.cpus,
+                    labels={
+                        **self.image_owner,
+                        IMAGE_KIND: kind,
+                        "dev.devbox.project": str(project.root),
+                        "dev.devbox.harness": harness.name if kind == "prepared" else "",
+                    },
                 )
         print(f"Environment prepared in {time.monotonic() - started:.1f}s", flush=True)
         return image
@@ -329,6 +363,40 @@ class App:
                 removed += 1
                 recovered += current[id].size
         return removed, recovered
+
+    def unused_images(self, removing: list[Instance] | None = None) -> list[Image]:
+        self.engine.require_running()
+        images = self.engine.images()
+        owned = [
+            image
+            for image in images
+            if all(image.labels.get(key) == value for key, value in self.image_owner.items())
+            and image.labels.get(IMAGE_KIND) in {"project", "runtime", "prepared"}
+        ]
+        if not owned:
+            return []
+        references = self.store.image_references({instance.id for instance in removing or []})
+        references.update(self.engine.container_images())
+        protected = {image_identity(reference) for reference in references}
+        # Protect every alias of a referenced image, including other registry/tag spellings.
+        for image in images:
+            if image.identities & protected:
+                protected.update(image.identities)
+        return sorted(
+            (image for image in owned if not image.identities & protected),
+            key=lambda image: image.reference,
+        )
+
+    def cleanup_images(self, images: list[Image]) -> int:
+        removed = 0
+        # Recheck each deletion: new sessions/containers must protect an image even
+        # if they appeared during confirmation or an earlier deletion.
+        for candidate in dict.fromkeys((image.reference, image.id) for image in images):
+            current = {(image.reference, image.id) for image in self.unused_images()}
+            if candidate in current:
+                self.engine.remove_image(candidate[0])
+                removed += 1
+        return removed
 
     def kill_all(self) -> int:
         containers = self.engine.containers()

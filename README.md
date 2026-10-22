@@ -59,7 +59,7 @@ devbox shell [id]                     # plain non-root shell for inspection
 devbox stop [id]                      # stops processes; container disk is kept
 devbox rm [id]                        # removes the container and its artifact volumes
 devbox kill-all [--yes]
-devbox cleanup                          # confirm deletion of saved instances without containers
+devbox cleanup                       # confirm deletion of orphaned saved instances and unused images
 devbox cleanup --select                 # choose a subset with fzf multi-select, then confirm
 devbox sessions                       # saved conversations, including from removed containers
 devbox resume [session-id]            # fork a saved conversation into a new container
@@ -169,14 +169,26 @@ instances/<id>/
 Removing containers never removes this state. `resume` snapshots a session into a new instance and
 the harness forks it, so the original never has two writers.
 
-`devbox cleanup` lists saved instances whose containers no longer exist and asks before permanently
-deleting their homes, **including conversations and copied credentials**. Use `--select` to choose
-only some instances with `fzf` multi-select (Tab to mark, Enter to review). Declining or cancelling
-deletes nothing. Instances with running **or stopped** containers are kept; the container service
-must be available to check, and containers are checked again after confirmation. The command reports
-the number removed and approximate disk space recovered, based on allocated blocks without following
-symlinks. Filesystem compression, shared/cloned blocks and snapshots can affect actual free space.
-Cleanup only deletes saved instance directories; it does not remove containers, images or volumes.
+`devbox cleanup` lists saved instances whose containers no longer exist and unused Devbox image
+references, then asks for confirmation. Deleting instance homes **permanently deletes their
+conversations and copied credentials**. Use `--select` to choose only some instances with `fzf`
+multi-select (Tab to mark, Enter to review); image candidates are calculated from the instances you
+keep. Declining or cancelling deletes nothing. Image-only cleanup works even with no orphaned
+instances. Instances with running **or stopped** containers are kept.
+
+New project, runtime and prepared harness images carry versioned ownership labels scoped to the
+resolved state directory. Cleanup only removes images with those labels, never unrelated images,
+images owned by another state directory, or legacy unlabeled images. Every retained saved instance
+protects its recorded image, and every running or stopped container (including non-Devbox containers)
+protects its image and aliases. References and ownership are checked again before deleting images;
+unreadable retained metadata or unrecognizable inventory stops image cleanup rather than guessing.
+The container service must be available. Cleanup never removes containers or volumes and never
+clears the shared builder cache. Missing images can be rebuilt on the next launch.
+
+The command reports instance and image-reference removal counts separately. Approximate space
+recovered from instance homes is based on allocated blocks without following symlinks. Image sizes
+are not added together: layers can be shared, and deleting image references may leave build caches.
+Filesystem compression, shared/cloned blocks and snapshots can affect actual free space.
 
 The `resume` picker and `sessions` list show aligned columns for the harness, project, title,
 then the full session ID (explicit IDs and prefixes still work as before):

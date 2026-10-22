@@ -103,35 +103,52 @@ def format_size(size: int) -> str:
 
 def cleanup(app: App, *, select: bool) -> None:
     instances = app.orphaned_instances()
-    if not instances:
-        print("No orphaned instances.")
-        return
 
     def label(instance: Instance) -> str:
         return f"{instance.id}  ~{format_size(instance.size)}"
 
-    if select:
+    if select and instances:
         instances = select_many(instances, "Orphaned instances", label)
-    if not instances:
-        print("No instances selected.")
+        if not instances:
+            print("No instances selected. Nothing removed.")
+            return
+    images = app.unused_images(instances)
+    if not instances and not images:
+        print("No orphaned instances or unused Devbox images.")
         return
-    print(f"Orphaned instances in {app.store.instances}:")
-    for instance in instances:
-        print(f"  {label(instance)}")
-    print("This permanently deletes their saved conversations, copied credentials and home files.")
+    if instances:
+        print(f"Orphaned instances in {app.store.instances}:")
+        for instance in instances:
+            print(f"  {label(instance)}")
+        print(
+            "This permanently deletes their saved conversations, copied credentials and home files."
+        )
+    if images:
+        print("Unused Devbox image references:")
+        for image in images:
+            print(f"  {image.reference}")
+        print("Images can be rebuilt; shared layers and build caches may remain.")
     require_terminal("Cleanup requires a terminal for confirmation")
     size = format_size(sum(instance.size for instance in instances))
+    targets = f"{len(instances)} instances (~{size})"
+    if images:
+        targets += f" and {len(images)} image references"
     try:
-        answer = input(f"Delete {len(instances)} instances (~{size})? [y/N] ")
+        answer = input(f"Delete {targets}? [y/N] ")
     except EOFError:
         answer = ""
     if answer.strip().lower() != "y":
-        print("Cancelled. No instances removed.")
+        print("Cancelled. Nothing removed.")
         return
     removed, recovered = app.cleanup(instances)
     print(f"Removed {removed} instances; approximately {format_size(recovered)} recovered.")
     if removed < len(instances):
         print("Instances that now have containers or no longer exist were skipped.")
+    if images:
+        removed_images = app.cleanup_images(images)
+        print(f"Removed {removed_images} image references.")
+        if removed_images < len(images):
+            print("Images that are now referenced, changed or no longer exist were skipped.")
 
 
 def match[T](
@@ -222,7 +239,7 @@ def parser() -> argparse.ArgumentParser:
     )
     command.add_argument("--yes", action="store_true", help="Skip confirmation")
     command = commands.add_parser(
-        "cleanup", help="Delete saved instances without containers, including their conversations"
+        "cleanup", help="Delete orphaned saved instances and unused Devbox images"
     )
     command.add_argument(
         "--select",

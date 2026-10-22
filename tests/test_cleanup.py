@@ -7,6 +7,7 @@ import pytest
 from devbox.app import App
 from devbox.apple import AppleEngine
 from devbox.cli import dispatch, format_size, parser
+from devbox.engine import Image
 from devbox.errors import DevboxError
 from devbox.state import Store, disk_usage
 
@@ -22,6 +23,9 @@ class InventoryEngine(AppleEngine):
     def require_running(self) -> None:
         if not self.available:
             raise DevboxError("Start Apple's container service first")
+
+    def images(self) -> list[Image]:
+        return []
 
     def call(self, *args: str, **kwargs: object) -> subprocess.CompletedProcess[str]:
         # Cleanup must never stop/remove containers or touch container volumes.
@@ -198,7 +202,7 @@ def test_cleanup_cancellation_preserves_sessions(
     text = capsys.readouterr().out
     assert "permanently deletes" in text
     assert "saved conversations, copied credentials" in text
-    assert "Cancelled. No instances removed." in text
+    assert "Cancelled. Nothing removed." in text
     assert directory.exists()
 
 
@@ -255,7 +259,7 @@ def test_empty_cleanup_does_not_prompt_or_create_state(
 ) -> None:
     monkeypatch.setattr("builtins.input", lambda _: pytest.fail("nothing to confirm"))
     dispatch(parser().parse_args(["cleanup"]), app)
-    assert capsys.readouterr().out == "No orphaned instances.\n"
+    assert capsys.readouterr().out == "No orphaned instances or unused Devbox images.\n"
     assert not app.store.root.exists()
 
 

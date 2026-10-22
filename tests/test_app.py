@@ -20,7 +20,7 @@ class FakeEngine(AppleEngine):
         self.calls: list[tuple[str, ...]] = []
         self.connections: list[tuple[str, ...]] = []
         self.rows: list[Container] = []
-        self.images: set[str] = set()
+        self.built_images: set[str] = set()
         self.builder_state = "stopped"
         self.env: dict[str, str] | None = None
 
@@ -36,13 +36,13 @@ class FakeEngine(AppleEngine):
     ) -> subprocess.CompletedProcess[str]:
         self.calls.append(args)
         self.env = env
-        if args[:2] == ("image", "inspect") and args[2] not in self.images:
+        if args[:2] == ("image", "inspect") and args[2] not in self.built_images:
             return subprocess.CompletedProcess(args, 1, "", f"Error: image not found: {args[2]}")
         if args[:2] == ("builder", "stop"):
             self.builder_state = "stopped"
         if args[0] == "build":
             self.builder_state = "running"
-            self.images.add(args[args.index("--tag") + 1])
+            self.built_images.add(args[args.index("--tag") + 1])
         if args[:2] == ("volume", "list"):
             return subprocess.CompletedProcess(args, 0, "[]", "")
         if args[:2] == ("builder", "status"):

@@ -15,6 +15,9 @@ from pathlib import Path
 from devbox.errors import DevboxError
 
 MANAGED = "dev.devbox.managed"
+IMAGE_STORE = "dev.devbox.image.store"
+IMAGE_SCHEMA = "dev.devbox.image.schema"
+IMAGE_KIND = "dev.devbox.image.kind"
 PLATFORMS = {
     "arm64": "linux/arm64",
     "aarch64": "linux/arm64",
@@ -44,6 +47,52 @@ class Container:
     project: str
     harness: str
     created: str
+
+
+def image_identity(reference: str) -> str:
+    """Match local build tags across the engines' default-registry qualification."""
+    return (
+        reference.removeprefix("docker.io/library/")
+        .removeprefix("localhost/")
+        .removeprefix("sha256:")
+    )
+
+
+def image_strings(values: object) -> tuple[str, ...]:
+    """Inventory must fail closed, never silently drop an unrecognizable reference."""
+    if not isinstance(values, list) or any(
+        not isinstance(value, str) or not value or value.startswith("-") for value in values
+    ):
+        raise ValueError("Expected image references")
+    return tuple(values)
+
+
+def image_labels(config: object) -> dict[str, str]:
+    # OCI config and Labels are optional; other unexpected types are not absence.
+    if config is None:
+        return {}
+    if not isinstance(config, dict):
+        raise ValueError("Expected OCI image config")
+    labels = config.get("Labels")
+    if labels is None:
+        return {}
+    if not isinstance(labels, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str) for key, value in labels.items()
+    ):
+        raise ValueError("Expected image labels")
+    return labels
+
+
+@dataclass(frozen=True)
+class Image:
+    reference: str
+    id: str
+    labels: dict[str, str]
+    aliases: tuple[str, ...] = ()
+
+    @property
+    def identities(self) -> set[str]:
+        return {image_identity(value) for value in (self.reference, self.id, *self.aliases)}
 
 
 @dataclass(frozen=True)
@@ -109,7 +158,20 @@ class Engine(ABC):
         *,
         platform: str,
         cpus: int,
+        labels: dict[str, str],
     ) -> None: ...
+
+    @abstractmethod
+    def images(self) -> list[Image]:
+        """Images, including dangling ones, with OCI config ownership labels."""
+
+    @abstractmethod
+    def container_images(self) -> set[str]:
+        """Image references and immutable IDs used by ALL running or stopped containers."""
+
+    @abstractmethod
+    def remove_image(self, reference: str) -> None:
+        """Delete one explicit reference without force or global pruning."""
 
     @abstractmethod
     def container_ids(self) -> set[str]:

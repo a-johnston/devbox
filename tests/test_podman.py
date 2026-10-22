@@ -83,6 +83,7 @@ def test_podman_build_argv(monkeypatch: pytest.MonkeyPatch) -> None:
         {"A": "1", "B": "2"},
         platform="linux/amd64",
         cpus=4,
+        labels={MANAGED: "1"},
     )
     assert recorder.calls == [
         (
@@ -97,6 +98,8 @@ def test_podman_build_argv(monkeypatch: pytest.MonkeyPatch) -> None:
             "A=1",
             "--build-arg",
             "B=2",
+            "--label",
+            f"{MANAGED}=1",
             "/ctx",
         )
     ]

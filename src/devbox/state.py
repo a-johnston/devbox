@@ -97,6 +97,21 @@ class Store:
             if directory.name not in container_ids
         ]
 
+    def image_references(self, excluding: set[str]) -> set[str]:
+        """Retained instance homes protect their images, even without a live container."""
+        references = set()
+        for directory in self._instance_directories():
+            if directory.name in excluding:
+                continue
+            metadata = self.metadata(directory.name)
+            reference = metadata.get("image") if isinstance(metadata, dict) else None
+            if not isinstance(reference, str) or not reference or reference.startswith("-"):
+                raise DevboxError(
+                    f"Cannot determine saved image for {directory.name}; refusing image cleanup"
+                )
+            references.add(reference)
+        return references
+
     def remove_instance(self, id: str) -> None:
         # Only real, immediate instance directories qualify; never trust metadata paths.
         if id not in {directory.name for directory in self._instance_directories()}:

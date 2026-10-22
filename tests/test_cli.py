@@ -9,7 +9,7 @@ import pytest
 from test_app import FakeEngine
 
 from devbox.app import App
-from devbox.cli import dispatch, get_harness, main, match, parser, select, session_labels
+from devbox.cli import dispatch, get_harness, main, match, parser, select, session_label
 from devbox.engine import Container
 from devbox.errors import DevboxError
 from devbox.state import Session, Store
@@ -137,24 +137,21 @@ def test_picker_uses_fzf(monkeypatch: pytest.MonkeyPatch) -> None:
     assert select(["first", "second"], "Harnesses", str) == "second"
 
 
-@pytest.mark.parametrize("title", ["Fix login", None])
 def test_session_listing_and_picker(
-    title: str | None,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    session = Session("devbox-aabb/conversation", "devbox-aabb", "pi", "/project", tmp_path, title)
-    expected = f"pi  project  {title or '(untitled)'}  devbox-aabb/conversation"
-    labels = session_labels([session])
-    assert labels[session.id] == expected
+    session = Session("devbox-aabb/conversation", "devbox-aabb", "pi", "/project", tmp_path)
+    expected = "devbox-aabb/conversation  pi  /project"
+    assert session_label(session) == expected
     app = App(FakeEngine(), Store(tmp_path))
     monkeypatch.setattr(app.store, "sessions", lambda: [session])
     dispatch(parser().parse_args(["sessions"]), app)
     assert capsys.readouterr().out == expected + "\n"
     dispatch(parser().parse_args(["sessions", "--json"]), app)
     (row,) = json.loads(capsys.readouterr().out)
-    assert row["title"] == title
+    assert "title" not in row
     assert row["id"] == session.id
     assert row["project"] == "/project"
 
@@ -167,69 +164,10 @@ def test_session_listing_and_picker(
 
     monkeypatch.setattr("devbox.cli.subprocess.run", pick)
 
-    def label(s: Session) -> str:
-        return labels[s.id]
-
-    assert match([session], None, "Sessions", lambda s: s.id, label) == session
-    assert match([session], "aabb/conversation", "Sessions", lambda s: s.id, label) == session
-
-
-@pytest.mark.parametrize(
-    ("projects", "displayed"),
-    [
-        (["/work/alpha", "/work/beta"], ["alpha", "beta"]),
-        (["/work/alpha", "/work/alpha"], ["alpha", "alpha"]),
-        (["/work/alpha/", "/work/alpha"], ["alpha", "alpha"]),
-        (
-            ["/work/alpha", "/other/alpha", "/work/beta"],
-            ["/work/alpha", "/other/alpha", "beta"],
-        ),
-        (["/", "/work/my project"], ["/", "my project"]),
-    ],
-)
-def test_session_columns_and_project_names(
-    projects: list[str],
-    displayed: list[str],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    sessions = [
-        Session(
-            f"devbox-aabb/{i}",
-            "devbox-aabb",
-            "pi" if i % 2 == 0 else "claude",
-            project,
-            tmp_path,
-            "Short" if i % 2 == 0 else "A longer title",
-        )
-        for i, project in enumerate(projects)
-    ]
-    width = max(map(len, displayed))
-    expected = [
-        f"{s.harness:<6}  {project:<{width}}  {s.title:<14}  {s.id}"
-        for s, project in zip(sessions, displayed, strict=True)
-    ]
-    labels = session_labels(sessions)
-    assert [labels[s.id] for s in sessions] == expected
-    app = App(FakeEngine(), Store(tmp_path))
-    monkeypatch.setattr(app.store, "sessions", lambda: sessions)
-    dispatch(parser().parse_args(["sessions"]), app)
-    assert capsys.readouterr().out.splitlines() == expected
-
-
-def test_empty_session_labels() -> None:
-    assert session_labels([]) == {}
-
-
-def test_session_columns_use_terminal_character_widths(tmp_path: Path) -> None:
-    sessions = [
-        Session("a/1", "a", "pi", "/work/日本", tmp_path, "Cafe\u0301"),
-        Session("b/2", "b", "claude", "/work/repo", tmp_path, "日本"),
-    ]
-    labels = session_labels(sessions)
-    assert labels["a/1"] == "pi      日本  Cafe\u0301  a/1"
-    assert labels["b/2"] == "claude  repo  日本  b/2"
+    assert match([session], None, "Sessions", lambda s: s.id, session_label) == session
+    assert (
+        match([session], "aabb/conversation", "Sessions", lambda s: s.id, session_label) == session
+    )
 
 
 def test_picker_cancel(monkeypatch: pytest.MonkeyPatch) -> None:

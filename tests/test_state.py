@@ -124,118 +124,27 @@ def test_catalog_survives_without_a_container(tmp_path: Path) -> None:
     assert "secret" not in str(rows)
 
 
-@pytest.mark.parametrize(
-    ("harness_name", "records", "expected"),
-    [
-        ("pi", [{"type": "session_info", "name": "Fix login"}], "Fix login"),
-        (
-            "pi",
-            [
-                {"type": "session_info", "name": "Old name"},
-                {"type": "session_info", "name": "New name"},
-            ],
-            "New name",
-        ),
-        ("claude", [{"type": "summary", "summary": "Fix login"}], "Fix login"),
-        (
-            "claude",
-            [
-                {"type": "custom-title", "customTitle": "My title"},
-                {"type": "summary", "summary": "Generated title"},
-            ],
-            "My title",
-        ),
-        (
-            "claude",
-            [
-                {"type": "summary", "summary": "Old summary"},
-                {"type": "ai-title", "aiTitle": "Automatic title"},
-                {"type": "custom-title", "customTitle": "Old title"},
-                {"type": "custom-title", "customTitle": "New title"},
-            ],
-            "New title",
-        ),
-        ("claude", [{"type": "ai-title", "aiTitle": "Automatic title"}], "Automatic title"),
-        ("pi", [{"type": "message", "message": {"role": "user", "content": "secret"}}], None),
-        ("pi", [{"type": "session_info", "name": 42}], None),
-        ("pi", [{"type": "session_info", "name": " \n\t "}], None),
-        ("pi", [{"type": "session_info", "name": "Hello\n\tworld\x1b\x00"}], "Hello world"),
-        ("pi", [{"type": "session_info", "name": "a" * 200}], "a" * 97 + "..."),
-        ("unknown", [{"type": "session_info", "name": "Not a Pi session"}], None),
-    ],
-)
-def test_catalog_session_titles(
-    tmp_path: Path, harness_name: str, records: list[dict], expected: str | None
+def test_catalog_reads_only_headers_without_loading_profiles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    def unexpected(*args: object, **kwargs: object) -> None:
+        pytest.fail("Session listing must not load profiles or hooks")
+
+    monkeypatch.setattr(Harness, "load", unexpected)
+    monkeypatch.setattr(Harness, "hook", unexpected)
     store = Store(tmp_path)
     id, directory = store.create()
     (directory / "metadata.json").write_text(
-        json.dumps({"harness": harness_name, "project": "/project", "session_dir": "sessions"})
+        json.dumps({"harness": "unknown", "project": "/project", "session_dir": "sessions"})
     )
     sessions = directory / "home/sessions"
     sessions.mkdir()
-    (sessions / "valid.jsonl").write_text(
-        json.dumps({"type": "session", "id": "conversation"})
-        + "\n"
-        + "".join(json.dumps(record) + "\n" for record in records)
+    (sessions / "valid.jsonl").write_bytes(
+        b'{"type":"session","id":"conversation"}\n' + b"\xff" * 100_000
     )
     (row,) = store.sessions()
     assert row.id == f"{id}/conversation"
-    assert row.title == expected
-    assert "secret" not in str(row)
-
-
-def test_catalog_title_ignores_invalid_and_incomplete_records(tmp_path: Path) -> None:
-    store = Store(tmp_path)
-    _, directory = store.create()
-    (directory / "metadata.json").write_text(
-        json.dumps({"harness": "pi", "project": "/project", "session_dir": "sessions"})
-    )
-    sessions = directory / "home/sessions"
-    sessions.mkdir()
-    (sessions / "valid.jsonl").write_text(
-        '{"type":"session","id":"conversation"}\n'
-        "not json\n[]\nnull\n"
-        + json.dumps({"type": "message", "content": "x" * 100_000})
-        + '\n{"type":"session_info","name":"Complete title"}\n'
-        '{"type":"session_info","name":"Incomplete title"}'
-    )
-    (row,) = store.sessions()
-    assert row.title == "Complete title"
-
-
-def test_catalog_survives_broken_profiles_and_loads_hooks_once(
-    tmp_path: Path, harness: Harness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    profiles = tmp_path / "config/devbox/harnesses"
-    (profiles / "broken").mkdir(parents=True)
-    (profiles / "broken/profile.toml").write_text('name = "broken"\n')
-    custom = profiles / "custom"
-    custom.mkdir()
-    (custom / "profile.toml").write_text(
-        (harness.directory / "profile.toml").read_text().replace('name = "pi"', 'name = "custom"')
-    )
-    (custom / "Containerfile").write_text("FROM scratch\n")
-    loads = tmp_path / "loads"
-    (custom / "hooks.py").write_text(
-        f"from pathlib import Path\n"
-        f"with Path({str(loads)!r}).open('a') as f:\n    f.write('x')\n"
-        "def session_title(records):\n    raise TypeError('broken hook')\n"
-    )
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    store = Store(tmp_path / "state")
-    for name in ("pi", "custom", "custom", "broken"):
-        _, directory = store.create()
-        (directory / "metadata.json").write_text(
-            json.dumps({"harness": name, "project": "/project", "session_dir": "sessions"})
-        )
-        (directory / "home/sessions").mkdir(parents=True)
-        (directory / "home/sessions/valid.jsonl").write_text(
-            '{"type":"session","id":"conversation"}\n{"type":"session_info","name":"Named"}\n'
-        )
-    titles = sorted((row.harness, row.title or "") for row in store.sessions())
-    assert titles == [("broken", ""), ("custom", ""), ("custom", ""), ("pi", "Named")]
-    assert loads.read_text() == "x"
+    assert row.harness == "unknown"
 
 
 def test_catalog_does_not_follow_session_symlinks(tmp_path: Path) -> None:

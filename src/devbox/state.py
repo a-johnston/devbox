@@ -9,13 +9,11 @@ import secrets
 import shutil
 import stat
 import subprocess
-from collections.abc import Callable, Iterator
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from devbox.config import Harness, harnesses
+from devbox.config import Harness
 from devbox.engine import backend_name
 from devbox.errors import DevboxError
 
@@ -27,7 +25,6 @@ class Session:
     harness: str
     project: str
     path: Path
-    title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -122,7 +119,6 @@ class Store:
         if not self.instances.exists():
             return []
         sessions = []
-        hooks = title_hooks()
         for directory in sorted(self.instances.iterdir()):
             if not (directory / "metadata.json").is_file():
                 continue
@@ -130,7 +126,6 @@ class Store:
             home = directory / "home"
             glob = metadata.get("session_glob", "**/*.jsonl")
             for path in sorted((home / metadata["session_dir"]).glob(glob)):
-                # Only adapters' explicit title metadata may be displayed, never prompt text.
                 try:
                     header = json.loads(read_session(path, home, header=True))
                     session_id = str(header.get("id", path.stem))
@@ -138,12 +133,6 @@ class Store:
                         continue
                 except (DevboxError, OSError, ValueError, AttributeError):
                     continue
-                title = None
-                hook = hooks.get(metadata["harness"])
-                if hook:
-                    # A title is optional; keep the conversation resumable if it cannot be read.
-                    with suppress(Exception):
-                        title = clean_title(hook(session_records(path, home)))
                 sessions.append(
                     Session(
                         f"{directory.name}/{session_id}",
@@ -151,7 +140,6 @@ class Store:
                         metadata["harness"],
                         metadata["project"],
                         path,
-                        title,
                     )
                 )
         return sessions
@@ -225,24 +213,6 @@ def seed_config(harness: Harness, home: Path) -> list[str]:
     return messages + (run_hook(harness, "adapt_seed", destination) or [])
 
 
-def title_hooks() -> dict[str, Callable[..., Any]]:
-    """Load each harness's title adapter once; a broken profile or hook only loses titles."""
-    hooks = {}
-    for name, harness in harnesses(strict=False).items():
-        with suppress(Exception):
-            if hook := harness.hook("session_title"):
-                hooks[name] = hook
-    return hooks
-
-
-def clean_title(value: Any) -> str | None:
-    """Keep agent-written titles on one terminal-safe, reasonably short line."""
-    if not isinstance(value, str):
-        return None
-    title = " ".join("".join(c for c in value if c.isprintable() or c.isspace()).split())
-    return (title[:97] + "..." if len(title) > 100 else title) or None
-
-
 def _open_session(path: Path, home: Path) -> BinaryIO:
     """Open agent-writable state without following symlinks out of its saved home."""
     if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(home.resolve()):
@@ -253,23 +223,6 @@ def _open_session(path: Path, home: Path) -> BinaryIO:
 def read_session(path: Path, home: Path, *, header: bool = False) -> bytes:
     with _open_session(path, home) as stream:
         return stream.readline(65536) if header else stream.read()
-
-
-def session_records(path: Path, home: Path) -> Iterator[dict[str, Any]]:
-    """Stream complete JSON objects for title adapters with bounded per-record memory."""
-    with _open_session(path, home) as stream:
-        while line := stream.readline(65536):
-            if not line.endswith(b"\n"):
-                # Skip oversized records and the partial tail of a live transcript.
-                while line and not line.endswith(b"\n"):
-                    line = stream.readline(65536)
-                continue
-            try:
-                record = json.loads(line)
-            except (ValueError, RecursionError):
-                continue
-            if isinstance(record, dict):
-                yield record
 
 
 def snapshot_session(source: Path, target: Path, *, root: Path | None = None) -> None:

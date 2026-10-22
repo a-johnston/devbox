@@ -10,7 +10,6 @@ import os
 import shutil
 import subprocess
 import sys
-import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from pathlib import Path
@@ -170,37 +169,11 @@ def match[T](
 
 
 def container_label(container: Container) -> str:
-    return f"{container.id}  {container.harness:8}  {container.state:8}  {container.project}  {container.created}"
+    return f"{container.id}  {container.harness}  {container.state}  {container.project}  {container.created}"
 
 
-def _display_width(text: str) -> int:
-    return sum(
-        0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in "WF" else 1
-        for c in text
-    )
-
-
-def session_labels(sessions: Sequence[Session]) -> dict[str, str]:
-    """Shorten unambiguous project paths and align columns across the whole catalog."""
-    projects: dict[str, set[Path]] = {}
-    for session in sessions:
-        path = Path(session.project)
-        projects.setdefault(path.name, set()).add(path)
-    rows = []
-    for session in sessions:
-        name = Path(session.project).name
-        project = name if name and len(projects[name]) == 1 else session.project
-        rows.append((session.harness, project, session.title or "(untitled)", session.id))
-    widths = [max((_display_width(row[i]) for row in rows), default=0) for i in range(3)]
-    return {
-        row[3]: "  ".join(
-            text + " " * (width - _display_width(text))
-            for text, width in zip(row[:3], widths, strict=True)
-        )
-        + "  "
-        + row[3]
-        for row in rows
-    }
+def session_label(session: Session) -> str:
+    return f"{session.id}  {session.harness}  {session.project}"
 
 
 def parser() -> argparse.ArgumentParser:
@@ -278,15 +251,14 @@ def dispatch(args: argparse.Namespace, app: App) -> None:
         return
     if args.action in ("sessions", "resume"):
         sessions = app.store.sessions()
-        labels = session_labels(sessions)
         if args.action == "sessions":
             if args.json:
                 print(json.dumps([asdict(s) for s in sessions], default=str, indent=2))
             else:
                 for session in sessions:
-                    print(labels[session.id])
+                    print(session_label(session))
             return
-        session = match(sessions, args.session, "Sessions", lambda s: s.id, lambda s: labels[s.id])
+        session = match(sessions, args.session, "Sessions", lambda s: s.id, session_label)
         if not args.detach:
             require_terminal()
         project = Project.discover(args.project or Path(session.project))

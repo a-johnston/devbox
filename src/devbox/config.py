@@ -211,8 +211,8 @@ class Harness:
         return getattr(module, name, None)
 
 
-def harnesses(*, strict: bool = True) -> dict[str, Harness]:
-    """Built-in and user profiles; without `strict`, invalid profiles are skipped."""
+def harnesses() -> dict[str, Harness]:
+    """Built-in and user profiles."""
     result = {}
     user = (
         Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "devbox/harnesses"
@@ -221,11 +221,6 @@ def harnesses(*, strict: bool = True) -> dict[str, Harness]:
         if base.is_dir():
             for directory in sorted(base.iterdir()):
                 if directory.is_dir() and (directory / "profile.toml").is_file():
-                    try:
-                        harness = Harness.load(directory)
-                    except DevboxError:
-                        if strict:
-                            raise
-                        continue
+                    harness = Harness.load(directory)
                     result[harness.name] = harness
     return result

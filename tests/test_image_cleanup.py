@@ -4,7 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from test_app import FakeEngine
+from fakes import FakeEngine
 from test_cleanup import InventoryEngine, saved_instance
 
 from devbox.app import App
@@ -56,9 +56,8 @@ def test_new_builds_label_every_stage_and_scope_to_state_directory(
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
     app.build(project, harness)
-    builds = [call for call in engine.calls if call[0] == "build"]
-    for call, kind in zip(builds, ("project", "runtime", "prepared"), strict=True):
-        labels = dict(call[i + 1].split("=", 1) for i, arg in enumerate(call) if arg == "--label")
+    for build, kind in zip(engine.builds, ("project", "runtime", "prepared"), strict=True):
+        labels = build.labels
         assert all(labels[key] == value for key, value in app.image_owner.items())
         assert labels[IMAGE_KIND] == kind
         assert labels["dev.devbox.project"] == str(project.root)

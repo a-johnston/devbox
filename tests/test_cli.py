@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from test_app import FakeEngine
+from fakes import FakeEngine
 
 from devbox.app import App
 from devbox.cli import dispatch, get_harness, main, match, parser, select, session_label
@@ -190,7 +190,7 @@ def test_stop_explicit_id_needs_no_picker(tmp_path: Path) -> None:
     engine.rows = [Container("devbox-aabb", "running", "project", "pi", "now")]
     app = App(engine, Store(tmp_path))
     dispatch(argparse.Namespace(action="stop", id="aab"), app)
-    assert engine.calls == [("stop", "devbox-aabb")]
+    assert engine.stopped == ["devbox-aabb"]
 
 
 def test_kill_all_noninteractive_requires_yes(
@@ -201,7 +201,7 @@ def test_kill_all_noninteractive_requires_yes(
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     with pytest.raises(DevboxError, match="terminal"):
         dispatch(argparse.Namespace(action="kill-all", yes=False), App(engine, Store(tmp_path)))
-    assert not engine.calls
+    assert not engine.removed
 
 
 def test_cli_text_is_platform_neutral() -> None:

@@ -1,62 +1,16 @@
-import json
 import subprocess
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
+from fakes import FakeEngine
 
 from devbox.app import App, accent, tmux_config
-from devbox.apple import AppleEngine
 from devbox.config import Harness, Project
-from devbox.engine import Container, RunSpec, backend_name, mount
+from devbox.engine import Container, RunSpec, mount
 from devbox.errors import DevboxError
 from devbox.state import Session, Store
-
-
-class FakeEngine(AppleEngine):
-    name = backend_name()
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.calls: list[tuple[str, ...]] = []
-        self.connections: list[tuple[str, ...]] = []
-        self.rows: list[Container] = []
-        self.built_images: set[str] = set()
-        self.builder_state = "stopped"
-        self.env: dict[str, str] | None = None
-
-    def require_running(self) -> None:
-        pass
-
-    def call(
-        self,
-        *args: str,
-        capture: bool = True,
-        check: bool = True,
-        env: dict[str, str] | None = None,
-    ) -> subprocess.CompletedProcess[str]:
-        self.calls.append(args)
-        self.env = env
-        if args[:2] == ("image", "inspect") and args[2] not in self.built_images:
-            return subprocess.CompletedProcess(args, 1, "", f"Error: image not found: {args[2]}")
-        if args[:2] == ("builder", "stop"):
-            self.builder_state = "stopped"
-        if args[0] == "build":
-            self.builder_state = "running"
-            self.built_images.add(args[args.index("--tag") + 1])
-        if args[:2] == ("volume", "list"):
-            return subprocess.CompletedProcess(args, 0, "[]", "")
-        if args[:2] == ("builder", "status"):
-            status = [{"status": {"state": self.builder_state}}]
-            return subprocess.CompletedProcess(args, 0, json.dumps(status), "")
-        return subprocess.CompletedProcess(args, 0, "", "")
-
-    def containers(self) -> list[Container]:
-        return self.rows
-
-    def connect(self, id: str, *args: str, cwd: str | None = None) -> None:
-        self.connections.append((id, *args))
 
 
 def test_new_composes_images_and_mounts_only_selected_paths(
@@ -65,28 +19,28 @@ def test_new_composes_images_and_mounts_only_selected_paths(
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
     id = app.new(project, harness, no_config=True)
-    builds = [call for call in engine.calls if call[0] == "build"]
-    assert len(builds) == 3
-    run = next(call for call in engine.calls if call[0] == "run")
-    mounts = [run[i + 1] for i, value in enumerate(run) if value == "--mount"]
-    assert mounts[:2] == [
-        f"type=bind,source={project.root},target={project.root}",
-        f"type=bind,source={app.store.directory(id) / 'home'},target=/home/agent",
-    ]
-    assert mounts[2:] == [
-        f"type=volume,source={id}-{i},target={project.root / artifact}"
+    assert len(engine.builds) == 3
+    run = engine.runs[0]
+    assert run.binds == (
+        (str(project.root), str(project.root)),
+        (str(app.store.directory(id) / "home"), "/home/agent"),
+    )
+    assert run.volumes == tuple(
+        (f"{id}-{i}", str(project.root / artifact))
         for i, artifact in enumerate((".godot", "tests/bin", "tests/obj"))
-    ]
-    assert not any(".ssh" in arg or arg == "--ssh" for arg in run)
-    chown = next(call for call in engine.calls if "chown" in " ".join(call))
-    assert chown[:4] == ("exec", "--user", "root", id)
-    assert chown[-3:] == tuple(str(project.root / a) for a in (".godot", "tests/bin", "tests/obj"))
-    restore = next(call for call in engine.calls if "git ls-files" in " ".join(call))
-    assert restore[:4] == ("exec", "--user", "agent", id)
-    assert restore[-4:] == (str(project.root), ".godot", "tests/bin", "tests/obj")
-    startup = engine.calls[-1]
-    assert startup[:4] == ("exec", "--user", "agent", id)
-    assert startup[4:15] == (
+    )
+    assert run.cpus == project.cpus
+    assert run.memory == project.memory
+    assert run.image == engine.builds[-1].tag
+    chown, restore, startup = engine.execs
+    assert chown.id == id and chown.user == "root"
+    assert "chown" in chown.args[2]
+    assert chown.args[-3:] == tuple(str(project.root / a) for a in project.artifacts)
+    assert restore.id == id and restore.user == "agent"
+    assert "git ls-files" in restore.args[2]
+    assert restore.args[-4:] == (str(project.root), ".godot", "tests/bin", "tests/obj")
+    assert startup.id == id and startup.user == "agent"
+    assert startup.args == (
         "tmux",
         "-u",
         "-f",
@@ -98,8 +52,8 @@ def test_new_composes_images_and_mounts_only_selected_paths(
         "-c",
         str(project.cwd),
         "--",
+        *harness.command,
     )
-    assert list(startup[15:]) == list(harness.command)
     home = app.store.directory(id) / "home"
     assert (home / ".pi/agent/npm").readlink() == Path("/opt/devbox/prepared/.pi/agent/npm")
     assert "prefix C-a" in (home / ".devbox/tmux.conf").read_text()
@@ -112,11 +66,10 @@ def test_git_identity_is_passed_as_environment(
         subprocess.run(["git", "-C", str(project.root), "config", key, value], check=True)
     engine = FakeEngine()
     App(engine, Store(tmp_path / "state")).new(project, harness, no_config=True)
-    run = next(call for call in engine.calls if call[0] == "run")
-    assert "GIT_AUTHOR_NAME=Ada" in run
-    assert "GIT_COMMITTER_NAME=Ada" in run
-    assert "GIT_AUTHOR_EMAIL=ada@example.invalid" in run
-    assert not any("credential" in arg for arg in run)
+    env = engine.runs[0].env
+    assert env["GIT_AUTHOR_NAME"] == env["GIT_COMMITTER_NAME"] == "Ada"
+    assert env["GIT_AUTHOR_EMAIL"] == env["GIT_COMMITTER_EMAIL"] == "ada@example.invalid"
+    assert not any("credential" in key.lower() for key in env)
 
 
 def test_resume_snapshots_and_forks(project: Project, harness: Harness, tmp_path: Path) -> None:
@@ -130,25 +83,25 @@ def test_resume_snapshots_and_forks(project: Project, harness: Harness, tmp_path
     id = app.new(project, harness, no_config=True, session=session)
     home = app.store.directory(id) / "home"
     assert (home / ".devbox/resume.jsonl").read_text() == source.read_text()
-    assert engine.calls[-1][-2:] == ("--fork", "/home/agent/.devbox/resume.jsonl")
+    assert engine.execs[-1].args[-2:] == ("--fork", "/home/agent/.devbox/resume.jsonl")
 
 
-def test_failed_start_removes_vm_and_volumes_but_retains_state(
+def test_failed_start_removes_container_and_volumes_but_retains_state(
     project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
-    call = engine.call
+    execute = engine.exec
 
-    def fail_tmux(*args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def fail_tmux(id: str, *args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         if "tmux" in args:
             raise DevboxError("startup failed")
-        return call(*args, **kwargs)
+        return execute(id, *args, **kwargs)
 
-    monkeypatch.setattr(engine, "call", fail_tmux)
+    monkeypatch.setattr(engine, "exec", fail_tmux)
     with pytest.raises(DevboxError, match="startup failed"):
         app.new(project, harness, no_config=True)
-    assert [c[0] for c in engine.calls[-3:]] == ["stop", "delete", "volume"]
+    assert engine.removed == [engine.runs[0].name]
     assert len(list(app.store.instances.glob("*/metadata.json"))) == 1
 
 
@@ -157,7 +110,7 @@ def test_attach_connects_directly_to_tmux(tmp_path: Path) -> None:
     app = App(engine, Store(tmp_path))
     container = Container("ours", "running", "project", "pi", "now")
     app.attach(container)
-    assert engine.connections == [("ours", "tmux", "-u", "attach-session", "-t", "agent")]
+    assert engine.connections == [("ours", ("tmux", "-u", "attach-session", "-t", "agent"), None)]
 
 
 def test_kill_all_retains_state(tmp_path: Path) -> None:
@@ -168,7 +121,7 @@ def test_kill_all_retains_state(tmp_path: Path) -> None:
     (directory / "metadata.json").write_text("{}")
     assert app.kill_all() == 1
     assert (app.store.directory(id) / "metadata.json").exists()
-    assert engine.calls[:2] == [("stop", "ours"), ("delete", "ours")]
+    assert engine.removed == ["ours"]
 
 
 def test_accent_is_stable_and_status_cannot_inject_tmux_commands() -> None:
@@ -195,14 +148,10 @@ def test_colorterm_is_inherited_unless_overridden(
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
     app.new(project, harness, no_config=True)
-    run = next(call for call in engine.calls if call[0] == "run")
-    assert "COLORTERM=truecolor" in run
-    assert not any("SECRET_TOKEN" in arg for arg in run)
-    engine.calls.clear()
+    assert engine.runs[-1].env["COLORTERM"] == "truecolor"
+    assert "SECRET_TOKEN" not in engine.runs[-1].env
     app.new(replace(project, env={"COLORTERM": "24bit"}), harness, no_config=True)
-    run = next(call for call in engine.calls if call[0] == "run")
-    assert "COLORTERM=24bit" in run
-    assert "COLORTERM=truecolor" not in run
+    assert engine.runs[-1].env["COLORTERM"] == "24bit"
 
 
 def test_builds_and_describes_the_host_architecture(
@@ -212,8 +161,7 @@ def test_builds_and_describes_the_host_architecture(
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
     id = app.new(project, harness, no_config=True)
-    builds = [call for call in engine.calls if call[0] == "build"]
-    assert [b[b.index("--platform") + 1] for b in builds] == ["linux/amd64"] * 3
+    assert [build.platform for build in engine.builds] == ["linux/amd64"] * 3
     text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()
     assert f"devbox instance {id}, a Linux AMD64 VM, as a non-root user." in text
     assert "Do not assume host tools" in text
@@ -234,7 +182,6 @@ def test_describes_the_engine_isolation(
 def test_missing_artifact_mount_points_are_created_by_the_host_user(
     project: Project, harness: Harness, tmp_path: Path
 ) -> None:
-    # Otherwise the engine creates them, as a subordinate UID under rootless Podman.
     assert not (project.root / "tests/bin").exists()
     created = []
 

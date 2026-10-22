@@ -2,7 +2,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from test_app import FakeEngine
+from fakes import FakeEngine
 
 from devbox.app import App, environment_secrets
 from devbox.cli import parser
@@ -23,10 +23,12 @@ def test_secrets_reach_only_the_harness_process(
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
     id = app.new(project, secretive, no_config=False)
-    startup = engine.calls[-1]
-    assert startup[:5] == ("exec", "--user", "agent", "--env", "HARNESS_TOKEN")
-    assert engine.env == {"HARNESS_TOKEN": "s3cret"}
-    assert not any("s3cret" in arg for call in engine.calls for arg in call)
+    startup = engine.execs[-1]
+    assert startup.id == id and startup.args[0] == "tmux"
+    assert startup.env == {"HARNESS_TOKEN": "s3cret"}
+    assert all(request.env is None for request in engine.execs[:-1])
+    assert "s3cret" not in str(engine.builds) + str(engine.runs)
+    assert all("s3cret" not in str(request.args) for request in engine.execs)
     home = app.store.directory(id)
     assert not any("s3cret" in p.read_text() for p in home.rglob("*") if p.is_file())
 
@@ -37,7 +39,7 @@ def test_no_config_skips_secrets(
     monkeypatch.setenv("HARNESS_TOKEN", "s3cret")
     engine = FakeEngine()
     App(engine, Store(tmp_path / "state")).new(project, secretive, no_config=True)
-    assert "--env" not in engine.calls[-1][:5]
+    assert engine.execs[-1].env == {}
 
 
 @pytest.mark.parametrize("value", [None, ""])

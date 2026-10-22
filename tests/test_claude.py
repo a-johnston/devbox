@@ -3,7 +3,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from test_app import FakeEngine
+from fakes import FakeEngine
 
 from devbox.app import App
 from devbox.config import ASSETS, Harness, Project
@@ -90,7 +90,7 @@ def test_resume_places_snapshot_by_id_and_forks(
     home = app.store.directory(id) / "home"
     key = "".join(c if c.isalnum() else "-" for c in str(project.cwd))
     assert (home / f".claude/projects/{key}/abc.jsonl").read_text() == source.read_text()
-    assert engine.calls[-1][-3:] == ("--resume", "abc", "--fork-session")
+    assert engine.execs[-1].args[-3:] == ("--resume", "abc", "--fork-session")
 
 
 def test_claude_never_copies_the_host_login() -> None:

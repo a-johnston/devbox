@@ -1,41 +1,32 @@
-import json
 import subprocess
 from pathlib import Path
 
 import pytest
+from fakes import FakeEngine
 
 from devbox.app import App
-from devbox.apple import AppleEngine
 from devbox.cli import dispatch, format_size, parser
-from devbox.engine import Image, backend_name
 from devbox.errors import DevboxError
 from devbox.state import Store, disk_usage
 
 
-class InventoryEngine(AppleEngine):
-    name = backend_name()
-
+class InventoryEngine(FakeEngine):
     def __init__(self) -> None:
         super().__init__()
-        self.rows: list[dict] = []
-        self.payload: str | None = None
+        self.ids: set[str] = set()
         self.available = True
         self.queries = 0
 
     def require_running(self) -> None:
         if not self.available:
-            raise DevboxError("Start Apple's container service first")
+            raise DevboxError("Container service unavailable")
 
-    def images(self) -> list[Image]:
-        return []
-
-    def call(self, *args: str, **kwargs: object) -> subprocess.CompletedProcess[str]:
-        # Cleanup must never stop/remove containers or touch container volumes.
-        assert args == ("list", "--all", "--format", "json")
+    def container_ids(self) -> set[str]:
         self.queries += 1
-        return subprocess.CompletedProcess(
-            args, 0, self.payload if self.payload is not None else json.dumps(self.rows), ""
-        )
+        return self.ids
+
+    def remove(self, id: str) -> None:
+        raise AssertionError("State cleanup must not remove containers or volumes")
 
 
 @pytest.fixture
@@ -63,10 +54,7 @@ def test_cleanup_removes_only_orphans(app: App) -> None:
     stopped, stopped_dir = saved_instance(app.store)
     orphan, orphan_dir = saved_instance(app.store)
     # Labels are deliberately absent: any matching container protects the instance.
-    engine.rows = [
-        {"id": active, "status": {"state": "running"}},
-        {"id": stopped, "status": {"state": "stopped"}},
-    ]
+    engine.ids = {active, stopped}
     candidates = app.orphaned_instances()
     assert [instance.id for instance in candidates] == [orphan]
     assert candidates[0].size == disk_usage(orphan_dir)
@@ -94,7 +82,7 @@ def test_cleanup_rechecks_inventory_and_only_removes_confirmed_instances(app: Ap
     confirmed = app.orphaned_instances()
     app.store.remove_instance(missing)
     new, new_dir = saved_instance(app.store)
-    engine.rows = [{"id": protected}]
+    engine.ids = {protected}
     expected = next(instance.size for instance in confirmed if instance.id == removed)
     assert app.cleanup(confirmed + confirmed) == (1, expected)
     assert protected_dir.exists() and new_dir.exists()
@@ -102,14 +90,15 @@ def test_cleanup_rechecks_inventory_and_only_removes_confirmed_instances(app: Ap
     assert {instance.id for instance in app.orphaned_instances()} == {new}
 
 
-@pytest.mark.parametrize(
-    "payload", ["not json", "{}", "null", "[{}]", '[{"id": null}]', '[{"id": ""}]']
-)
-def test_cleanup_refuses_unrecognizable_inventory(app: App, payload: str) -> None:
+def test_cleanup_inventory_failure_preserves_state(
+    app: App, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _, directory = saved_instance(app.store)
-    engine = app.engine
-    assert isinstance(engine, InventoryEngine)
-    engine.payload = payload
+
+    def fail() -> set[str]:
+        raise DevboxError("Cannot determine containers; refusing cleanup")
+
+    monkeypatch.setattr(app.engine, "container_ids", fail)
     with pytest.raises(DevboxError, match="refusing cleanup"):
         app.orphaned_instances()
     assert directory.exists()
@@ -121,7 +110,7 @@ def test_cleanup_service_failure_after_confirmation_preserves_state(app: App) ->
     engine = app.engine
     assert isinstance(engine, InventoryEngine)
     engine.available = False
-    with pytest.raises(DevboxError, match="container service"):
+    with pytest.raises(DevboxError, match="Container service"):
         app.cleanup(candidates)
     assert directory.exists()
 

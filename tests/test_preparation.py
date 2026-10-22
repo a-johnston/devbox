@@ -1,49 +1,52 @@
 import json
-import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
-from test_app import FakeEngine
+from fakes import FakeEngine
 
 from devbox.app import App
-from devbox.apple import AppleEngine
 from devbox.config import Harness, Project
 from devbox.errors import DevboxError
 from devbox.state import Store, build_files, host_version
 
 
-def test_second_new_never_starts_or_checks_builder(
+def test_second_new_never_enters_build_scope(
     project: Project, harness: Harness, tmp_path: Path
 ) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
     app.new(project, harness, no_config=True)
-    assert engine.builder_state == "stopped"
-    engine.calls.clear()
     app.new(project, harness, no_config=True)
-    assert not any(c[0] in ("build", "builder", "list") for c in engine.calls)
-    assert engine.calls[0][:2] == ("image", "inspect")
+    assert engine.build_scopes == 1
+    assert len(engine.builds) == 3
+    assert len(engine.image_checks) == 2
+    assert engine.image_checks[0] == engine.image_checks[1] == engine.builds[-1].tag
+    assert not engine.building_active
 
 
-def test_failed_preparation_does_not_publish_or_create_instance(
-    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("failure", [DevboxError("failed"), KeyboardInterrupt()])
+def test_failed_preparation_exits_build_scope_without_creating_instance(
+    project: Project,
+    harness: Harness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: BaseException,
 ) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
-    call = engine.call
 
-    def fail_build(*args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        if args[0] == "build":
-            raise DevboxError("intentional build failure")
-        return call(*args, **kwargs)
+    def fail(*args: object, **kwargs: object) -> None:
+        assert engine.building_active
+        raise failure
 
-    monkeypatch.setattr(engine, "call", fail_build)
-    with pytest.raises(DevboxError, match="intentional"):
+    monkeypatch.setattr(engine, "build", fail)
+    with pytest.raises(type(failure)):
         app.new(project, harness, no_config=True)
-    assert engine.builder_state == "stopped"
+    assert engine.build_scopes == 1
+    assert not engine.building_active
     assert not engine.built_images
     assert not app.store.instances.exists()
 
@@ -56,58 +59,14 @@ def test_invalid_package_settings_fail_before_build(harness: Harness, packages: 
         build_files(harness)
 
 
-def test_explicit_build_rebuilds_with_builder_memory(
-    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_explicit_build_rebuilds(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
-    monkeypatch.setenv("DEVBOX_BUILDER_MEMORY", "2G")
     first = app.build(project, harness)
-    monkeypatch.delenv("DEVBOX_BUILDER_MEMORY")
     assert app.build(project, harness) == first
-    builds = [c for c in engine.calls if c[0] == "build"]
-    assert [c[c.index("--memory") + 1] for c in builds] == ["2G"] * 3 + ["4G"] * 3
-
-
-@pytest.mark.parametrize("state,stops", [("running", 0), ("stopped", 1)])
-def test_only_a_builder_we_started_is_stopped(
-    project: Project, harness: Harness, tmp_path: Path, state: str, stops: int
-) -> None:
-    engine = FakeEngine()
-    engine.builder_state = state
-    App(engine, Store(tmp_path / "state")).build(project, harness)
-    assert sum(c[:2] == ("builder", "stop") for c in engine.calls) == stops
-
-
-@pytest.mark.parametrize("failure", [DevboxError("failed"), KeyboardInterrupt()])
-def test_builder_stopped_on_failure_or_cancellation(
-    project: Project,
-    harness: Harness,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    failure: BaseException,
-) -> None:
-    engine = FakeEngine()
-
-    def fail(*args: object, **kwargs: object) -> None:
-        raise failure
-
-    monkeypatch.setattr(engine, "build", fail)
-    with pytest.raises(type(failure)):
-        App(engine, Store(tmp_path / "state")).build(project, harness)
-    assert engine.builder_state == "stopped"
-    assert engine.calls[-1] == ("builder", "stop")
-
-
-def test_image_lookup_does_not_misclassify_service_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    engine = AppleEngine()
-    monkeypatch.setattr(
-        engine,
-        "call",
-        lambda *a, **kw: subprocess.CompletedProcess(a, 1, "", "XPC connection invalid"),
-    )
-    with pytest.raises(DevboxError, match="Cannot check"):
-        engine.image_exists("image")
+    assert len(engine.builds) == 6
+    assert engine.build_scopes == 2
+    assert not engine.building_active
 
 
 def test_package_variant_ignores_private_config_and_filters(
@@ -161,16 +120,15 @@ def test_build_context_never_contains_private_settings(
     )
     (harness.seed_dir / "auth.json").write_text('"secret"')
     engine = FakeEngine()
-    call = engine.call
+    build = engine.build
 
-    def inspect(*args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        if args[0] == "build" and "PREPARE_REVISION=" in " ".join(args):
-            context = Path(args[-1])
+    def inspect(tag: str, file: Path, context: Path, args: dict[str, str], **kwargs: Any) -> None:
+        if "PREPARE_REVISION" in args:
             assert (context / "package-sources.txt").read_text() == "npm:example@1\n"
             assert not any(p.name in ("auth.json", "settings.json") for p in context.rglob("*"))
-        return call(*args, **kwargs)
+        build(tag, file, context, args, **kwargs)
 
-    monkeypatch.setattr(engine, "call", inspect)
+    monkeypatch.setattr(engine, "build", inspect)
     App(engine, Store(tmp_path / "state")).build(project, harness)
 
 
@@ -199,11 +157,12 @@ def test_host_version_is_a_build_arg_and_image_variant(
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
     first = app.build(project, replace(harness, version_command=version_command("1.3.0")))
-    assert "HARNESS_VERSION=1.3.0" in engine.calls[-2]
+    assert engine.builds[-1].args["HARNESS_VERSION"] == "1.3.0"
     upgraded = app.build(project, replace(harness, version_command=version_command("1.4.0")))
     assert upgraded != first
+    assert engine.builds[-1].args["HARNESS_VERSION"] == "1.4.0"
     fallback = app.build(project, harness)
-    assert not any("HARNESS_VERSION" in arg for arg in engine.calls[-2])
+    assert "HARNESS_VERSION" not in engine.builds[-1].args
     assert fallback not in (first, upgraded)
 
 
@@ -224,4 +183,5 @@ def test_unsupported_host_fails_before_building(
     engine = FakeEngine()
     with pytest.raises(DevboxError, match="riscv64"):
         App(engine, Store(tmp_path / "state")).new(project, harness, no_config=True)
-    assert not any(call[0] == "build" for call in engine.calls)
+    assert engine.builds == []
+    assert engine.build_scopes == 0

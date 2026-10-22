@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from test_app import FakeEngine
+from fakes import FakeEngine
 
 from devbox.app import App
 from devbox.config import Harness, Project
@@ -56,4 +56,4 @@ def test_state_cannot_be_inside_shared_project(project: Project, harness: Harnes
     engine = FakeEngine()
     with pytest.raises(DevboxError, match="outside the shared"):
         App(engine, Store(project.root / "state")).new(project, harness)
-    assert engine.calls == []
+    assert engine.builds == [] and engine.runs == []

@@ -1,14 +1,17 @@
-import argparse
+import inspect
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
+from devbox import cli
 from devbox.app import App
 from devbox.cli import dispatch, get_harness, main, match, parser, query, select, session_label
+from devbox.config import Harness, Project
 from devbox.engine import Container
 from devbox.errors import DevboxError
 from devbox.state import Session, Store
@@ -58,6 +61,238 @@ def test_new_defaults_to_current_project() -> None:
 @pytest.mark.parametrize("action", ["new", "build", "resume"])
 def test_preparation_options(action: str) -> None:
     assert parser().parse_args([action, "--no-config"]).no_config
+
+
+@pytest.mark.parametrize(
+    ("argv", "handler", "keys"),
+    [
+        (["new"], cli._run, {"harness", "project", "no_config", "detach"}),
+        (["build"], cli._build, {"harness", "project", "no_config"}),
+        (["attach"], cli._attach, {"id"}),
+        (["shell"], cli._shell, {"id"}),
+        (["stop"], cli._stop, {"ids"}),
+        (["rm"], cli._rm, {"ids"}),
+        (["ls"], cli._ls, {"json_output"}),
+        (["sessions"], cli._sessions, {"json_output"}),
+        (["resume"], cli._resume, {"session", "project", "detach", "no_config"}),
+        (["kill-all"], cli._kill_all, {"yes"}),
+        (["cleanup"], cli.cleanup, {"select"}),
+        (["completion", "bash"], cli._completion, {"shell"}),
+    ],
+)
+def test_parser_selects_handler_with_only_its_arguments(argv, handler, keys) -> None:
+    values = vars(parser().parse_args(argv))
+    assert values.pop("func") is handler
+    assert values.pop("state_dir") is None
+    assert set(values) == keys
+    if handler is not cli._completion:
+        values["app"] = object()
+    inspect.signature(handler).bind(**values)
+
+
+@pytest.mark.parametrize("action", ["attach", "shell"])
+def test_single_container_commands_reject_multiple_ids(action: str) -> None:
+    with pytest.raises(SystemExit) as exc:
+        parser().parse_args([action, "first", "second"])
+    assert exc.value.code == 2
+
+
+def test_dispatch_initializes_app_with_custom_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = App(FakeEngine(), Store(tmp_path))
+    factory = Mock(return_value=app)
+    monkeypatch.setattr(cli, "App", factory)
+    handler = Mock()
+    args = parser().parse_args(["--state-dir", str(tmp_path), "stop", "first", "second"])
+    args.func = handler
+    dispatch(args)
+    assert factory.call_args.kwargs["store"].root == app.store.root
+    handler.assert_called_once_with(app=app, ids=["first", "second"])
+    assert "func" not in vars(args)
+    assert "state_dir" not in vars(args)
+
+
+@pytest.mark.parametrize("detach", [False, True])
+def test_new_dispatch_creates_and_optionally_attaches(
+    detach: bool,
+    project: Project,
+    harness: Harness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = FakeEngine()
+    container = Container("devbox-aabb", "running", "project", "pi", "now")
+    engine.rows = [container]
+    app = App(engine, Store(tmp_path / "state"))
+    create = Mock(return_value=container.id)
+    attach = Mock()
+    terminal = Mock()
+    monkeypatch.setattr(app, "new", create)
+    monkeypatch.setattr(app, "attach", attach)
+    monkeypatch.setattr(cli, "require_terminal", terminal)
+    monkeypatch.setattr(cli, "get_harness", lambda name: harness)
+    argv = ["new", "pi", "--project", str(project.cwd), "--no-config"]
+    dispatch(parser().parse_args([*argv, *(["--detach"] if detach else [])]), app)
+    create.assert_called_once_with(project, harness, no_config=True)
+    assert terminal.call_count == (0 if detach else 1)
+    assert attach.call_args_list == ([] if detach else [((container,), {})])
+
+
+def test_build_dispatch(
+    project: Project,
+    harness: Harness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = App(FakeEngine(), Store(tmp_path / "state"))
+    build = Mock(return_value="prepared-image")
+    monkeypatch.setattr(app, "build", build)
+    monkeypatch.setattr(cli, "get_harness", lambda name: harness)
+    dispatch(
+        parser().parse_args(["build", "pi", "--project", str(project.cwd), "--no-config"]), app
+    )
+    build.assert_called_once_with(project, harness, no_config=True)
+    assert capsys.readouterr().out == "prepared-image\n"
+
+
+@pytest.mark.parametrize("detach", [False, True])
+@pytest.mark.parametrize("override", [False, True])
+def test_resume_dispatch(
+    detach: bool,
+    override: bool,
+    project: Project,
+    harness: Harness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = FakeEngine()
+    container = Container("devbox-ccdd", "running", "project", "pi", "now")
+    engine.rows = [container]
+    app = App(engine, Store(tmp_path / "state"))
+    session = Session(
+        "devbox-aabb/conversation",
+        "devbox-aabb",
+        "pi",
+        "/missing" if override else str(project.cwd),
+        tmp_path,
+    )
+    monkeypatch.setattr(app.store, "sessions", lambda: [session])
+    create = Mock(return_value=container.id)
+    attach = Mock()
+    terminal = Mock()
+    monkeypatch.setattr(app, "new", create)
+    monkeypatch.setattr(app, "attach", attach)
+    monkeypatch.setattr(cli, "require_terminal", terminal)
+    monkeypatch.setattr(cli, "get_harness", lambda name: harness)
+    argv = ["resume", "aabb/conversation", "--no-config"]
+    if override:
+        argv.extend(["--project", str(project.cwd)])
+    if detach:
+        argv.append("--detach")
+    dispatch(parser().parse_args(argv), app)
+    create.assert_called_once_with(project, harness, no_config=True, session=session)
+    assert terminal.call_count == (0 if detach else 1)
+    assert attach.call_args_list == ([] if detach else [((container,), {})])
+
+
+@pytest.mark.parametrize("action", ["stop", "rm"])
+def test_multiple_container_ids_are_resolved_before_mutation(action: str, tmp_path: Path) -> None:
+    engine = FakeEngine()
+    engine.rows = [
+        Container("devbox-aabb", "running", "project", "pi", "now"),
+        Container("devbox-ccdd", "running", "project", "pi", "now"),
+    ]
+    app = App(engine, Store(tmp_path))
+    with pytest.raises(DevboxError, match="matches 0"):
+        dispatch(parser().parse_args([action, "aab", "missing"]), app)
+    assert not engine.stopped
+    assert not engine.removed
+    dispatch(parser().parse_args([action, "aab", "ccd", "devbox-aabb"]), app)
+    assert (engine.stopped if action == "stop" else engine.removed) == [
+        "devbox-aabb",
+        "devbox-ccdd",
+    ]
+
+
+@pytest.mark.parametrize("action", ["stop", "rm"])
+@pytest.mark.parametrize("cancel", [False, True])
+def test_missing_ids_use_multi_select(
+    action: str, cancel: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = FakeEngine()
+    running = Container("devbox-aabb", "running", "project", "pi", "now")
+    stopped = Container("devbox-ccdd", "stopped", "project", "pi", "now")
+    engine.rows = [running, stopped]
+    eligible = [running] if action == "stop" else engine.rows
+    picker = Mock(return_value=[] if cancel else eligible)
+    monkeypatch.setattr(cli, "select_many", picker)
+    dispatch(parser().parse_args([action]), App(engine, Store(tmp_path)))
+    picker.assert_called_once_with(eligible, "Containers", cli.container_label)
+    assert (engine.stopped if action == "stop" else engine.removed) == (
+        [] if cancel else [c.id for c in eligible]
+    )
+
+
+@pytest.mark.parametrize("action", ["stop", "rm"])
+def test_stopped_container_eligibility(action: str, tmp_path: Path) -> None:
+    engine = FakeEngine()
+    engine.rows = [Container("devbox-aabb", "stopped", "project", "pi", "now")]
+    args = parser().parse_args([action, "aabb"])
+    app = App(engine, Store(tmp_path))
+    if action == "stop":
+        with pytest.raises(DevboxError, match="matches 0"):
+            dispatch(args, app)
+        assert not engine.stopped
+    else:
+        dispatch(args, app)
+        assert engine.removed == ["devbox-aabb"]
+
+
+@pytest.mark.parametrize("action", ["attach", "shell"])
+def test_single_container_dispatch(
+    action: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = FakeEngine()
+    running = Container("devbox-aabb", "running", "project", "pi", "now")
+    engine.rows = [running, Container("devbox-aacc", "stopped", "project", "pi", "now")]
+    app = App(engine, Store(tmp_path))
+    handler = Mock()
+    terminal = Mock()
+    monkeypatch.setattr(app, action, handler)
+    monkeypatch.setattr(cli, "require_terminal", terminal)
+    dispatch(parser().parse_args([action, "aa"]), app)
+    handler.assert_called_once_with(running)
+    terminal.assert_called_once_with()
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+def test_container_listing_dispatch(
+    json_output: bool, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    engine = FakeEngine()
+    engine.rows = [
+        Container("devbox-aabb", "running", "project", "pi", "now"),
+        Container("devbox-ccdd", "stopped", "project", "pi", "now"),
+    ]
+    dispatch(
+        parser().parse_args(["ls", *(["--json"] if json_output else [])]),
+        App(engine, Store(tmp_path)),
+    )
+    output = capsys.readouterr().out
+    if json_output:
+        assert [row["id"] for row in json.loads(output)] == [c.id for c in engine.rows]
+    else:
+        assert output.splitlines() == [cli.container_label(c) for c in engine.rows]
+
+
+def test_kill_all_yes_dispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = FakeEngine()
+    engine.rows = [Container("devbox-aabb", "running", "project", "pi", "now")]
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    dispatch(parser().parse_args(["kill-all", "--yes"]), App(engine, Store(tmp_path)))
+    assert engine.removed == ["devbox-aabb"]
 
 
 def test_unknown_command_fails(capsys: pytest.CaptureFixture[str]) -> None:
@@ -208,7 +443,7 @@ def test_stop_explicit_id_needs_no_picker(tmp_path: Path) -> None:
     engine = FakeEngine()
     engine.rows = [Container("devbox-aabb", "running", "project", "pi", "now")]
     app = App(engine, Store(tmp_path))
-    dispatch(argparse.Namespace(action="stop", id="aab"), app)
+    dispatch(parser().parse_args(["stop", "aab"]), app)
     assert engine.stopped == ["devbox-aabb"]
 
 
@@ -219,7 +454,7 @@ def test_kill_all_noninteractive_requires_yes(
     engine.rows = [Container("ours", "running", "project", "pi", "now")]
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     with pytest.raises(DevboxError, match="terminal"):
-        dispatch(argparse.Namespace(action="kill-all", yes=False), App(engine, Store(tmp_path)))
+        dispatch(parser().parse_args(["kill-all"]), App(engine, Store(tmp_path)))
     assert not engine.removed
 
 

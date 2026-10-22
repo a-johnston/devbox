@@ -32,13 +32,15 @@ devbox new claude --detach
 devbox ls                             # running and stopped managed containers
 devbox attach [id]                    # omit ID for a picker; unique prefixes work
 devbox shell [id]                     # non-root inspection shell
-devbox stop [id]                      # stop processes, keep container disk
-devbox rm [id]                        # remove container and artifact volumes, keep history
+devbox stop [id ...]                  # stop processes, keep container disk
+devbox rm [id ...]                    # remove container and artifact volumes, keep history
 devbox sessions                       # saved conversations, including removed containers
 devbox resume [session-id]            # fork a conversation into a new container
 devbox build pi                       # rebuild the project/runtime/harness image
 devbox cleanup                       # confirm deletion of orphaned state and unused images
 ```
+
+`stop` and `rm` accept multiple IDs or unique prefixes; omit IDs for a multi-select picker.
 
 **Ctrl-a, then d** detaches without stopping the harness. After `stop`, use `resume` to
 continue a conversation. `kill-all` removes all managed containers but keeps saved history.

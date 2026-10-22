@@ -95,7 +95,7 @@ def format_size(size: int) -> str:
     return f"{value:.1f} TiB"
 
 
-def cleanup(app: App, /, select: bool) -> None:
+def cleanup(app: App, *, select: bool) -> None:
     require_terminal("Cleanup requires a terminal for confirmation")
     instances = app.orphaned_instances()
 
@@ -158,53 +158,120 @@ def session_label(session: Session) -> str:
     return f"{session.id}  {session.harness}  {session.project}"
 
 
-def _run():
-    pass
+def _run(app: App, *, harness: str | None, project: Path, no_config: bool, detach: bool) -> None:
+    selected_harness = get_harness(harness)
+    selected_project = Project.discover(project)
+    if not detach:
+        require_terminal()
+    id = app.new(selected_project, selected_harness, no_config=no_config)
+    if not detach:
+        app.attach(next(c for c in app.engine.containers() if c.id == id))
 
 
-def _build():
-    pass
+def _build(app: App, *, harness: str | None, project: Path, no_config: bool) -> None:
+    print(app.build(Project.discover(project), get_harness(harness), no_config=no_config))
 
 
-def _attach():
-    pass
+def _containers(app: App, *, running: bool = False) -> list[Container]:
+    app.engine.require_running()
+    containers = app.engine.containers()
+    return [c for c in containers if c.state == "running"] if running else containers
 
 
-def _shell():
-    pass
+def _attach(app: App, *, id: str | None) -> None:
+    container = match(
+        _containers(app, running=True), id, "Containers", lambda c: c.id, container_label
+    )
+    require_terminal()
+    app.attach(container)
 
 
-def _stop():
-    pass
+def _shell(app: App, *, id: str | None) -> None:
+    container = match(
+        _containers(app, running=True), id, "Containers", lambda c: c.id, container_label
+    )
+    require_terminal()
+    app.shell(container)
 
 
-def _rm():
-    pass
+def _selected_containers(app: App, ids: list[str], *, running: bool) -> list[Container]:
+    containers = _containers(app, running=running)
+    if not ids:
+        return select_many(containers, "Containers", container_label)
+    selected = [match(containers, id, "Containers", lambda c: c.id, container_label) for id in ids]
+    return list({c.id: c for c in selected}.values())
 
 
-def _ls():
-    pass
+def _stop(app: App, *, ids: list[str]) -> None:
+    for container in _selected_containers(app, ids, running=True):
+        app.engine.stop(container.id)
+        print(f"Stopped {container.id}. Conversation files retained; the live process is gone.")
 
 
-def _sessions():
-    pass
+def _rm(app: App, *, ids: list[str]) -> None:
+    for container in _selected_containers(app, ids, running=False):
+        app.engine.remove(container.id)
+        print(f"Removed {container.id}. Saved conversations retained.")
 
 
-def _kill_all():
-    pass
+def _ls(app: App, *, json_output: bool) -> None:
+    containers = _containers(app)
+    if json_output:
+        print(json.dumps([asdict(c) for c in containers], indent=2))
+    else:
+        for container in containers:
+            print(container_label(container))
 
 
-def _completion():
-    pass
+def _sessions(app: App, *, json_output: bool) -> None:
+    sessions = app.store.sessions()
+    if json_output:
+        print(json.dumps([asdict(s) for s in sessions], default=str, indent=2))
+    else:
+        for session in sessions:
+            print(session_label(session))
+
+
+def _resume(
+    app: App, *, session: str | None, project: Path | None, detach: bool, no_config: bool
+) -> None:
+    selected = match(app.store.sessions(), session, "Sessions", lambda s: s.id, session_label)
+    if not detach:
+        require_terminal()
+    id = app.new(
+        Project.discover(project or Path(selected.project)),
+        get_harness(selected.harness),
+        no_config=no_config,
+        session=selected,
+    )
+    if not detach:
+        app.attach(next(c for c in app.engine.containers() if c.id == id))
+
+
+def _kill_all(app: App, *, yes: bool) -> None:
+    containers = _containers(app)
+    if not containers:
+        print("No managed containers.")
+        return
+    if not yes:
+        require_terminal()
+        if not query(f"Stop/remove {len(containers)} containers? Saved history is retained."):
+            return
+    print(f"Removed {app.kill_all()} containers. Saved conversations retained.")
+
+
+def _completion(*, shell: str) -> None:
+    print(argcomplete.shellcode(["devbox"], shell=shell))
 
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Containerized coding harnesses")
     p.add_argument("--version", action="version", version=__version__)
     p.add_argument("--state-dir", type=Path, help="Custom state directory")
-    commands = p.add_subparsers(dest="action", required=True)
-    for name in ("new", "build"):
+    commands = p.add_subparsers(required=True)
+    for name, func in (("new", _run), ("build", _build)):
         command = commands.add_parser(name, help=f"{name.capitalize()} project/harness environment")
+        command.set_defaults(func=func)
         command.add_argument("harness", nargs="?")
         command.add_argument("--project", type=Path, default=Path("."))
         command.add_argument(
@@ -214,16 +281,20 @@ def parser() -> argparse.ArgumentParser:
         )
         if name == "new":
             command.add_argument("--detach", action="store_true", help="Create without attaching")
-    for name in ("attach", "shell"):
+    for name, func in (("attach", _attach), ("shell", _shell)):
         command = commands.add_parser(name)
+        command.set_defaults(func=func)
         command.add_argument("id", nargs="?", help="Container ID")
-    for name in ("stop", "rm"):
+    for name, func in (("stop", _stop), ("rm", _rm)):
         command = commands.add_parser(name)
-        command.add_argument("id", nargs="*", help="Container ID")
-    for name in ("ls", "sessions"):
+        command.set_defaults(func=func)
+        command.add_argument("ids", nargs="*", help="Container IDs")
+    for name, func in (("ls", _ls), ("sessions", _sessions)):
         command = commands.add_parser(name)
-        command.add_argument("--json", action="store_true")
+        command.set_defaults(func=func)
+        command.add_argument("--json", dest="json_output", action="store_true")
     command = commands.add_parser("resume", help="Fork a saved conversation into a new container")
+    command.set_defaults(func=_resume)
     command.add_argument("session", nargs="?")
     command.add_argument(
         "--project", type=Path, help="Override the saved project's working directory"
@@ -233,16 +304,19 @@ def parser() -> argparse.ArgumentParser:
     command = commands.add_parser(
         "kill-all", help="Stop/remove only managed containers; retain saved history"
     )
+    command.set_defaults(func=_kill_all)
     command.add_argument("--yes", action="store_true", help="Skip confirmation")
     command = commands.add_parser(
         "cleanup", help="Delete orphaned saved instances and unused Devbox images"
     )
+    command.set_defaults(func=cleanup)
     command.add_argument(
         "--select",
         action="store_true",
         help="Choose instances with fzf before confirming",
     )
     command = commands.add_parser("completion", help="Print shell completion setup")
+    command.set_defaults(func=_completion)
     command.add_argument("shell", choices=("bash", "zsh", "fish"))
     return p
 
@@ -256,75 +330,11 @@ def get_harness(name: str | None) -> Harness:
     return available[name]
 
 
-def dispatch(args: argparse.Namespace, app: App) -> None:
-    if args.action == "cleanup":
-        cleanup(app, select=args.select)
-        return
-    if args.action in ("run", "build"):
-        harness = get_harness(args.harness)
-        project = Project.discover(args.project)
-        if args.action == "build":
-            print(app.build(project, harness, no_config=args.no_config))
-            return
-        if not args.detach:
-            require_terminal()
-        id = app.new(project, harness, no_config=args.no_config)
-        if not args.detach:
-            app.attach(next(c for c in app.engine.containers() if c.id == id))
-        return
-    if args.action in ("sessions", "resume"):
-        sessions = app.store.sessions()
-        if args.action == "sessions":
-            if args.json:
-                print(json.dumps([asdict(s) for s in sessions], default=str, indent=2))
-            else:
-                for session in sessions:
-                    print(session_label(session))
-            return
-        session = match(sessions, args.session, "Sessions", lambda s: s.id, session_label)
-        if not args.detach:
-            require_terminal()
-        project = Project.discover(args.project or Path(session.project))
-        id = app.new(
-            project,
-            get_harness(session.harness),
-            no_config=args.no_config,
-            session=session,
-        )
-        if not args.detach:
-            app.attach(next(c for c in app.engine.containers() if c.id == id))
-        return
-    app.engine.require_running()
-    containers = app.engine.containers()
-    if args.action == "ls":
-        if args.json:
-            print(json.dumps([asdict(c) for c in containers], indent=2))
-        else:
-            for container in containers:
-                print(container_label(container))
-    elif args.action == "kill-all":
-        if not containers:
-            print("No managed containers.")
-            return
-        if not args.yes:
-            require_terminal()
-            if not query(f"Stop/remove {len(containers)} containers? Saved history is retained."):
-                return
-        print(f"Removed {app.kill_all()} containers. Saved conversations retained.")
-    else:
-        eligible = (
-            containers if args.action == "rm" else [c for c in containers if c.state == "running"]
-        )
-        container = match(eligible, args.id, "Containers", lambda c: c.id, container_label)
-        if args.action in ("attach", "shell"):
-            require_terminal()
-            getattr(app, args.action)(container)
-        elif args.action == "stop":
-            app.engine.stop(container.id)
-            print(f"Stopped {container.id}. Conversation files retained; the live process is gone.")
-        elif args.action == "rm":
-            app.engine.remove(container.id)
-            print(f"Removed {container.id}. Saved conversations retained.")
+def dispatch(args: argparse.Namespace, app: App | None = None) -> None:
+    state_dir = args.__dict__.pop("state_dir")
+    if args.func is not _completion:
+        args.app = app if app is not None else App(store=Store(state_dir))
+    args.__dict__.pop("func")(**args.__dict__)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -333,10 +343,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         command_parser = parser()
         argcomplete.autocomplete(command_parser)
         args = command_parser.parse_args(argv)
-        if args.action == "completion":
-            print(argcomplete.shellcode(["devbox"], shell=args.shell))
-        else:
-            dispatch(args, App(store=Store(args.state_dir)))
+        dispatch(args)
     except (DevboxError, OSError) as exc:
         print(f"devbox: {exc}", file=sys.stderr)
         return 1

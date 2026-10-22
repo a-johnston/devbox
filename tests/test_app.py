@@ -9,12 +9,14 @@ import pytest
 from devbox.app import App, accent, tmux_config
 from devbox.apple import AppleEngine
 from devbox.config import Harness, Project
-from devbox.engine import Container, RunSpec, mount
+from devbox.engine import Container, RunSpec, backend_name, mount
 from devbox.errors import DevboxError
 from devbox.state import Session, Store
 
 
 class FakeEngine(AppleEngine):
+    name = backend_name()
+
     def __init__(self) -> None:
         super().__init__()
         self.calls: list[tuple[str, ...]] = []

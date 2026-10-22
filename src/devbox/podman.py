@@ -19,6 +19,7 @@ AGENT_USERNS = "keep-id:uid=10001,gid=10001"
 
 
 class PodmanEngine(Engine):
+    name = "podman"
     executable = "podman"
     install_hint = "Podman is required: https://podman.io/docs/installation"
     isolation = "container"
@@ -32,11 +33,20 @@ class PodmanEngine(Engine):
             raise DevboxError(f"podman info failed: {result.stderr.strip()}")
         try:
             host = json.loads(result.stdout)["host"]
-            self.limits_ignored = (
-                host["cgroupManager"] == "cgroupfs" and host["security"]["rootless"] is True
-            )
-        except (ValueError, KeyError, TypeError):
-            pass
+            rootless = host["security"]["rootless"]
+            manager = host["cgroupManager"]
+            version = host["cgroupVersion"]
+            if type(rootless) is not bool or manager not in ("systemd", "cgroupfs"):
+                raise ValueError("Unrecognized Podman configuration")
+            if not isinstance(version, str):
+                raise ValueError("Expected cgroup version")
+        except (ValueError, KeyError, TypeError) as exc:
+            raise DevboxError("Cannot validate rootless setup from podman info") from exc
+        if not rootless:
+            raise DevboxError("Devbox requires rootless Podman; run it as your regular user")
+        if version != "v2":
+            raise DevboxError("Devbox requires Podman with cgroup v2")
+        self.limits_ignored = manager == "cgroupfs"
 
     def image_exists(self, reference: str) -> bool:
         result = self.call("image", "exists", reference, check=False)

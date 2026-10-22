@@ -75,7 +75,9 @@ def tmux_config(id: str, project: str, harness: str) -> str:
 class App:
     def __init__(self, engine: Engine | None = None, store: Store | None = None) -> None:
         self.engine = engine or select_engine()
-        self.store = store or Store()
+        self.store = store or Store(backend=self.engine.name)
+        if self.store.backend != self.engine.name:
+            raise DevboxError("The saved-state backend must match the container engine")
 
     @property
     def image_owner(self) -> dict[str, str]:

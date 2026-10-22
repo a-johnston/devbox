@@ -22,8 +22,7 @@ uv tool install --editable .
 ```
 
 Install [fzf](https://github.com/junegunn/fzf) for interactive pickers; explicit arguments
-work without it. The engine is selected by OS; override with `DEVBOX_ENGINE=apple` or
-`DEVBOX_ENGINE=podman`.
+work without it. The engine is selected by OS: Apple on macOS, Podman on Linux.
 
 ## Use
 
@@ -101,9 +100,15 @@ as examples for `profile.toml`, `Containerfile` and optional host-side `hooks.py
 
 ## Saved state and safety
 
-Homes, copied config and conversations live in `$XDG_DATA_HOME/devbox/instances/<id>/`
-(default `~/.local/share/devbox`; override with `--state-dir`). Removing a container keeps
-this state. `resume` snapshots and forks a conversation so the original never has two writers.
+Homes, copied config and conversations live in `$XDG_DATA_HOME/devbox/<backend>/instances/<id>/`
+(default base `~/.local/share/devbox`; override the base with `--state-dir`). The backend is
+`apple` or `podman`; their state is never mixed. Removing a container keeps this state.
+`resume` snapshots and forks a conversation so the original never has two writers.
+
+Legacy `<base>/instances` directories are left untouched and are not listed or cleaned.
+To migrate, remove their containers first (preserving saved state), then move `instances`
+into `<base>/apple/` or `<base>/podman/` according to the engine that created it. Do not
+merge or overwrite an existing destination; split legacy state by backend if necessary.
 
 `cleanup` previews orphaned saved instances and unused, ownership-labelled Devbox images,
 then asks for confirmation. **Deleting saved instances permanently deletes their conversations

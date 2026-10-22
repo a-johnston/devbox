@@ -147,31 +147,17 @@ def test_apple_run_translates_spec(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
-    "platform,override,expected",
-    [
-        ("darwin", None, AppleEngine),
-        ("linux", None, PodmanEngine),
-        ("darwin", "podman", PodmanEngine),
-        ("linux", "apple", AppleEngine),
-        ("win32", "podman", PodmanEngine),
-    ],
+    "platform,expected",
+    [("darwin", AppleEngine), ("linux", PodmanEngine)],
 )
-def test_select_engine(
-    monkeypatch: pytest.MonkeyPatch, platform: str, override: str | None, expected: type
-) -> None:
+def test_select_engine(monkeypatch: pytest.MonkeyPatch, platform: str, expected: type) -> None:
     monkeypatch.setattr("sys.platform", platform)
-    if override:
-        monkeypatch.setenv("DEVBOX_ENGINE", override)
-    else:
-        monkeypatch.delenv("DEVBOX_ENGINE", raising=False)
+    # The old override must no longer change backend selection.
+    monkeypatch.setenv("DEVBOX_ENGINE", "unsupported")
     assert type(select_engine()) is expected
 
 
 def test_select_engine_rejects_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEVBOX_ENGINE", "docker")
-    with pytest.raises(DevboxError, match="DEVBOX_ENGINE"):
-        select_engine()
-    monkeypatch.delenv("DEVBOX_ENGINE")
     monkeypatch.setattr("sys.platform", "win32")
     with pytest.raises(DevboxError, match="win32"):
         select_engine()

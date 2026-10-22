@@ -45,6 +45,46 @@ def test_podman_require_running_reports_info_failure(monkeypatch: pytest.MonkeyP
     assert recorder.kwargs == [{"check": False}]
 
 
+@pytest.mark.parametrize(
+    "info",
+    [
+        "not json",
+        "null",
+        "[]",
+        "{}",
+        '{"host": null}',
+        '{"host": {"security": {"rootless": "true"}, "cgroupManager": "systemd", "cgroupVersion": "v2"}}',
+        '{"host": {"security": {"rootless": true}, "cgroupManager": "unknown", "cgroupVersion": "v2"}}',
+        '{"host": {"security": {"rootless": true}, "cgroupManager": "systemd", "cgroupVersion": null}}',
+    ],
+)
+def test_podman_preflight_rejects_unrecognized_info(
+    monkeypatch: pytest.MonkeyPatch, info: str
+) -> None:
+    engine, _ = engine_with(monkeypatch, {("info",): (0, info, "")})
+    with pytest.raises(DevboxError, match="Cannot validate rootless setup"):
+        engine.require_running()
+
+
+@pytest.mark.parametrize(
+    "rootless,version,error",
+    [(False, "v2", "requires rootless Podman"), (True, "v1", "requires Podman with cgroup v2")],
+)
+def test_podman_preflight_rejects_unsupported_setup(
+    monkeypatch: pytest.MonkeyPatch, rootless: bool, version: str, error: str
+) -> None:
+    info = {
+        "host": {
+            "security": {"rootless": rootless},
+            "cgroupManager": "systemd",
+            "cgroupVersion": version,
+        }
+    }
+    engine, _ = engine_with(monkeypatch, {("info",): (0, json.dumps(info), "")})
+    with pytest.raises(DevboxError, match=error):
+        engine.require_running()
+
+
 def test_podman_missing_executable_names_podman(monkeypatch: pytest.MonkeyPatch) -> None:
     def missing(*a: object, **kw: object) -> None:
         raise FileNotFoundError("podman")
@@ -292,7 +332,13 @@ def test_podman_warns_when_rootless_cgroupfs_ignores_limits(
     rootless: bool,
     warned: bool,
 ) -> None:
-    info = {"host": {"cgroupManager": manager, "security": {"rootless": rootless}}}
+    info = {
+        "host": {
+            "cgroupManager": manager,
+            "cgroupVersion": "v2",
+            "security": {"rootless": rootless},
+        }
+    }
     engine, _ = engine_with(monkeypatch, {("info",): (0, json.dumps(info), "")})
     engine.require_running()
     engine.run(RunSpec("devbox-1", "img", 1, "1G", {}, (), (), {}))

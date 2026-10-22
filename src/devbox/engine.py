@@ -109,6 +109,7 @@ class RunSpec:
 
 
 class Engine(ABC):
+    name: str
     executable: str
     install_hint: str
     # How the guest is isolated from the host, as told to the agent.
@@ -240,17 +241,17 @@ class Engine(ABC):
         self.call("stop", id)
 
 
+def backend_name() -> str:
+    """The host OS determines the backend and its saved-state namespace."""
+    defaults = {"darwin": "apple", "linux": "podman"}
+    if sys.platform not in defaults:
+        raise DevboxError(f"No container engine for {sys.platform}")
+    return defaults[sys.platform]
+
+
 def select_engine() -> Engine:
-    """Apple's container on macOS and rootless Podman on Linux, unless DEVBOX_ENGINE says otherwise."""
     from devbox.apple import AppleEngine
     from devbox.podman import PodmanEngine
 
     engines: dict[str, type[Engine]] = {"apple": AppleEngine, "podman": PodmanEngine}
-    if name := os.environ.get("DEVBOX_ENGINE"):
-        if name not in engines:
-            raise DevboxError(f"DEVBOX_ENGINE must be one of: {', '.join(engines)}")
-        return engines[name]()
-    defaults = {"darwin": "apple", "linux": "podman"}
-    if sys.platform not in defaults:
-        raise DevboxError(f"No container engine for {sys.platform}; set DEVBOX_ENGINE")
-    return engines[defaults[sys.platform]]()
+    return engines[backend_name()]()

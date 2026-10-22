@@ -21,6 +21,7 @@ def builder_memory() -> str:
 
 
 class AppleEngine(Engine):
+    name = "apple"
     executable = "container"
     install_hint = "Apple's container CLI is required: https://github.com/apple/container"
     isolation = "VM"

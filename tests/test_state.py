@@ -9,14 +9,41 @@ from devbox.errors import DevboxError
 from devbox.state import Store, seed_config, snapshot_session
 
 
-def test_store_uses_devbox_namespace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("platform,backend", [("darwin", "apple"), ("linux", "podman")])
+def test_store_uses_devbox_namespace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str, backend: str
+) -> None:
+    monkeypatch.setattr("sys.platform", platform)
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     store = Store()
-    assert store.root == tmp_path / "data/devbox"
+    assert store.root == tmp_path / "data/devbox" / backend
     instance, directory = store.create()
     assert instance.startswith("devbox-")
     assert directory == store.root / "instances" / instance
     assert (directory / "home").is_dir()
+
+
+def test_store_scopes_custom_roots_and_leaves_legacy_state_untouched(tmp_path: Path) -> None:
+    legacy = tmp_path / "instances/devbox-old/home"
+    legacy.mkdir(parents=True)
+    (legacy / "conversation.jsonl").write_text("saved conversation")
+    apple = Store(tmp_path, backend="apple")
+    podman = Store(tmp_path, backend="podman")
+    id, directory = apple.create()
+    assert directory == tmp_path / "apple/instances" / id
+    assert [instance.id for instance in apple.orphaned(set())] == [id]
+    assert podman.orphaned(set()) == []
+    assert podman.sessions() == []
+    assert podman.image_references(set()) == set()
+    with pytest.raises(DevboxError, match="Not a removable instance"):
+        podman.remove_instance(id)
+    assert (legacy / "conversation.jsonl").read_text() == "saved conversation"
+    assert directory.is_dir()
+
+
+def test_store_rejects_unknown_backend(tmp_path: Path) -> None:
+    with pytest.raises(DevboxError, match="Unknown state backend"):
+        Store(tmp_path, backend="../apple")
 
 
 def test_seed_is_copy_not_shared_state(tmp_path: Path, harness: Harness) -> None:

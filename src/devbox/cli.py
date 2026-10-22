@@ -158,15 +158,53 @@ def session_label(session: Session) -> str:
     return f"{session.id}  {session.harness}  {session.project}"
 
 
+def _run():
+    pass
+
+
+def _build():
+    pass
+
+
+def _attach():
+    pass
+
+
+def _shell():
+    pass
+
+
+def _stop():
+    pass
+
+
+def _rm():
+    pass
+
+
+def _ls():
+    pass
+
+
+def _sessions():
+    pass
+
+
+def _kill_all():
+    pass
+
+
+def _completion():
+    pass
+
+
 def parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Coding harnesses in disposable containers")
+    p = argparse.ArgumentParser(description="Containerized coding harnesses")
     p.add_argument("--version", action="version", version=__version__)
-    p.add_argument("--state-dir", type=Path, help="Override the durable state directory")
+    p.add_argument("--state-dir", type=Path, help="Custom state directory")
     commands = p.add_subparsers(dest="action", required=True)
     for name in ("new", "build"):
-        command = commands.add_parser(
-            name, help=f"{name.capitalize()} a project/harness environment"
-        )
+        command = commands.add_parser(name, help=f"{name.capitalize()} project/harness environment")
         command.add_argument("harness", nargs="?")
         command.add_argument("--project", type=Path, default=Path("."))
         command.add_argument(
@@ -176,9 +214,12 @@ def parser() -> argparse.ArgumentParser:
         )
         if name == "new":
             command.add_argument("--detach", action="store_true", help="Create without attaching")
-    for name in ("attach", "shell", "stop", "rm"):
+    for name in ("attach", "shell"):
         command = commands.add_parser(name)
-        command.add_argument("id", nargs="?", help="Full or unambiguous short container ID")
+        command.add_argument("id", nargs="?", help="Container ID")
+    for name in ("stop", "rm"):
+        command = commands.add_parser(name)
+        command.add_argument("id", nargs="*", help="Container ID")
     for name in ("ls", "sessions"):
         command = commands.add_parser(name)
         command.add_argument("--json", action="store_true")
@@ -199,7 +240,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument(
         "--select",
         action="store_true",
-        help="Choose instances with fzf multi-select before confirming",
+        help="Choose instances with fzf before confirming",
     )
     command = commands.add_parser("completion", help="Print shell completion setup")
     command.add_argument("shell", choices=("bash", "zsh", "fish"))
@@ -219,7 +260,7 @@ def dispatch(args: argparse.Namespace, app: App) -> None:
     if args.action == "cleanup":
         cleanup(app, select=args.select)
         return
-    if args.action in ("new", "build"):
+    if args.action in ("run", "build"):
         harness = get_harness(args.harness)
         project = Project.discover(args.project)
         if args.action == "build":
@@ -267,12 +308,7 @@ def dispatch(args: argparse.Namespace, app: App) -> None:
             return
         if not args.yes:
             require_terminal()
-            if (
-                input(
-                    f"Stop/remove {len(containers)} managed containers? Saved history is retained. [y/N] "
-                ).lower()
-                != "y"
-            ):
+            if not query(f"Stop/remove {len(containers)} containers? Saved history is retained."):
                 return
         print(f"Removed {app.kill_all()} containers. Saved conversations retained.")
     else:

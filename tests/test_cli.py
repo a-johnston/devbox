@@ -226,7 +226,7 @@ def test_kill_all_noninteractive_requires_yes(
 def test_cli_text_is_platform_neutral() -> None:
     text = parser().format_help()
     assert "Apple" not in text
-    assert "Coding harnesses in disposable containers" in text
+    assert "Containerized coding harnesses" in text
 
 
 def test_missing_fzf_hint_is_platform_neutral(monkeypatch: pytest.MonkeyPatch) -> None:

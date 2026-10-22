@@ -3,12 +3,12 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from fakes import FakeEngine
 
 from devbox.app import App
 from devbox.config import ASSETS, Harness, Project
 from devbox.errors import DevboxError
 from devbox.state import Session, Store, seed_config
+from tests.fakes import FakeEngine
 
 
 @pytest.fixture

@@ -2,12 +2,13 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from fakes import FakeEngine
 
 from devbox.app import App
 from devbox.cli import dispatch, format_size, parser
 from devbox.errors import DevboxError
 from devbox.state import Store, disk_usage
+from tests.fakes import FakeEngine
+from tests.test_utils import patch_input, patch_require_terminal
 
 
 class InventoryEngine(FakeEngine):
@@ -188,11 +189,10 @@ def test_cleanup_cancellation_preserves_sessions(
     answer: str,
 ) -> None:
     _, directory = saved_instance(app.store)
-    monkeypatch.setattr("builtins.input", lambda _: answer)
+    patch_input(monkeypatch, answer)
     dispatch(parser().parse_args(["cleanup"]), app)
     text = capsys.readouterr().out
     assert "permanently deletes" in text
-    assert "saved conversations, copied credentials" in text
     assert "Cancelled. Nothing removed." in text
     assert directory.exists()
 
@@ -211,7 +211,7 @@ def test_cleanup_confirmation_and_summary(
 
     monkeypatch.setattr("builtins.input", confirm)
     dispatch(parser().parse_args(["cleanup"]), app)
-    assert prompts == [f"Delete 1 instances (~{format_size(expected)})? [y/N] "]
+    assert prompts == [f"Delete 1 instances (~{format_size(expected)}) and 0 images? [y/N] "]
     assert (
         f"Removed 1 instances; approximately {format_size(expected)} recovered."
         in capsys.readouterr().out
@@ -249,6 +249,7 @@ def test_empty_cleanup_does_not_prompt_or_create_state(
     app: App, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr("builtins.input", lambda _: pytest.fail("nothing to confirm"))
+    patch_require_terminal(monkeypatch)
     dispatch(parser().parse_args(["cleanup"]), app)
     assert capsys.readouterr().out == "No orphaned instances or unused Devbox images.\n"
     assert not app.store.root.exists()
@@ -264,7 +265,8 @@ def test_cleanup_multi_select_reviews_subset_before_confirming(
     monkeypatch.setattr("devbox.cli.shutil.which", lambda _: "/bin/fzf")
 
     def pick(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        assert args[0:2] == ["fzf", "-m"]
+        assert args[0] == "fzf"
+        assert args[-1] == "-m"
         assert all(instance.id in str(kwargs["input"]) for instance in candidates)
         return subprocess.CompletedProcess(args, 0, "0\tfirst\n2\tthird\n", "")
 

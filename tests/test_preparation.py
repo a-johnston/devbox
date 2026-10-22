@@ -5,12 +5,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fakes import FakeEngine
 
 from devbox.app import App
 from devbox.config import Harness, Project
 from devbox.errors import DevboxError
 from devbox.state import Store, build_files, host_version
+from tests.fakes import FakeEngine
 
 
 def test_second_new_never_enters_build_scope(

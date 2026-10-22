@@ -4,8 +4,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from fakes import FakeEngine
-from test_cleanup import InventoryEngine, saved_instance
 
 from devbox.app import App
 from devbox.apple import AppleEngine
@@ -15,6 +13,9 @@ from devbox.engine import IMAGE_KIND, IMAGE_SCHEMA, IMAGE_STORE, MANAGED, Image,
 from devbox.errors import DevboxError
 from devbox.podman import PodmanEngine
 from devbox.state import Store
+from tests.fakes import FakeEngine
+from tests.test_cleanup import InventoryEngine, saved_instance
+from tests.test_utils import patch_input, patch_require_terminal
 
 
 class ImageEngine(InventoryEngine):
@@ -183,12 +184,12 @@ def test_image_only_cleanup_still_confirms(
     assert isinstance(engine, ImageEngine)
     image = owned(app)
     engine.inventory = [image]
-    monkeypatch.setattr("devbox.cli.require_terminal", lambda *a: None)
+    patch_require_terminal(monkeypatch)
     monkeypatch.setattr("devbox.cli.select_many", lambda *a: pytest.fail("no instances to pick"))
 
     def confirm(prompt: str) -> str:
         assert image.reference in capsys.readouterr().out
-        assert "1 image references" in prompt
+        assert "1 image" in prompt
         assert not engine.deleted
         return "y"
 
@@ -207,8 +208,8 @@ def test_combined_cleanup_removes_images_after_selected_homes(
     image = owned(app)
     engine.inventory = [image]
     retain(app, image.reference)
-    monkeypatch.setattr("devbox.cli.require_terminal", lambda *a: None)
-    monkeypatch.setattr("builtins.input", lambda _: "y")
+    patch_require_terminal(monkeypatch)
+    patch_input(monkeypatch)
     dispatch(parser().parse_args(["cleanup"]), app)
     assert engine.deleted == [image.reference]
     assert list(app.store.instances.iterdir()) == []
@@ -224,11 +225,11 @@ def test_select_keeps_unselected_sessions_and_their_images(
     engine.inventory = [first, kept]
     selected = retain(app, first.reference)
     retained = retain(app, kept.reference)
-    monkeypatch.setattr("devbox.cli.require_terminal", lambda *a: None)
+    patch_require_terminal(monkeypatch)
     monkeypatch.setattr(
         "devbox.cli.select_many", lambda rows, *a: [row for row in rows if row.id == selected]
     )
-    monkeypatch.setattr("builtins.input", lambda _: "y")
+    patch_input(monkeypatch)
     dispatch(parser().parse_args(["cleanup", "--select"]), app)
     assert engine.deleted == [first.reference]
     assert app.store.directory(retained).exists()
@@ -240,8 +241,8 @@ def test_image_cleanup_cancellation_deletes_nothing(
     engine = app.engine
     assert isinstance(engine, ImageEngine)
     engine.inventory = [owned(app)]
-    monkeypatch.setattr("devbox.cli.require_terminal", lambda *a: None)
-    monkeypatch.setattr("builtins.input", lambda _: "n")
+    patch_require_terminal(monkeypatch)
+    patch_input(monkeypatch, "n")
     dispatch(parser().parse_args(["cleanup"]), app)
     assert engine.deleted == []
 
@@ -435,6 +436,7 @@ def test_inventory_failure_does_not_delete_instance_homes(
     def fail() -> list[Image]:
         raise DevboxError("Cannot safely determine existing images; refusing cleanup")
 
+    patch_require_terminal(monkeypatch)
     monkeypatch.setattr(engine, "images", fail)
     monkeypatch.setattr(
         "builtins.input", lambda _: pytest.fail("must not confirm incomplete inventory")
@@ -470,7 +472,7 @@ def test_image_became_referenced_during_confirmation_is_skipped(
     assert isinstance(engine, ImageEngine)
     image = owned(app)
     engine.inventory = [image]
-    monkeypatch.setattr("devbox.cli.require_terminal", lambda *a: None)
+    patch_require_terminal(monkeypatch)
 
     def confirm(prompt: str) -> str:
         retain(app, image.reference)
@@ -479,4 +481,3 @@ def test_image_became_referenced_during_confirmation_is_skipped(
     monkeypatch.setattr("builtins.input", confirm)
     dispatch(parser().parse_args(["cleanup"]), app)
     assert engine.deleted == []
-    assert "now referenced, changed or no longer exist were skipped" in capsys.readouterr().out

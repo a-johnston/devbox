@@ -4,12 +4,12 @@ import json
 from pathlib import Path
 
 import pytest
-from fakes import FakeEngine
 
 from devbox.app import App
 from devbox.config import Harness, Project
 from devbox.errors import DevboxError
 from devbox.state import Store, snapshot_session
+from tests.fakes import FakeEngine
 
 
 def test_catalog_does_not_follow_home_symlinks(tmp_path: Path) -> None:

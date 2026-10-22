@@ -24,43 +24,27 @@ from devbox.errors import DevboxError
 from devbox.state import Instance, Session, Store
 
 
-def require_terminal(
-    message: str = "A terminal is required; supply an ID/harness, or use new --detach",
-) -> None:
+def query(ask: str, default_yes: bool = False) -> bool:
+    try:
+        response = input(f"{ask} {'[Y/n]' if default_yes else '[y/N]'} ").lower().strip()
+        return (response or ("y" if default_yes else "n")) == "y"
+    except EOFError:
+        return False
+
+
+def require_terminal(message: str = "A terminal is required") -> None:
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         raise DevboxError(message)
 
 
-def select[T](items: Sequence[T], prompt: str, label: Callable[[T], str]) -> T:
+def _fzf[T](
+    items: Sequence[T],
+    prompt: str,
+    label: Callable[[T], str],
+    multiple: bool,
+) -> str:
     if not items:
         raise DevboxError(f"No eligible {prompt.lower()}")
-    require_terminal()
-    if shutil.which("fzf") is None:
-        raise DevboxError("Interactive selection requires fzf, or supply an explicit argument")
-    rows = [f"{i}\t{label(item)}" for i, item in enumerate(items)]
-    result = subprocess.run(
-        [
-            "fzf",
-            "--delimiter=\t",
-            "--with-nth=2..",
-            "--prompt",
-            f"{prompt}> ",
-            "--height=60%",
-            "--reverse",
-        ],
-        input="\n".join(rows) + "\n",
-        text=True,
-        stdout=subprocess.PIPE,
-        check=False,
-    )
-    if result.returncode in (1, 130):
-        raise KeyboardInterrupt
-    if result.returncode:
-        raise DevboxError("fzf failed")
-    return items[int(result.stdout.split("\t", 1)[0])]
-
-
-def select_many[T](items: Sequence[T], prompt: str, label: Callable[[T], str]) -> list[T]:
     require_terminal()
     if shutil.which("fzf") is None:
         raise DevboxError("Interactive selection requires fzf")
@@ -68,15 +52,14 @@ def select_many[T](items: Sequence[T], prompt: str, label: Callable[[T], str]) -
     result = subprocess.run(
         [
             "fzf",
-            "-m",
             "--delimiter=\t",
             "--with-nth=2..",
             "--prompt",
             f"{prompt}> ",
-            "--header=Tab to select; Enter to review; Esc to cancel",
             "--height=60%",
             "--reverse",
-        ],
+        ]
+        + (["-m"] if multiple else []),
         input="\n".join(rows) + "\n",
         text=True,
         stdout=subprocess.PIPE,
@@ -85,22 +68,35 @@ def select_many[T](items: Sequence[T], prompt: str, label: Callable[[T], str]) -
     if result.returncode == 130:
         raise KeyboardInterrupt
     if result.returncode == 1:
-        return []
+        if multiple:
+            return ""
+        raise KeyboardInterrupt
     if result.returncode:
-        raise DevboxError("fzf failed")
-    return [items[int(row.split("\t", 1)[0])] for row in result.stdout.splitlines()]
+        raise DevboxError(f"fzf failed ({result.returncode})")
+    return result.stdout
+
+
+def select[T](items: Sequence[T], prompt: str, label: Callable[[T], str]) -> T:
+    output = _fzf(items, prompt, label, False)
+    return items[int(output.split("\t", 1)[0])]
+
+
+def select_many[T](items: Sequence[T], prompt: str, label: Callable[[T], str]) -> list[T]:
+    output = _fzf(items, prompt, label, True)
+    return [items[int(row.split("\t", 1)[0])] for row in output.splitlines()]
 
 
 def format_size(size: int) -> str:
     value = float(size)
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if value < 1024 or unit == "TiB":
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if value < 1024:
             return f"{value:.1f} {unit}"
         value /= 1024
-    raise AssertionError("unreachable")
+    return f"{value:.1f} TiB"
 
 
-def cleanup(app: App, *, select: bool) -> None:
+def cleanup(app: App, /, select: bool) -> None:
+    require_terminal("Cleanup requires a terminal for confirmation")
     instances = app.orphaned_instances()
 
     def label(instance: Instance) -> str:
@@ -119,35 +115,21 @@ def cleanup(app: App, *, select: bool) -> None:
         print(f"Orphaned instances in {app.store.instances}:")
         for instance in instances:
             print(f"  {label(instance)}")
-        print(
-            "This permanently deletes their saved conversations, copied credentials and home files."
-        )
+        print("This permanently deletes instance files.")
     if images:
         print("Unused Devbox image references:")
         for image in images:
             print(f"  {image.reference}")
         print("Images can be rebuilt; shared layers and build caches may remain.")
-    require_terminal("Cleanup requires a terminal for confirmation")
     size = format_size(sum(instance.size for instance in instances))
-    targets = f"{len(instances)} instances (~{size})"
-    if images:
-        targets += f" and {len(images)} image references"
-    try:
-        answer = input(f"Delete {targets}? [y/N] ")
-    except EOFError:
-        answer = ""
-    if answer.strip().lower() != "y":
+    targets = f"{len(instances)} instances (~{size}) and {len(images)} images"
+    if not query(f"Delete {targets}?"):
         print("Cancelled. Nothing removed.")
         return
     removed, recovered = app.cleanup(instances)
     print(f"Removed {removed} instances; approximately {format_size(recovered)} recovered.")
-    if removed < len(instances):
-        print("Instances that now have containers or no longer exist were skipped.")
-    if images:
-        removed_images = app.cleanup_images(images)
-        print(f"Removed {removed_images} image references.")
-        if removed_images < len(images):
-            print("Images that are now referenced, changed or no longer exist were skipped.")
+    removed_images = app.cleanup_images(images)
+    print(f"Removed {removed_images} image references.")
 
 
 def match[T](

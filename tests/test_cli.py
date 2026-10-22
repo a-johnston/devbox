@@ -6,13 +6,32 @@ import sys
 from pathlib import Path
 
 import pytest
-from fakes import FakeEngine
 
 from devbox.app import App
-from devbox.cli import dispatch, get_harness, main, match, parser, select, session_label
+from devbox.cli import dispatch, get_harness, main, match, parser, query, select, session_label
 from devbox.engine import Container
 from devbox.errors import DevboxError
 from devbox.state import Session, Store
+from tests.fakes import FakeEngine
+from tests.test_utils import patch_input
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("y", True),
+        ("Y", True),
+        (" Y ", True),
+        ("n", False),
+        ("No", False),
+        ("asd", False),
+        ("yes", False),
+    ],
+)
+def test_query(monkeypatch: pytest.MonkeyPatch, args) -> None:
+    value, expected = args
+    patch_input(monkeypatch, value)
+    assert expected == query("")
 
 
 @pytest.mark.parametrize("args", [["--help"], ["--version"], ["completion", "bash"]])

@@ -2,13 +2,13 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from fakes import FakeEngine
 
 from devbox.app import App, environment_secrets
 from devbox.cli import parser
 from devbox.config import ASSETS, Harness, Project
 from devbox.errors import DevboxError
 from devbox.state import Store
+from tests.fakes import FakeEngine
 
 
 @pytest.fixture

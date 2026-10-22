@@ -4,13 +4,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fakes import FakeEngine
 
 from devbox.app import App, accent, tmux_config
 from devbox.config import Harness, Project
 from devbox.engine import Container, RunSpec, mount
 from devbox.errors import DevboxError
 from devbox.state import Session, Store
+from tests.fakes import FakeEngine
 
 
 def test_new_composes_images_and_mounts_only_selected_paths(

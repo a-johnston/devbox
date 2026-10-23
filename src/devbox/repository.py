@@ -7,6 +7,7 @@ clone only runs upload-pack there, which ignores repository settings that could 
 from __future__ import annotations
 
 import base64
+import os
 import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -87,6 +88,12 @@ def fetch(
             )
         )
     return fetched
+
+
+def show_diff(repository: Path, base: str, ref: str, *options: str) -> None:
+    """Replace this process with git diff in the host repository, using the user's pager."""
+    argv = ["git", "-C", str(repository), "diff", *options, f"{base}...{ref}", "--"]
+    os.execvpe("git", argv, git_environment())
 
 
 def bundle(repository: Path, branches: Sequence[str], base: str) -> str:

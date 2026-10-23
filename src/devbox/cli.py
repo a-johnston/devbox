@@ -21,6 +21,7 @@ from devbox.app import App
 from devbox.config import Harness, Project, harnesses, init
 from devbox.engine import Container
 from devbox.errors import DevboxError
+from devbox.repository import Fetched
 from devbox.state import Instance, Session, Store
 
 
@@ -270,7 +271,7 @@ def printable(value: str) -> str:
     return "".join(c if c.isprintable() else repr(c)[1:-1] for c in value)
 
 
-def _fetch(app: App, *, id: str | None) -> None:
+def _fetched(app: App, id: str | None) -> tuple[str, list[Fetched]]:
     def label(instance: str) -> str:
         metadata = app.store.metadata(instance)
         return f"{instance}  {metadata.get('harness')}  {metadata.get('project')}"
@@ -279,16 +280,43 @@ def _fetch(app: App, *, id: str | None) -> None:
     fetched = app.fetch(instance)
     if not fetched:
         print(f"{instance} has no branches.")
-        return
+    return instance, fetched
+
+
+def fetched_label(branch: Fetched) -> str:
+    notes = [f"{branch.commits} new commit{'' if branch.commits == 1 else 's'}"]
+    if branch.rewritten:
+        notes.append("REWRITTEN since the last fetch")
+    if branch.watched:
+        notes.append("CHANGES " + ", ".join(printable(path) for path in branch.watched))
+    return f"{printable(branch.ref)}  {'  '.join(notes)}"
+
+
+def _fetch(app: App, *, id: str | None) -> None:
+    instance, fetched = _fetched(app, id)
     for branch in fetched:
-        notes = [f"{branch.commits} new commit{'' if branch.commits == 1 else 's'}"]
-        if branch.rewritten:
-            notes.append("REWRITTEN since the last fetch")
-        if branch.watched:
-            notes.append("CHANGES " + ", ".join(printable(path) for path in branch.watched))
-        print(f"{printable(branch.ref)}  {'  '.join(notes)}")
-    base = app.store.metadata(instance)["base"]
-    print(f"Review: git diff {base[:12]}...<ref>    Land: git merge --ff-only <ref>")
+        print(fetched_label(branch))
+    if fetched:
+        base = app.store.metadata(instance)["base"]
+        print(f"Counted from {base[:12]}, where {instance} started; see devbox review.")
+
+
+def _review(app: App, *, id: str | None, branch: str | None, stat: bool) -> None:
+    instance, fetched = _fetched(app, id)
+    if not fetched:
+        return
+    # Without a name, skip the picker when only one branch has new work.
+    changed = [b for b in fetched if b.commits]
+    namespace = f"refs/devbox/{instance}/"
+    selected = (
+        changed[0]
+        if branch is None and len(changed) == 1
+        else match(
+            fetched, branch, "Branches", lambda b: b.ref.removeprefix(namespace), fetched_label
+        )
+    )
+    print(fetched_label(selected), flush=True)
+    app.review(instance, selected.ref, *(["--stat"] if stat else []))
 
 
 def _sync(app: App, *, id: str | None, branches: list[str]) -> None:
@@ -359,6 +387,13 @@ def parser() -> argparse.ArgumentParser:
     )
     command.set_defaults(func=_fetch)
     command.add_argument("id", nargs="?", help="Instance ID, including removed containers")
+    command = commands.add_parser(
+        "review", help="Fetch an instance's branches and show one's changes with git diff"
+    )
+    command.set_defaults(func=_review)
+    command.add_argument("id", nargs="?", help="Instance ID, including removed containers")
+    command.add_argument("branch", nargs="?", help="Branch (omit for a picker)")
+    command.add_argument("--stat", action="store_true", help="Summarize changed files")
     command = commands.add_parser(
         "sync", help="Deliver host branches to a running instance as host/<branch>"
     )

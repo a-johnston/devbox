@@ -401,6 +401,11 @@ class App:
             project.root, clone, f"refs/devbox/{id}/", metadata["base"], watched
         )
 
+    def review(self, id: str, ref: str, *options: str) -> None:
+        """Show a fetched branch's changes since the instance's starting point."""
+        metadata = self.store.metadata(id)
+        repository.show_diff(Path(metadata["root"]), metadata["base"], ref, *options)
+
     def sync(self, container: Container, branches: list[str]) -> list[str]:
         """Deliver host branches to a running instance as host/<branch>, for it to rebase onto.
 

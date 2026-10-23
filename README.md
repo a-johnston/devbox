@@ -37,6 +37,7 @@ devbox shell [id]                     # non-root inspection shell
 devbox stop [id ...]                  # stop processes, keep container disk
 devbox rm [id ...]                    # remove container and artifact volumes, keep history and clone
 devbox fetch [id]                     # fetch an instance's branches into refs/devbox/<id>/
+devbox review [id] [branch]           # fetch, pick a branch and show its diff
 devbox sessions                       # saved conversations, including removed containers
 devbox sync [id] [branch ...]         # deliver host branches to an instance as host/<branch>
 devbox resume [session-id]            # fork a conversation into a new container
@@ -90,9 +91,11 @@ changes are not copied. The clone has no remote: the agent commits to branches, 
 `devbox fetch` copies them into `refs/devbox/<id>/` in your repository, never into your
 branches. It reports new commits, branches rewritten since the last fetch, and changes to
 the manifest, Containerfile, build context and `[review] watch` paths (Git glob pathspecs).
-Watched paths always come from your manifest, not the clone's. Review and land with
-`git diff <base>...refs/devbox/<id>/<branch>` and `git merge --ff-only`. Do not run Git or
-project tooling inside a clone on the host: its config and hooks are agent-controlled.
+Watched paths always come from your manifest, not the clone's. `devbox review [id] [branch]`
+fetches, picks a branch (with fzf when more than one has new commits) and shows its changes
+since the instance started with `git diff` in your repository; `--stat` summarizes them.
+Land fetched branches however your project does. Do not run Git or project tooling inside
+a clone on the host: its config and hooks are agent-controlled.
 
 `devbox sync [id] [branch ...]` delivers host branches to a running instance as
 `host/<branch>` refs (default: the branch it started from), so the agent can rebase onto

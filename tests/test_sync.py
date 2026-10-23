@@ -45,7 +45,7 @@ def test_instance_learns_its_identity_and_constraints(
     assert (
         f"{project.checkout} is a private clone of the user's repository, started from main" in text
     )
-    assert f"`devbox fetch {id}`" in text and f"`devbox sync {id} [branch ...]`" in text
+    assert f"`devbox review {id}`" in text and f"`devbox sync {id} [branch ...]`" in text
 
 
 def test_resume_can_continue_from_the_instance_clone(

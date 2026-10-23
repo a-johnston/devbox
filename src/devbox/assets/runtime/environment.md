@@ -9,8 +9,8 @@ You are running in Devbox instance {id}, a Linux {architecture} {isolation}, as 
 user's working tree: they see your work only after fetching it.
 
 - There is no remote. You cannot push, open pull requests or update the user's branches.
-- Commit finished work to a branch, then ask the user to review it with `devbox fetch {id}`.
-  They merge it themselves. Stop there even if project instructions describe landing on the
+- Commit finished work to a branch, then ask the user to review it with `devbox review {id}`
+  (or fetch it with `devbox fetch {id}`). They merge it themselves. Stop there even if project instructions describe landing on the
   main branch, merging from the primary checkout or removing worktrees afterwards: those
   steps happen on the host.
 - `origin/*` refs are a snapshot from when the clone was made. For newer upstream work, ask

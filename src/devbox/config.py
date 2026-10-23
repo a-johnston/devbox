@@ -100,16 +100,15 @@ def init(directory: Path) -> dict[Path, bool]:
     """Write template project files at the checkout's top level; never overwrite."""
     directory = directory.expanduser().resolve()
     root = Path(git_output(directory, "rev-parse", "--show-toplevel") or directory).resolve()
+    # The example tree mirrors where its files go in a project.
+    example = ASSETS / "example"
     created = {}
-    for name, template in (
-        (".devbox.toml", "devbox.toml"),
-        (".devbox/Containerfile", "Containerfile"),
-    ):
-        path = root / name
-        path.parent.mkdir(exist_ok=True)
+    for template in sorted(p for p in example.rglob("*") if p.is_file()):
+        path = root / template.relative_to(example)
+        path.parent.mkdir(parents=True, exist_ok=True)
         try:
             with path.open("x") as stream:
-                stream.write((ASSETS / "init" / template).read_text())
+                stream.write(template.read_text())
             created[path] = True
         except FileExistsError:
             created[path] = False

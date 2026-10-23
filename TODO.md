@@ -1,0 +1,3 @@
+- Measure virtiofs speed in a real container, then simplify or drop the artifact volumes
+- Network hardening: public internet by default, local network only when configured
+- VCS interface built out from `devbox/repository.py`

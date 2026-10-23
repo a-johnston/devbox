@@ -6,6 +6,7 @@ import pytest
 
 from devbox.engine import MANAGED, RunSpec, host_platform, select_engine
 from devbox.engine.apple import AppleEngine, builder_memory
+from devbox.engine.engine import TERMINAL
 from devbox.engine.podman import PodmanEngine
 from devbox.errors import DevboxError
 
@@ -73,9 +74,16 @@ def test_stopped_service_message(monkeypatch: pytest.MonkeyPatch) -> None:
         AppleEngine().require_running()
 
 
-def test_connect_replaces_process_and_strips_outer_tmux(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("term", ["xterm-ghostty", None])
+def test_connect_replaces_process_and_strips_outer_tmux(
+    monkeypatch: pytest.MonkeyPatch, term: str | None
+) -> None:
     calls = []
     monkeypatch.setenv("TMUX", "/host/socket,1,0")
+    if term:
+        monkeypatch.setenv("TERM", term)
+    else:
+        monkeypatch.delenv("TERM", raising=False)
     monkeypatch.setattr("shutil.which", lambda name: "/bin/container")
     monkeypatch.setattr(os, "execvpe", lambda *a: calls.append(a))
     AppleEngine().connect("ours", "tmux", "attach-session", "-t", "agent")
@@ -87,13 +95,40 @@ def test_connect_replaces_process_and_strips_outer_tmux(monkeypatch: pytest.Monk
         "-it",
         "--user",
         "agent",
+        *(["--env", "TERM"] if term else []),
         "ours",
+        "sh",
+        "-c",
+        TERMINAL,
+        "sh",
         "tmux",
         "attach-session",
         "-t",
         "agent",
     ]
     assert "TMUX" not in env
+    assert env.get("TERM") == term
+
+
+@pytest.mark.parametrize(
+    ("term", "expected"),
+    [
+        ("xterm-256color", "xterm-256color"),
+        ("no-such-terminal", "xterm-256color"),
+        ("", "xterm-256color"),
+    ],
+)
+def test_terminal_falls_back_without_terminfo(term: str, expected: str) -> None:
+    if subprocess.run(["infocmp", "xterm-256color"], capture_output=True).returncode:
+        pytest.skip("no xterm-256color terminfo on this host")
+    result = subprocess.run(
+        ["sh", "-c", TERMINAL, "sh", "sh", "-c", 'printf %s "$TERM"'],
+        env={**os.environ, "TERM": term},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout == expected
 
 
 @pytest.mark.parametrize(

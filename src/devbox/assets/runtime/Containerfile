@@ -8,7 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && groupadd --gid 10001 agent \
     && useradd --create-home --uid 10001 --gid 10001 --shell /bin/bash agent \
     && git config --system safe.directory '*'
-ENV HOME=/home/agent TERM=tmux-256color
+# TERM comes from the host terminal on attach; tmux.conf sets the panes' own.
+ENV HOME=/home/agent
 WORKDIR /home/agent
 # The harness runs in tmux via exec; the container only needs to stay alive.
 ENTRYPOINT ["sleep", "infinity"]

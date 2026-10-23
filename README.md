@@ -46,6 +46,8 @@ devbox cleanup                       # confirm deletion of orphaned state and un
 
 `stop` and `rm` accept multiple IDs or unique prefixes; omit IDs for a multi-select picker.
 
+`attach` and `shell` pass your `TERM` through when the guest has its terminfo, otherwise
+`xterm-256color`; install a custom entry in the project image to keep it.
 **Ctrl-a, then d** detaches without stopping the harness. After `stop`, use `resume` to
 continue a conversation. `kill-all` removes all managed containers but keeps saved history.
 See `devbox --help` and `<command> --help` for options, including JSON output and shell completion.

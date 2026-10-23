@@ -40,6 +40,10 @@ def mount(source: Path | str, target: str, *, type: str = "bind") -> tuple[str, 
     return "--mount", f"type={type},source={source},target={target}"
 
 
+# Runs in the guest before an interactive command: keep TERM only if it has terminfo there.
+TERMINAL = 'infocmp "$TERM" >/dev/null 2>&1 || export TERM=xterm-256color; exec "$@"'
+
+
 @dataclass(frozen=True)
 class Container:
     id: str
@@ -239,9 +243,14 @@ class Engine(ABC):
         # Do not leak the outer tmux socket/name into the inner client.
         env = dict(os.environ)
         env.pop("TMUX", None)
-        flags = ["--workdir", cwd] if cwd else []
+        # Describe the host terminal, unless the guest lacks its terminfo (e.g. xterm-ghostty).
+        flags = ["--env", "TERM"] if env.get("TERM") else []
+        flags += ["--workdir", cwd] if cwd else []
         os.execvpe(
-            executable, [executable, "exec", "-it", "--user", "agent", *flags, id, *args], env
+            executable,
+            [executable, "exec", "-it", "--user", "agent", *flags, id, "sh", "-c", TERMINAL, "sh"]
+            + list(args),
+            env,
         )
 
     def stop(self, id: str) -> None:

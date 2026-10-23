@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from devbox.engine import MANAGED, RunSpec
+from devbox.engine.engine import TERMINAL
 from devbox.engine.podman import AGENT_USERNS, PodmanEngine
 from devbox.errors import DevboxError
 
@@ -292,6 +293,7 @@ def test_podman_exec_passes_secret_names_only(monkeypatch: pytest.MonkeyPatch) -
 def test_podman_connect_strips_outer_tmux(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = []
     monkeypatch.setenv("TMUX", "/host/socket,1,0")
+    monkeypatch.setenv("TERM", "xterm-256color")
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(os, "execvpe", lambda *a: calls.append(a))
     PodmanEngine().connect("devbox-a", "/bin/bash", cwd="/src")
@@ -303,9 +305,15 @@ def test_podman_connect_strips_outer_tmux(monkeypatch: pytest.MonkeyPatch) -> No
         "-it",
         "--user",
         "agent",
+        "--env",
+        "TERM",
         "--workdir",
         "/src",
         "devbox-a",
+        "sh",
+        "-c",
+        TERMINAL,
+        "sh",
         "/bin/bash",
     ]
     assert "TMUX" not in env

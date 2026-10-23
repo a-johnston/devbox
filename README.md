@@ -160,7 +160,8 @@ executable configuration, and review changes to them that `fetch` flags.
 ## Development
 
 Use Python 3.15 for development; maintain Python 3.12 compatibility.
-See [AGENTS.md](AGENTS.md) for the worktree and landing workflow.
+See [AGENTS.md](AGENTS.md) for the worktree and landing workflow, and
+[adding a container engine](src/devbox/engine/README.md) for new backends.
 
 ```sh
 uv sync --locked

@@ -30,7 +30,7 @@ def test_secrets_reach_only_the_harness_process(
     assert "s3cret" not in str(engine.builds) + str(engine.runs)
     assert all("s3cret" not in str(request.args) for request in engine.execs)
     home = app.store.directory(id)
-    assert not any("s3cret" in p.read_text() for p in home.rglob("*") if p.is_file())
+    assert not any(b"s3cret" in p.read_bytes() for p in home.rglob("*") if p.is_file())
 
 
 def test_no_config_skips_secrets(

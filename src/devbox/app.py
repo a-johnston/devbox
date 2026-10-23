@@ -9,9 +9,10 @@ import re
 import shutil
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from devbox.config import ASSETS, Harness, Project, git_output, relative
+from devbox.config import ASSETS, Harness, Project, git, git_output, relative
 from devbox.engine.engine import (
     IMAGE_KIND,
     IMAGE_SCHEMA,
@@ -50,6 +51,46 @@ def git_identity(directory: Path) -> dict[str, str]:
         if value := git_output(directory, "config", "--get", key):
             env[f"GIT_AUTHOR_{name}"] = env[f"GIT_COMMITTER_{name}"] = value
     return env
+
+
+def clone(project: Project, target: Path) -> tuple[str | None, str]:
+    """Copy the committed checkout; the guest never writes the host's working tree or .git."""
+    head = git_output(project.checkout, "rev-parse", "--verify", "HEAD^{commit}")
+    if head is None:
+        raise DevboxError(f"{project.checkout} must be a Git repository with a commit")
+    branch = git_output(project.checkout, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if git_output(project.checkout, "status", "--porcelain", "--untracked-files=no"):
+        print(f"Uncommitted changes in {project.checkout} are not copied.", flush=True)
+    # Transfer reachable objects only: no hardlinks a guest running as the host user could
+    # rewrite, and no unreachable objects (dropped stashes, other instances' fetched work).
+    # Cloning the checkout, not the primary, transfers its HEAD even when it is detached.
+    git(
+        target.parent,
+        "clone",
+        "--quiet",
+        "--no-local",
+        "--no-checkout",
+        str(project.checkout),
+        str(target),
+    )
+    # Origin would name the guest's own mount path; its refs stay as a snapshot of the host.
+    git(target, "config", "--remove-section", "remote.origin")
+    git(target, "checkout", "--quiet", *(("-B", branch) if branch else ("--detach",)), head)
+    return branch, head
+
+
+@dataclass(frozen=True)
+class Fetched:
+    ref: str
+    commits: int
+    rewritten: bool
+    # Changed image inputs and manifest-declared paths, relative to the repository root.
+    watched: tuple[str, ...]
+
+
+def refs(repository: Path, namespace: str) -> dict[str, str]:
+    output = git(repository, "for-each-ref", "--format=%(refname) %(objectname)", namespace)
+    return dict(line.split(" ", 1) for line in output.splitlines())
 
 
 def environment_secrets(harness: Harness) -> dict[str, str]:
@@ -209,6 +250,8 @@ class App:
         if secrets:
             print("Forwarding credentials from environment: " + ", ".join(secrets), flush=True)
         id, directory = self.store.create()
+        repository = directory / "repo"
+        branch, base = clone(project, repository)
         home = directory / "home"
         (home / harness.session_dir).mkdir(parents=True, exist_ok=True)
         if not no_config:
@@ -241,8 +284,10 @@ class App:
         architecture = host_platform().removeprefix("linux/").upper()
         (home / ".devbox/environment.md").write_text(
             f"You are running in devbox instance {id}, a Linux {architecture} {self.engine.isolation}, as a non-root user.\n"
-            f"The whole host checkout {project.root} is writable at that same path, including .git.\n"
-            "Follow the project's worktree and landing policies; this is not a branch protection boundary.\n"
+            f"{project.checkout} is a private clone of the host checkout"
+            f" at {(branch or base[:12])}, not the host's working tree.\n"
+            "The host has no remote to push to: commit work to branches; the user fetches and lands them.\n"
+            "Uncommitted changes are lost when the user cleans up this instance.\n"
             "Declared build/import outputs are guest-local and will disappear if the container is removed.\n"
             "Any previous session's processes, temporary files and OS assumptions do not carry over.\n"
             "There is no host shell bridge. Do not assume host tools or the host editor are available.\n"
@@ -252,6 +297,9 @@ class App:
             "id": id,
             "project": str(project.cwd),
             "root": str(project.root),
+            "checkout": str(project.checkout),
+            "branch": branch,
+            "base": base,
             "harness": harness.name,
             "config": str(project.config),
             "session_dir": harness.session_dir,
@@ -260,11 +308,11 @@ class App:
             "resumed_from": session.id if session else None,
         }
         (directory / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
-        artifacts = [str(project.root / artifact) for artifact in project.artifacts]
-        for artifact in artifacts:
+        artifacts = [str(project.checkout / artifact) for artifact in project.artifacts]
+        for artifact in project.artifacts:
             # Engines create missing mount points; rootless Podman would leave them owned by
-            # a subordinate UID, blocking host builds there.
-            Path(artifact).mkdir(parents=True, exist_ok=True)
+            # a subordinate UID, which the host user could not remove.
+            (repository / artifact).mkdir(parents=True, exist_ok=True)
         spec = RunSpec(
             name=id,
             image=image,
@@ -275,7 +323,7 @@ class App:
                 "dev.devbox.project": str(project.root),
                 "dev.devbox.harness": harness.name,
             },
-            binds=((str(project.root), str(project.root)), (str(home), "/home/agent")),
+            binds=((str(repository), str(project.checkout)), (str(home), "/home/agent")),
             volumes=tuple((f"{id}-{i}", target) for i, target in enumerate(artifacts)),
             env={**env, **git_identity(project.cwd)},
         )
@@ -301,7 +349,7 @@ class App:
                     "-c",
                     'cd "$1" && shift && git ls-files -z -- "$@" | xargs -0 -r git checkout --',
                     "sh",
-                    str(project.root),
+                    str(project.checkout),
                     *project.artifacts,
                 )
             self.engine.exec(
@@ -350,6 +398,66 @@ class App:
             raise DevboxError(f"{container.id} is stopped")
         metadata = self.store.metadata(container.id)
         self.engine.connect(container.id, "/bin/bash", cwd=metadata["project"])
+
+    def fetch(self, id: str) -> list[Fetched]:
+        """Copy an instance's branches into the host repository under refs/devbox/<id>/.
+
+        Git only runs in the host repository; the clone's config applies solely to the
+        upload-pack side, which ignores the settings that could run commands.
+        """
+        metadata = self.store.metadata(id)
+        clone = self.store.directory(id) / "repo/.git"
+        if clone.is_symlink() or not clone.is_dir():
+            raise DevboxError(f"{id} has no repository clone to fetch")
+        # The host's manifest, not the clone's, decides which changes need attention.
+        project = Project.discover(Path(metadata["config"]).parent)
+        # Repository-relative paths: the same in every worktree of the host repository.
+        watched = [
+            f":(literal){path.relative_to(project.checkout)}"
+            for path in (project.config.resolve(), project.containerfile, project.context)
+            if path.is_relative_to(project.checkout)
+        ] + [f":(glob){pattern}" for pattern in project.watch]
+        namespace = f"refs/devbox/{id}/"
+        before = refs(project.root, namespace)
+        git(
+            project.root,
+            "-c",
+            "transfer.fsckObjects=true",
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--prune",
+            "--no-recurse-submodules",
+            "--no-write-fetch-head",
+            str(clone),
+            f"+refs/heads/*:{namespace}*",
+        )
+        base = metadata["base"]
+        fetched = []
+        for ref, new in refs(project.root, namespace).items():
+            old = before.get(ref)
+            fetched.append(
+                Fetched(
+                    ref,
+                    int(git(project.root, "rev-list", "--count", f"{base}..{new}")),
+                    # Rewritten since the last fetch: an earlier review no longer applies.
+                    old is not None
+                    and old != new
+                    and git_output(project.root, "merge-base", "--is-ancestor", old, new) is None,
+                    tuple(
+                        git(
+                            project.root,
+                            "diff",
+                            "--name-only",
+                            "-z",
+                            f"{base}...{new}",
+                            "--",
+                            *watched,
+                        ).split("\0")[:-1]
+                    ),
+                )
+            )
+        return fetched
 
     def orphaned_instances(self) -> list[Instance]:
         self.engine.require_running()

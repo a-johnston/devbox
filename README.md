@@ -2,8 +2,9 @@
 
 Run Pi or Claude Code in disposable Linux environments: a VM per container with
 [Apple's `container`](https://github.com/apple/container) on macOS, or rootless
-[Podman](https://podman.io) containers on Linux. Your checkout is writable at its original
-path; the rest of your home stays on the host. Conversations survive container removal.
+[Podman](https://podman.io) containers on Linux. Each instance works in its own clone of
+your checkout, mounted at the original path; your working tree, `.git` and the rest of your
+home stay on the host. You fetch its branches for review. Conversations survive container removal.
 
 ## Install
 
@@ -33,7 +34,8 @@ devbox ls                             # running and stopped managed containers
 devbox attach [id]                    # omit ID for a picker; unique prefixes work
 devbox shell [id]                     # non-root inspection shell
 devbox stop [id ...]                  # stop processes, keep container disk
-devbox rm [id ...]                    # remove container and artifact volumes, keep history
+devbox rm [id ...]                    # remove container and artifact volumes, keep history and clone
+devbox fetch [id]                     # fetch an instance's branches into refs/devbox/<id>/
 devbox sessions                       # saved conversations, including removed containers
 devbox resume [session-id]            # fork a conversation into a new container
 devbox build pi                       # rebuild the project/runtime/harness image
@@ -62,21 +64,33 @@ cpus = 4
 memory = "8G"
 
 [workspace]
-artifacts = [".worktrees", "build"]   # guest-local volumes hide these host directories
+artifacts = [".worktrees", "build"]   # guest-local volumes over these clone directories
 
 [environment]
 MY_SETTING = "value"
+
+[review]
+watch = ["prek.toml"]                 # flagged by fetch, in addition to the image inputs
 ```
 
 The project Containerfile installs dependencies on a Debian/Ubuntu (apt, glibc) base;
 Devbox adds the terminal runtime and harness. Manifests are discovered upwards from
-`--project`, with a fallback to the primary checkout for in-repo Git worktrees. The whole
-primary checkout is mounted.
+`--project`, with a fallback to the primary checkout for in-repo Git worktrees. The image
+context and Containerfile must be inside the project and outside `.git`.
+
+Each instance clones the committed `HEAD` of the checkout you launch from (a worktree or
+the primary) into its saved state, and mounts the clone at the checkout's path. Uncommitted
+changes are not copied. The clone has no remote: the agent commits to branches, and
+`devbox fetch` copies them into `refs/devbox/<id>/` in your repository, never into your
+branches. It reports new commits, branches rewritten since the last fetch, and changes to
+the manifest, Containerfile, build context and `[review] watch` paths (Git glob pathspecs).
+Watched paths always come from your manifest, not the clone's. Review and land with
+`git diff <base>...refs/devbox/<id>/<branch>` and `git merge --ff-only`. Do not run Git or
+project tooling inside a clone on the host: its config and hooks are agent-controlled.
 
 Artifact volumes survive `stop` but are deleted by `rm`. Tracked files under artifact paths
-are restored into the volumes. If `.worktrees` is an artifact, launch from the primary
-checkout and create worktrees inside the guest. **Commit before removing the container:**
-uncommitted files in those worktrees are lost. Run `git worktree prune` afterwards.
+are restored into the volumes. Commits in guest-created worktrees under an artifact path
+live in the clone, but **uncommitted files there are lost on `rm`**.
 
 The first launch builds an image; subsequent launches reuse it. Run `devbox build <harness>`
 after changing Containerfiles, build contexts or Devbox. Harness versions follow the host
@@ -102,7 +116,7 @@ as examples for `profile.toml`, `Containerfile` and optional host-side `hooks.py
 
 ## Saved state and safety
 
-Homes, copied config and conversations live in `$XDG_DATA_HOME/devbox/<backend>/instances/<id>/`
+Homes, repository clones, copied config and conversations live in `$XDG_DATA_HOME/devbox/<backend>/instances/<id>/`
 (default base `~/.local/share/devbox`; override the base with `--state-dir`). The backend is
 `apple` or `podman`; their state is never mixed. Removing a container keeps this state.
 `resume` snapshots and forks a conversation so the original never has two writers.
@@ -113,16 +127,17 @@ into `<base>/apple/` or `<base>/podman/` according to the engine that created it
 merge or overwrite an existing destination; split legacy state by backend if necessary.
 
 `cleanup` previews orphaned saved instances and unused, ownership-labelled Devbox images,
-then asks for confirmation. **Deleting saved instances permanently deletes their conversations
-and copied credentials.** Use `cleanup --select` to choose instances with fzf. Running and
+then asks for confirmation. **Deleting saved instances permanently deletes their conversations,
+unfetched clones and copied credentials.** Use `cleanup --select` to choose instances with fzf. Running and
 stopped containers protect state; retained instances also protect their images. Cleanup does
 not remove containers, volumes, unrelated images or shared build caches.
 
 On macOS each container is a VM; Linux rootless containers share the host kernel. Isolation
-protects unmounted host files, **not the repository**: the harness can rewrite Git history,
-modify scripts you later run, use provided credentials and access the network. There is no
+protects unmounted host files and your repository: the harness writes only its clone, and
+fetched work reaches your branches only when you merge it. It can still use provided
+credentials and access the network, and code you merge runs when you run it. There is no
 host shell/socket/SSH-agent bridge. Trust manifests, Containerfiles and harness profiles as
-executable configuration.
+executable configuration, and review changes to them that `fetch` flags.
 
 ## Development
 

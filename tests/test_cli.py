@@ -76,6 +76,7 @@ def test_preparation_options(action: str) -> None:
         (["sessions"], cli._sessions, {"json_output"}),
         (["resume"], cli._resume, {"session", "project", "detach", "no_config"}),
         (["kill-all"], cli._kill_all, {"yes"}),
+        (["fetch"], cli._fetch, {"id"}),
         (["cleanup"], cli.cleanup, {"select"}),
         (["completion", "bash"], cli._completion, {"shell"}),
     ],
@@ -293,6 +294,24 @@ def test_kill_all_yes_dispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     dispatch(parser().parse_args(["kill-all", "--yes"]), App(engine, Store(tmp_path)))
     assert engine.removed == ["devbox-aabb"]
+
+
+def test_fetch_dispatch_prints_flagged_refs(
+    project: Project, harness: Harness, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    app = App(FakeEngine(), Store(tmp_path / "state"))
+    id = app.new(project, harness, no_config=True)
+    clone = app.store.directory(id) / "repo"
+    git = ["git", "-C", str(clone), "-c", "user.name=T", "-c", "user.email=t@e.invalid"]
+    subprocess.run([*git, "checkout", "-q", "-b", "feature"], check=True)
+    (clone / ".devbox/Containerfile").write_text("FROM evil\n")
+    subprocess.run([*git, "commit", "-qam", "change"], check=True)
+    capsys.readouterr()
+    dispatch(parser().parse_args(["fetch", id.removeprefix("devbox-")[:6]]), app)
+    out = capsys.readouterr().out
+    assert f"refs/devbox/{id}/feature  1 new commit  CHANGES .devbox/Containerfile" in out
+    assert f"refs/devbox/{id}/main  0 new commits\n" in out
+    assert "git merge --ff-only <ref>" in out
 
 
 def test_unknown_command_fails(capsys: pytest.CaptureFixture[str]) -> None:

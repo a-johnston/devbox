@@ -18,6 +18,15 @@ def test_self_hosting_manifest(tmp_path: Path) -> None:
     assert project.artifacts == (".venv", ".pytest_cache", ".ruff_cache", "dist", ".worktrees")
     assert project.env == {"UV_LINK_MODE": "copy", "PYTHONDONTWRITEBYTECODE": "1"}
     assert (project.cpus, project.memory) == (4, "8G")
+    assert project.watch == ("prek.toml",)
+
+
+@pytest.mark.parametrize("watch", ['"prek.toml"', '["/etc/x"]', '["../x"]', '[""]', "[1]"])
+def test_invalid_review_watch_rejected(repository: Path, watch: str) -> None:
+    with (repository / ".devbox.toml").open("a") as stream:
+        stream.write(f"\n[review]\nwatch = {watch}\n")
+    with pytest.raises(DevboxError):
+        Project.discover(repository)
 
 
 def test_discovery_from_subdirectory(repository: Path) -> None:
@@ -58,7 +67,7 @@ def test_discovery_ignores_inherited_git_hook_scope(
     assert Project.discover(tree).root == repository
 
 
-def test_worktree_hidden_by_artifact_rejected(repository: Path) -> None:
+def test_worktree_is_its_own_checkout_beneath_artifacts(repository: Path) -> None:
     config = repository / ".devbox.toml"
     config.write_text(config.read_text().replace('".godot", "tests/bin"', '".godot", ".worktrees"'))
     tree = repository / ".worktrees/feature"
@@ -68,8 +77,10 @@ def test_worktree_hidden_by_artifact_rejected(repository: Path) -> None:
         capture_output=True,
     )
     (tree / ".devbox.toml").unlink()
+    assert Project.discover(tree).checkout == tree
+    (tree / ".godot/sub").mkdir(parents=True)
     with pytest.raises(DevboxError, match="hidden"):
-        Project.discover(tree)
+        Project.discover(tree / ".godot/sub")
 
 
 def test_external_worktree_rejected(repository: Path, tmp_path: Path) -> None:

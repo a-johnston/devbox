@@ -10,9 +10,13 @@ cpus = 4
 memory = "8G"
 
 [workspace]
-# Container-local volumes over these paths. .worktrees keeps guest-created worktrees
-# (and their outputs) in the VM: commit before `devbox rm`.
+# Container-local volumes over these paths. Guest-created worktree files stay in the VM:
+# their commits are in the clone, but uncommitted files are lost on `devbox rm`.
 artifacts = [".venv", ".pytest_cache", ".ruff_cache", "dist", ".worktrees"]
+
+[review]
+# Hooks that run on the host before landing; fetch flags branches that change them.
+watch = ["prek.toml"]
 
 [environment]
 UV_LINK_MODE = "copy"                   # uv cache and .venv are on different filesystems

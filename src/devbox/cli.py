@@ -115,7 +115,7 @@ def cleanup(app: App, *, select: bool) -> None:
         print(f"Orphaned instances in {app.store.instances}:")
         for instance in instances:
             print(f"  {label(instance)}")
-        print("This permanently deletes instance files.")
+        print("This permanently deletes instance files, including unfetched repository clones.")
     if images:
         print("Unused Devbox image references:")
         for image in images:
@@ -211,7 +211,7 @@ def _stop(app: App, *, ids: list[str]) -> None:
 def _rm(app: App, *, ids: list[str]) -> None:
     for container in _selected_containers(app, ids, running=False):
         app.engine.remove(container.id)
-        print(f"Removed {container.id}. Saved conversations retained.")
+        print(f"Removed {container.id}. Saved conversations and repository clone retained.")
 
 
 def _ls(app: App, *, json_output: bool) -> None:
@@ -246,6 +246,32 @@ def _resume(
     )
     if not detach:
         app.attach(next(c for c in app.engine.containers() if c.id == id))
+
+
+def printable(value: str) -> str:
+    """Branch and file names come from the guest: never let them drive the terminal."""
+    return "".join(c if c.isprintable() else repr(c)[1:-1] for c in value)
+
+
+def _fetch(app: App, *, id: str | None) -> None:
+    def label(instance: str) -> str:
+        metadata = app.store.metadata(instance)
+        return f"{instance}  {metadata.get('harness')}  {metadata.get('project')}"
+
+    instance = match(app.store.clones(), id, "Instances", lambda i: i, label)
+    fetched = app.fetch(instance)
+    if not fetched:
+        print(f"{instance} has no branches.")
+        return
+    for branch in fetched:
+        notes = [f"{branch.commits} new commit{'' if branch.commits == 1 else 's'}"]
+        if branch.rewritten:
+            notes.append("REWRITTEN since the last fetch")
+        if branch.watched:
+            notes.append("CHANGES " + ", ".join(printable(path) for path in branch.watched))
+        print(f"{printable(branch.ref)}  {'  '.join(notes)}")
+    base = app.store.metadata(instance)["base"]
+    print(f"Review: git diff {base[:12]}...<ref>    Land: git merge --ff-only <ref>")
 
 
 def _kill_all(app: App, *, yes: bool) -> None:
@@ -293,6 +319,11 @@ def parser() -> argparse.ArgumentParser:
         command = commands.add_parser(name)
         command.set_defaults(func=func)
         command.add_argument("--json", dest="json_output", action="store_true")
+    command = commands.add_parser(
+        "fetch", help="Fetch an instance's branches into refs/devbox/<id>/ for review"
+    )
+    command.set_defaults(func=_fetch)
+    command.add_argument("id", nargs="?", help="Instance ID, including removed containers")
     command = commands.add_parser("resume", help="Fork a saved conversation into a new container")
     command.set_defaults(func=_resume)
     command.add_argument("session", nargs="?")

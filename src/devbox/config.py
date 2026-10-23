@@ -69,8 +69,8 @@ def load_toml(path: Path) -> dict[str, Any]:
         raise DevboxError(f"Cannot read {path}: {exc}") from exc
 
 
-def git_output(directory: Path, *args: str) -> str | None:
-    result = subprocess.run(
+def _git(directory: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         ["git", "-C", str(directory), *args],
         capture_output=True,
         text=True,
@@ -78,7 +78,18 @@ def git_output(directory: Path, *args: str) -> str | None:
         # Variables exported by Git hooks (GIT_DIR, ...) must not override --project.
         env={key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
     )
+
+
+def git_output(directory: Path, *args: str) -> str | None:
+    result = _git(directory, *args)
     return result.stdout.strip() if result.returncode == 0 else None
+
+
+def git(directory: Path, *args: str) -> str:
+    result = _git(directory, *args)
+    if result.returncode:
+        raise DevboxError(f"git {args[0]} failed in {directory}: {result.stderr.strip()}")
+    return result.stdout
 
 
 @dataclass(frozen=True)
@@ -86,12 +97,16 @@ class Project:
     config: Path
     root: Path
     cwd: Path
+    # The top level of cwd's worktree: what each instance clones and mounts in its place.
+    checkout: Path
     containerfile: Path
     context: Path
     artifacts: tuple[str, ...]
     env: dict[str, str]
     cpus: int = 4
     memory: str = "8G"
+    # Paths that fetch flags when an instance's branches change them, beyond the image inputs.
+    watch: tuple[str, ...] = ()
 
     @classmethod
     def discover(cls, directory: Path) -> Project:
@@ -117,6 +132,7 @@ class Project:
         image = table(data.get("image", {}), "image")
         workspace = table(data.get("workspace", {}), "workspace")
         container = table(data.get("container", {}), "container")
+        review = table(data.get("review", {}), "review")
         context = (config.parent / text(image.get("context", "."), "image.context")).resolve()
         containerfile = (
             config.parent / text(image.get("containerfile", "Containerfile"), "image.containerfile")
@@ -131,7 +147,9 @@ class Project:
         artifacts = tuple(relative(v) for v in strings(workspace.get("artifacts", []), "artifacts"))
         if overlapping(artifacts):
             raise DevboxError("Artifact directories must not overlap")
-        if any(cwd.is_relative_to(root / artifact) for artifact in artifacts):
+        toplevel = git_output(cwd, "rev-parse", "--show-toplevel")
+        checkout = Path(toplevel).resolve() if toplevel else root
+        if any(cwd.is_relative_to(checkout / artifact) for artifact in artifacts):
             raise DevboxError(f"{cwd} is hidden by a guest-local artifact directory in the guest")
         cpus = container.get("cpus", 4)
         if type(cpus) is not int or cpus < 1:
@@ -140,12 +158,14 @@ class Project:
             config,
             root,
             cwd,
+            checkout,
             containerfile,
             context,
             artifacts,
             environment(data.get("environment", {})),
             cpus,
             size(container.get("memory", "8G"), "container.memory"),
+            tuple(relative(v) for v in strings(review.get("watch", []), "review.watch")),
         )
 
 

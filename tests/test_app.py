@@ -21,8 +21,9 @@ def test_new_composes_images_and_mounts_only_selected_paths(
     id = app.new(project, harness, no_config=True)
     assert len(engine.builds) == 3
     run = engine.runs[0]
+    clone = app.store.directory(id) / "repo"
     assert run.binds == (
-        (str(project.root), str(project.root)),
+        (str(clone), str(project.checkout)),
         (str(app.store.directory(id) / "home"), "/home/agent"),
     )
     assert run.volumes == tuple(
@@ -57,6 +58,61 @@ def test_new_composes_images_and_mounts_only_selected_paths(
     home = app.store.directory(id) / "home"
     assert (home / ".pi/agent/npm").readlink() == Path("/opt/devbox/prepared/.pi/agent/npm")
     assert "prefix C-a" in (home / ".devbox/tmux.conf").read_text()
+
+
+def git(directory: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(directory), "-c", "user.name=T", "-c", "user.email=t@e.invalid", *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def test_clone_copies_committed_branch_without_host_links(
+    project: Project, harness: Harness, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (project.root / ".devbox.toml").write_text("dirty")
+    app = App(FakeEngine(), Store(tmp_path / "state"))
+    id = app.new(project, harness, no_config=True)
+    clone = app.store.directory(id) / "repo"
+    assert "Uncommitted changes" in capsys.readouterr().out
+    assert git(clone, "symbolic-ref", "HEAD") == "refs/heads/main"
+    assert git(clone, "rev-parse", "HEAD") == git(project.root, "rev-parse", "HEAD")
+    assert "dirty" not in (clone / ".devbox.toml").read_text()
+    assert git(clone, "remote") == ""
+    assert git(clone, "rev-parse", "refs/remotes/origin/main")
+    assert not (clone / ".git/objects/info/alternates").exists()
+    packs = [p for p in (clone / ".git/objects").rglob("*") if p.is_file()]
+    assert packs and all(p.stat().st_nlink == 1 for p in packs)
+    metadata = app.store.metadata(id)
+    assert (metadata["branch"], metadata["base"]) == ("main", git(clone, "rev-parse", "HEAD"))
+
+
+def test_clone_follows_a_detached_worktree(
+    project: Project, harness: Harness, tmp_path: Path
+) -> None:
+    tree = project.root / ".worktrees/loose"
+    git(project.root, "worktree", "add", "--detach", str(tree))
+    git(tree, "commit", "--allow-empty", "-m", "unreachable from branches")
+    engine = FakeEngine()
+    app = App(engine, Store(tmp_path / "state"))
+    id = app.new(Project.discover(tree), harness, no_config=True)
+    clone = app.store.directory(id) / "repo"
+    assert git(clone, "rev-parse", "HEAD") == git(tree, "rev-parse", "HEAD")
+    assert app.store.metadata(id)["branch"] is None
+    assert engine.runs[0].binds[0] == (str(clone), str(tree))
+
+
+def test_non_repository_projects_are_rejected(
+    tmp_path: Path, harness: Harness, project: Project
+) -> None:
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    with pytest.raises(DevboxError, match="Git repository"):
+        App(FakeEngine(), Store(tmp_path / "state")).new(
+            replace(project, root=plain, cwd=plain, checkout=plain), harness, no_config=True
+        )
 
 
 def test_git_identity_is_passed_as_environment(
@@ -182,13 +238,14 @@ def test_describes_the_engine_isolation(
 def test_missing_artifact_mount_points_are_created_by_the_host_user(
     project: Project, harness: Harness, tmp_path: Path
 ) -> None:
-    assert not (project.root / "tests/bin").exists()
     created = []
 
     class Recording(FakeEngine):
         def run(self, spec: RunSpec) -> None:
-            created.extend((project.root / a).is_dir() for a in project.artifacts)
+            clone = Path(spec.binds[0][0])
+            created.extend((clone / a).is_dir() for a in project.artifacts)
             super().run(spec)
 
     App(Recording(), Store(tmp_path / "state")).new(project, harness, no_config=True)
     assert created == [True] * len(project.artifacts)
+    assert not (project.root / "tests/bin").exists()

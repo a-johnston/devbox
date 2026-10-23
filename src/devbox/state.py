@@ -87,6 +87,16 @@ class Store:
             )
         ]
 
+    def clones(self) -> list[str]:
+        """Instances whose repository clone can be fetched, including removed containers."""
+        return [
+            directory.name
+            for directory in self._instance_directories()
+            if (directory / "metadata.json").is_file()
+            and not (directory / "repo/.git").is_symlink()
+            and (directory / "repo/.git").is_dir()
+        ]
+
     def orphaned(self, container_ids: set[str]) -> list[Instance]:
         return [
             Instance(directory.name, disk_usage(directory))

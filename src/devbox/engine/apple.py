@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from devbox.config import size
-from devbox.engine import MANAGED, Container, Engine, Image, image_labels, image_strings
+from devbox.engine.engine import MANAGED, Container, Engine, Image, image_labels, image_strings
 from devbox.errors import DevboxError
 
 

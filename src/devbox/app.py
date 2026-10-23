@@ -12,7 +12,7 @@ import time
 from pathlib import Path, PurePosixPath
 
 from devbox.config import ASSETS, Harness, Project, git_output, relative
-from devbox.engine import (
+from devbox.engine.engine import (
     IMAGE_KIND,
     IMAGE_SCHEMA,
     IMAGE_STORE,

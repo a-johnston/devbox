@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from devbox.apple import AppleEngine
 from devbox.engine import MANAGED
+from devbox.engine.apple import AppleEngine
 from devbox.errors import DevboxError
 
 

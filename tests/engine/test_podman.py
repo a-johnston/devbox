@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from devbox.engine import MANAGED, RunSpec
+from devbox.engine.podman import AGENT_USERNS, PodmanEngine
 from devbox.errors import DevboxError
-from devbox.podman import AGENT_USERNS, PodmanEngine
 
 
 class Recorder:

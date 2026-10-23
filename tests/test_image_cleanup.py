@@ -6,12 +6,12 @@ from pathlib import Path
 import pytest
 
 from devbox.app import App
-from devbox.apple import AppleEngine
 from devbox.cli import dispatch, parser
 from devbox.config import Harness, Project
 from devbox.engine import IMAGE_KIND, IMAGE_SCHEMA, IMAGE_STORE, MANAGED, Image, image_labels
+from devbox.engine.apple import AppleEngine
+from devbox.engine.podman import PodmanEngine
 from devbox.errors import DevboxError
-from devbox.podman import PodmanEngine
 from devbox.state import Store
 from tests.fakes import FakeEngine
 from tests.test_cleanup import InventoryEngine, saved_instance

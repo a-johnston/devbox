@@ -250,8 +250,8 @@ def backend_name() -> str:
 
 
 def select_engine() -> Engine:
-    from devbox.apple import AppleEngine
-    from devbox.podman import PodmanEngine
+    from devbox.engine.apple import AppleEngine
+    from devbox.engine.podman import PodmanEngine
 
     engines: dict[str, type[Engine]] = {"apple": AppleEngine, "podman": PodmanEngine}
     return engines[backend_name()]()

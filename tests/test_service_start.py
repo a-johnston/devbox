@@ -4,9 +4,9 @@ import subprocess
 
 import pytest
 
-from devbox.apple import AppleEngine
+from devbox.engine.apple import AppleEngine
+from devbox.engine.podman import PodmanEngine
 from devbox.errors import DevboxError
-from devbox.podman import PodmanEngine
 
 
 @pytest.fixture

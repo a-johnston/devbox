@@ -10,7 +10,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from devbox.engine import MANAGED, Container, Engine, Image, RunSpec, image_labels, image_strings
+from devbox.engine.engine import (
+    MANAGED,
+    Container,
+    Engine,
+    Image,
+    RunSpec,
+    image_labels,
+    image_strings,
+)
 from devbox.errors import DevboxError
 
 INSTANCE = "dev.devbox.instance"

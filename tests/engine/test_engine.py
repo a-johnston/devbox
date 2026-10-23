@@ -4,10 +4,10 @@ import subprocess
 
 import pytest
 
-from devbox.apple import AppleEngine, builder_memory
 from devbox.engine import MANAGED, RunSpec, host_platform, select_engine
+from devbox.engine.apple import AppleEngine, builder_memory
+from devbox.engine.podman import PodmanEngine
 from devbox.errors import DevboxError
-from devbox.podman import PodmanEngine
 
 
 def test_ownership_filter(monkeypatch: pytest.MonkeyPatch) -> None:

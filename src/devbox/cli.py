@@ -18,7 +18,7 @@ import argcomplete
 
 from devbox import __version__
 from devbox.app import App
-from devbox.config import Harness, Project, harnesses
+from devbox.config import Harness, Project, harnesses, init
 from devbox.engine import Container
 from devbox.errors import DevboxError
 from devbox.state import Instance, Session, Store
@@ -315,6 +315,16 @@ def _completion(*, shell: str) -> None:
     print(argcomplete.shellcode(["devbox"], shell=shell))
 
 
+def _init(*, project: Path) -> None:
+    for path, created in init(project).items():
+        print(f"{'Created' if created else 'Kept existing'} {path}")
+    print("Add project dependencies to the Containerfile, then run devbox new.")
+
+
+# Handlers that need neither an engine nor saved state.
+STANDALONE = (_completion, _init)
+
+
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Containerized coding harnesses")
     p.add_argument("--version", action="version", version=__version__)
@@ -385,6 +395,11 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Choose instances with fzf before confirming",
     )
+    command = commands.add_parser(
+        "init", help="Create a template .devbox.toml and .devbox/Containerfile if missing"
+    )
+    command.set_defaults(func=_init)
+    command.add_argument("--project", type=Path, default=Path("."))
     command = commands.add_parser("completion", help="Print shell completion setup")
     command.set_defaults(func=_completion)
     command.add_argument("shell", choices=("bash", "zsh", "fish"))
@@ -402,7 +417,7 @@ def get_harness(name: str | None) -> Harness:
 
 def dispatch(args: argparse.Namespace, app: App | None = None) -> None:
     state_dir = args.__dict__.pop("state_dir")
-    if args.func is not _completion:
+    if args.func not in STANDALONE:
         args.app = app if app is not None else App(store=Store(state_dir))
     args.__dict__.pop("func")(**args.__dict__)
 

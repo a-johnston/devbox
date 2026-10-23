@@ -1,0 +1,23 @@
+# Devbox project manifest. Paths are relative to this file.
+version = 1
+
+[image]
+containerfile = ".devbox/Containerfile"
+# Everything in the context is sent to the build: keep source, .git and secrets out of it.
+context = ".devbox"
+
+# [container]
+# cpus = 4
+# memory = "8G"                       # a K, M or G suffix
+
+# [workspace]
+# Container-local volumes over these paths in the instance's clone; lost on `devbox rm`.
+# artifacts = [".venv", "node_modules", "build"]
+
+# [environment]
+# Plain values for the guest. Never put secrets here.
+# MY_SETTING = "value"
+
+# [review]
+# Git glob pathspecs that `devbox fetch` flags, in addition to this manifest and the image inputs.
+# watch = ["prek.toml", "scripts/**"]

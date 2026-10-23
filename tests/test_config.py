@@ -1,10 +1,11 @@
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from devbox.config import Harness, Project, harnesses
+from devbox.config import Harness, Project, harnesses, init
 from devbox.errors import DevboxError
 
 
@@ -27,6 +28,18 @@ def test_invalid_review_watch_rejected(repository: Path, watch: str) -> None:
         stream.write(f"\n[review]\nwatch = {watch}\n")
     with pytest.raises(DevboxError):
         Project.discover(repository)
+
+
+def test_init_template_documents_every_option(tmp_path: Path) -> None:
+    created = init(tmp_path)
+    assert created == {tmp_path / ".devbox.toml": True, tmp_path / ".devbox/Containerfile": True}
+    assert init(tmp_path) == dict.fromkeys(created, False)
+    config = tmp_path / ".devbox.toml"
+    # Uncomment every example section and setting; each must parse and take effect.
+    config.write_text(re.sub(r"(?m)^# (?=\[|\w+ = )", "", config.read_text()))
+    project = Project.discover(tmp_path)
+    assert (project.cpus, project.memory) == (4, "8G")
+    assert project.artifacts and project.env and project.watch
 
 
 def test_discovery_from_subdirectory(repository: Path) -> None:

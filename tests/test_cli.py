@@ -80,6 +80,7 @@ def test_preparation_options(action: str) -> None:
         (["fetch"], cli._fetch, {"id"}),
         (["cleanup"], cli.cleanup, {"select"}),
         (["completion", "bash"], cli._completion, {"shell"}),
+        (["init"], cli._init, {"project"}),
     ],
 )
 def test_parser_selects_handler_with_only_its_arguments(argv, handler, keys) -> None:
@@ -87,7 +88,7 @@ def test_parser_selects_handler_with_only_its_arguments(argv, handler, keys) -> 
     assert values.pop("func") is handler
     assert values.pop("state_dir") is None
     assert set(values) == keys
-    if handler is not cli._completion:
+    if handler not in cli.STANDALONE:
         values["app"] = object()
     inspect.signature(handler).bind(**values)
 
@@ -372,6 +373,36 @@ def test_completion_script_does_not_create_state(
     assert main(["--state-dir", str(state), "completion", shell]) == 0
     assert "devbox" in capsys.readouterr().out
     assert not state.exists()
+
+
+def test_init_creates_missing_templates_without_engine_or_state(
+    repository: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("devbox.cli.App", lambda *a, **kw: pytest.fail("init needs no engine"))
+    (repository / ".devbox.toml").unlink()
+    (repository / "nested").mkdir()
+    state = tmp_path / "state"
+    assert main(["--state-dir", str(state), "init", "--project", str(repository / "nested")]) == 0
+    out = capsys.readouterr().out
+    assert f"Created {repository / '.devbox.toml'}" in out
+    assert f"Kept existing {repository / '.devbox/Containerfile'}" in out
+    assert (repository / ".devbox/Containerfile").read_text() == "FROM ubuntu:24.04\n"
+    assert not state.exists()
+    project = Project.discover(repository)
+    assert (project.containerfile, project.context) == (
+        repository / ".devbox/Containerfile",
+        repository / ".devbox",
+    )
+    assert (project.cpus, project.memory, project.artifacts, project.env, project.watch) == (
+        4,
+        "8G",
+        (),
+        {},
+        (),
+    )
 
 
 @pytest.mark.parametrize(

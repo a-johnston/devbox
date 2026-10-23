@@ -28,6 +28,7 @@ work without it. The engine is selected by OS: Apple on macOS, Podman on Linux.
 ## Use
 
 ```sh
+devbox init                           # template .devbox.toml and .devbox/Containerfile
 devbox new pi                         # project defaults to .; omit harness for a picker
 devbox new claude --detach
 devbox ls                             # running and stopped managed containers
@@ -51,7 +52,9 @@ See `devbox --help` and `<command> --help` for options, including JSON output an
 
 ## Project setup
 
-Add `.devbox.toml` (see [this repo's example](.devbox.toml)):
+`devbox init` writes a template `.devbox.toml`, listing every option, and an Ubuntu
+`.devbox/Containerfile` at the checkout's top level, keeping any that already exist.
+A manifest looks like this (see also [this repo's](.devbox.toml)):
 
 ```toml
 version = 1

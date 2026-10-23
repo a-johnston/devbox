@@ -219,7 +219,7 @@ def test_builds_and_describes_the_host_architecture(
     id = app.new(project, harness, no_config=True)
     assert [build.platform for build in engine.builds] == ["linux/amd64"] * 3
     text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()
-    assert f"devbox instance {id}, a Linux AMD64 VM, as a non-root user." in text
+    assert f"Devbox instance {id}, a Linux AMD64 VM, as a non-root user." in text
     assert "Do not assume host tools" in text
 
 
@@ -232,7 +232,7 @@ def test_describes_the_engine_isolation(
     app = App(engine, Store(tmp_path / "state"))
     id = app.new(project, harness, no_config=True)
     text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()
-    assert f"devbox instance {id}, a Linux ARM64 container, as a non-root user." in text
+    assert f"Devbox instance {id}, a Linux ARM64 container, as a non-root user." in text
 
 
 def test_missing_artifact_mount_points_are_created_by_the_host_user(

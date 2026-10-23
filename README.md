@@ -37,6 +37,7 @@ devbox stop [id ...]                  # stop processes, keep container disk
 devbox rm [id ...]                    # remove container and artifact volumes, keep history and clone
 devbox fetch [id]                     # fetch an instance's branches into refs/devbox/<id>/
 devbox sessions                       # saved conversations, including removed containers
+devbox sync [id] [branch ...]         # deliver host branches to an instance as host/<branch>
 devbox resume [session-id]            # fork a conversation into a new container
 devbox build pi                       # rebuild the project/runtime/harness image
 devbox cleanup                       # confirm deletion of orphaned state and unused images
@@ -87,6 +88,16 @@ the manifest, Containerfile, build context and `[review] watch` paths (Git glob 
 Watched paths always come from your manifest, not the clone's. Review and land with
 `git diff <base>...refs/devbox/<id>/<branch>` and `git merge --ff-only`. Do not run Git or
 project tooling inside a clone on the host: its config and hooks are agent-controlled.
+
+`devbox sync [id] [branch ...]` delivers host branches to a running instance as
+`host/<branch>` refs (default: the branch it started from), so the agent can rebase onto
+newer work. Only the named branches leave your repository, as a Git bundle piped into the
+guest. `resume` clones the previous instance's repository when it still exists; pass
+`--from host` to start from your checkout instead.
+
+Agents learn these constraints from Devbox's [instructions](src/devbox/assets/runtime/environment.md),
+which every harness appends to its system prompt, and `DEVBOX_INSTANCE` holds the instance
+ID. Project agent files need not repeat them.
 
 Artifact volumes survive `stop` but are deleted by `rm`. Tracked files under artifact paths
 are restored into the volumes. Commits in guest-created worktrees under an artifact path

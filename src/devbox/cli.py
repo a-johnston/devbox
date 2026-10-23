@@ -233,9 +233,25 @@ def _sessions(app: App, *, json_output: bool) -> None:
 
 
 def _resume(
-    app: App, *, session: str | None, project: Path | None, detach: bool, no_config: bool
+    app: App,
+    *,
+    session: str | None,
+    project: Path | None,
+    source: str | None,
+    detach: bool,
+    no_config: bool,
 ) -> None:
     selected = match(app.store.sessions(), session, "Sessions", lambda s: s.id, session_label)
+    has_clone = selected.instance in app.store.clones()
+    if source == "instance" and not has_clone:
+        raise DevboxError(f"{selected.instance} has no repository clone; use --from host")
+    from_instance = source != "host" and has_clone
+    print(
+        f"Cloning {selected.instance}'s repository."
+        if from_instance
+        else "Cloning the host checkout.",
+        flush=True,
+    )
     if not detach:
         require_terminal()
     id = app.new(
@@ -243,6 +259,7 @@ def _resume(
         get_harness(selected.harness),
         no_config=no_config,
         session=selected,
+        from_instance=from_instance,
     )
     if not detach:
         app.attach(next(c for c in app.engine.containers() if c.id == id))
@@ -272,6 +289,14 @@ def _fetch(app: App, *, id: str | None) -> None:
         print(f"{printable(branch.ref)}  {'  '.join(notes)}")
     base = app.store.metadata(instance)["base"]
     print(f"Review: git diff {base[:12]}...<ref>    Land: git merge --ff-only <ref>")
+
+
+def _sync(app: App, *, id: str | None, branches: list[str]) -> None:
+    container = match(
+        _containers(app, running=True), id, "Containers", lambda c: c.id, container_label
+    )
+    for ref in app.sync(container, branches):
+        print(f"Updated {ref} in {container.id}; the agent can rebase onto it.")
 
 
 def _kill_all(app: App, *, yes: bool) -> None:
@@ -324,11 +349,25 @@ def parser() -> argparse.ArgumentParser:
     )
     command.set_defaults(func=_fetch)
     command.add_argument("id", nargs="?", help="Instance ID, including removed containers")
+    command = commands.add_parser(
+        "sync", help="Deliver host branches to a running instance as host/<branch>"
+    )
+    command.set_defaults(func=_sync)
+    command.add_argument("id", nargs="?", help="Container ID")
+    command.add_argument(
+        "branches", nargs="*", help="Host branches (default: the one the instance started from)"
+    )
     command = commands.add_parser("resume", help="Fork a saved conversation into a new container")
     command.set_defaults(func=_resume)
     command.add_argument("session", nargs="?")
     command.add_argument(
         "--project", type=Path, help="Override the saved project's working directory"
+    )
+    command.add_argument(
+        "--from",
+        dest="source",
+        choices=("instance", "host"),
+        help="Clone the session's instance (default when it has a clone) or the host checkout",
     )
     command.add_argument("--detach", action="store_true")
     command.add_argument("--no-config", action="store_true")

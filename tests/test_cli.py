@@ -74,7 +74,8 @@ def test_preparation_options(action: str) -> None:
         (["rm"], cli._rm, {"ids"}),
         (["ls"], cli._ls, {"json_output"}),
         (["sessions"], cli._sessions, {"json_output"}),
-        (["resume"], cli._resume, {"session", "project", "detach", "no_config"}),
+        (["resume"], cli._resume, {"session", "project", "source", "detach", "no_config"}),
+        (["sync"], cli._sync, {"id", "branches"}),
         (["kill-all"], cli._kill_all, {"yes"}),
         (["fetch"], cli._fetch, {"id"}),
         (["cleanup"], cli.cleanup, {"select"}),
@@ -193,9 +194,46 @@ def test_resume_dispatch(
     if detach:
         argv.append("--detach")
     dispatch(parser().parse_args(argv), app)
-    create.assert_called_once_with(project, harness, no_config=True, session=session)
+    create.assert_called_once_with(
+        project, harness, no_config=True, session=session, from_instance=False
+    )
     assert terminal.call_count == (0 if detach else 1)
     assert attach.call_args_list == ([] if detach else [((container,), {})])
+
+
+@pytest.mark.parametrize(
+    ("flag", "has_clone", "expected"),
+    [
+        ([], True, True),
+        ([], False, False),
+        (["--from", "host"], True, False),
+        (["--from", "instance"], True, True),
+        (["--from", "instance"], False, None),
+    ],
+)
+def test_resume_clone_source(
+    flag: list[str],
+    has_clone: bool,
+    expected: bool | None,
+    project: Project,
+    harness: Harness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = App(FakeEngine(), Store(tmp_path / "state"))
+    session = Session("devbox-aabb/c", "devbox-aabb", "pi", str(project.cwd), tmp_path)
+    monkeypatch.setattr(app.store, "sessions", lambda: [session])
+    monkeypatch.setattr(app.store, "clones", lambda: ["devbox-aabb"] if has_clone else [])
+    monkeypatch.setattr(cli, "get_harness", lambda name: harness)
+    create = Mock(return_value="devbox-ccdd")
+    monkeypatch.setattr(app, "new", create)
+    args = parser().parse_args(["resume", "aabb/c", "--detach", *flag])
+    if expected is None:
+        with pytest.raises(DevboxError, match="--from host"):
+            dispatch(args, app)
+        return
+    dispatch(args, app)
+    assert create.call_args.kwargs["from_instance"] is expected
 
 
 @pytest.mark.parametrize("action", ["stop", "rm"])

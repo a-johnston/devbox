@@ -45,6 +45,23 @@ def test_remove_deletes_only_this_containers_volumes(monkeypatch: pytest.MonkeyP
     ]
 
 
+@pytest.mark.parametrize("engine", [AppleEngine(), PodmanEngine()])
+def test_exec_input_is_piped_interactively(engine, monkeypatch: pytest.MonkeyPatch) -> None:
+    runs = []
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        runs.append((argv, kwargs["input"]))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    engine.exec("box", "cat", input="data")
+    engine.exec("box", "true")
+    assert runs == [
+        ([engine.executable, "exec", "--user", "agent", "--interactive", "box", "cat"], "data"),
+        ([engine.executable, "exec", "--user", "agent", "box", "true"], None),
+    ]
+
+
 def test_stopped_service_message(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     monkeypatch.setattr(

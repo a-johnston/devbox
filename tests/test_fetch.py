@@ -115,7 +115,7 @@ def test_fetch_refuses_a_redirected_git_directory(
     subprocess.run(["rm", "-rf", str(clone / ".git")], check=True)
     (clone / ".git").symlink_to(project.root / ".git")
     assert id not in app.store.clones()
-    with pytest.raises(DevboxError, match="no repository clone"):
+    with pytest.raises(DevboxError, match="not a repository clone"):
         app.fetch(id)
 
 

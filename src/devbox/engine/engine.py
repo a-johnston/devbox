@@ -123,10 +123,12 @@ class Engine(ABC):
         capture: bool = True,
         check: bool = True,
         env: dict[str, str] | None = None,
+        input: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         try:
             result = subprocess.run(
                 [self.executable, *args],
+                input=input,
                 text=True,
                 capture_output=capture,
                 check=False,
@@ -219,10 +221,15 @@ class Engine(ABC):
         user: str = "agent",
         check: bool = True,
         env: dict[str, str] | None = None,
+        input: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Named variables are inherited from this process, keeping values out of arguments."""
         flags = [flag for name in env or {} for flag in ("--env", name)]
-        return self.call("exec", "--user", user, *flags, id, *args, check=check, env=env)
+        if input is not None:
+            flags.append("--interactive")
+        return self.call(
+            "exec", "--user", user, *flags, id, *args, check=check, env=env, input=input
+        )
 
     def connect(self, id: str, *args: str, cwd: str | None = None) -> None:
         """Replace the wrapper; detaching the tmux client returns to the host shell."""

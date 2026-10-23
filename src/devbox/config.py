@@ -69,14 +69,18 @@ def load_toml(path: Path) -> dict[str, Any]:
         raise DevboxError(f"Cannot read {path}: {exc}") from exc
 
 
+def git_environment() -> dict[str, str]:
+    # Variables exported by Git hooks (GIT_DIR, ...) must not override --project.
+    return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+
+
 def _git(directory: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-C", str(directory), *args],
         capture_output=True,
         text=True,
         check=False,
-        # Variables exported by Git hooks (GIT_DIR, ...) must not override --project.
-        env={key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
+        env=git_environment(),
     )
 
 

@@ -31,7 +31,17 @@ class PodmanEngine(Engine):
     executable = "podman"
     install_hint = "Podman is required: https://podman.io/docs/installation"
     isolation = "container"
-    run_options = ("--userns", AGENT_USERNS)
+    run_options = (
+        "--userns",
+        AGENT_USERNS,
+        "--security-opt",
+        "no-new-privileges",
+        # The agent is unprivileged; guest root only chowns fresh artifact volumes.
+        "--cap-drop",
+        "all",
+        "--cap-add",
+        "CHOWN",
+    )
     # Rootless cgroupfs cannot delegate controllers, so Podman silently drops --cpus/--memory.
     limits_ignored = False
 
@@ -50,6 +60,14 @@ class PodmanEngine(Engine):
                 raise ValueError("Expected cgroup version")
         except (ValueError, KeyError, TypeError) as exc:
             raise DevboxError("Cannot validate rootless setup from podman info") from exc
+        runtime = host.get("ociRuntime")
+        if isinstance(runtime, dict) and "krun" in str(runtime.get("name", "")):
+            # Devbox starts the harness with exec, which krun cannot run inside its microVM:
+            # it would run on the host kernel while appearing VM-isolated (containers/crun#2090).
+            raise DevboxError(
+                "Podman's default OCI runtime is krun, which cannot exec inside its microVM; "
+                "configure crun or runc as the default runtime for Devbox"
+            )
         if not rootless:
             raise DevboxError("Devbox requires rootless Podman; run it as your regular user")
         if version != "v2":

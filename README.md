@@ -143,7 +143,9 @@ unfetched clones and copied credentials.** Use `cleanup --select` to choose inst
 stopped containers protect state; retained instances also protect their images. Cleanup does
 not remove containers, volumes, unrelated images or shared build caches.
 
-On macOS each container is a VM; Linux rootless containers share the host kernel. Isolation
+On macOS each container is a VM; Linux rootless containers share the host kernel and run
+with `no-new-privileges` and only `CHOWN` among capabilities. Devbox refuses a krun default
+runtime: krun cannot `exec` inside its microVM, so the harness would run outside it. Isolation
 protects unmounted host files and your repository: the harness writes only its clone, and
 fetched work reaches your branches only when you merge it. It can still use provided
 credentials and access the network, and code you merge runs when you run it. There is no

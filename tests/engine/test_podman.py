@@ -85,6 +85,29 @@ def test_podman_preflight_rejects_unsupported_setup(
         engine.require_running()
 
 
+@pytest.mark.parametrize(
+    "runtime,refused",
+    [
+        ({"name": "krun"}, True),
+        ({"name": "crun-krun"}, True),
+        ({"name": "crun"}, False),
+        (None, False),
+    ],
+)
+def test_podman_refuses_krun_default_runtime(
+    monkeypatch: pytest.MonkeyPatch, runtime: dict | None, refused: bool
+) -> None:
+    host = {"security": {"rootless": True}, "cgroupManager": "systemd", "cgroupVersion": "v2"}
+    if runtime is not None:
+        host["ociRuntime"] = runtime
+    engine, _ = engine_with(monkeypatch, {("info",): (0, json.dumps({"host": host}), "")})
+    if refused:
+        with pytest.raises(DevboxError, match="krun"):
+            engine.require_running()
+    else:
+        engine.require_running()
+
+
 def test_podman_missing_executable_names_podman(monkeypatch: pytest.MonkeyPatch) -> None:
     def missing(*a: object, **kw: object) -> None:
         raise FileNotFoundError("podman")
@@ -174,6 +197,12 @@ def test_podman_run_creates_labelled_volumes_then_runs_with_keep_id(
             "devbox-1",
             "--userns",
             AGENT_USERNS,
+            "--security-opt",
+            "no-new-privileges",
+            "--cap-drop",
+            "all",
+            "--cap-add",
+            "CHOWN",
             "--cpus",
             "2",
             "--memory",

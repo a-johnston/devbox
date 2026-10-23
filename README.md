@@ -125,10 +125,10 @@ with `claude setup-token` and supply `CLAUDE_CODE_OAUTH_TOKEN` to Devbox only, f
 `op run -- devbox new claude`. Do not export it globally: host Claude would use it too.
 The token reaches only the harness process, not the image, container configuration or saved state.
 
-Only Git author identity and `COLORTERM` are inherited automatically. Other environment values
-must be declared by the project or harness. Custom harness profiles live in
-`$XDG_CONFIG_HOME/devbox/harnesses/<name>/`; use the [built-in profiles](src/devbox/assets/harnesses)
-as examples for `profile.toml`, `Containerfile` and optional host-side `hooks.py`.
+Only Git author identity, `COLORTERM` and, for `attach` and `shell`, `TERM` are inherited
+automatically. Other environment values must be declared by the project or harness. Custom
+harness profiles live in `$XDG_CONFIG_HOME/devbox/harnesses/<name>/`; see
+[adding a harness](src/devbox/assets/harnesses/README.md).
 
 ## Saved state and safety
 

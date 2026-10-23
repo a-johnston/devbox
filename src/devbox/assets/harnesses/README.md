@@ -1,0 +1,77 @@
+# Harness profiles
+
+A harness profile tells Devbox how to install, configure and launch one coding agent. Built-in
+profiles live here. To add your own, create
+`$XDG_CONFIG_HOME/devbox/harnesses/<name>/` (default `~/.config/devbox/harnesses/<name>/`).
+A user profile with the same `name` replaces a built-in one. Use [`pi`](pi) and
+[`claude`](claude) as worked examples.
+
+```
+<name>/
+  profile.toml     required: launch command, state layout and host config to copy
+  Containerfile    required: installs the harness on top of the runtime image
+  hooks.py         optional: host-side Python adapting copied config
+  ...              anything else the Containerfile COPYs (the directory is the build context)
+```
+
+Profiles are executable configuration: the Containerfile runs at build time and `hooks.py`
+runs on the host. Install only profiles you trust.
+
+## profile.toml
+
+| Key | Required | Meaning |
+| --- | --- | --- |
+| `name` | yes | Lowercase name used on the command line (`[a-z][a-z0-9-]*`). |
+| `command` | yes | Launch command, run in tmux in the project directory. |
+| `state_dir` | yes | The harness's config/state directory, relative to `/home/agent`. Seed files are copied here. |
+| `session_dir` | yes | Where it saves conversations, relative to `/home/agent`. Kept after container removal. |
+| `session_glob` | no | Conversation files under `session_dir` (default `**/*.jsonl`). The first line must be JSON; its `id`, or else the file name, is the session ID. |
+| `resume_args` | no | Arguments appended to `command` to resume a forked copy of a saved session. Use `{session}` (the snapshot's guest path) or `{session_id}`. Omit if the harness cannot resume. |
+| `seed_dir` | yes | Host config directory to copy from, such as `~/.pi/agent`. Never mounted. |
+| `seed_files` | no | Files copied from `seed_dir` into `state_dir` per instance (symlinks are skipped). |
+| `prepared_dirs` | no | Directories, relative to `/home/agent`, prepared at build time under `/opt/devbox/prepared/` and linked into each home, e.g. installed packages. |
+| `version_command` | no | Host command printing the installed version; it becomes the `HARNESS_VERSION` build argument so the guest matches the host. |
+| `secrets` | no | Host environment variable names forwarded only to the harness process, never to images, container config or saved state. |
+| `[environment]` | no | Plain `NAME = "value"` variables for the container. Never put secrets here. |
+
+Load Devbox's instructions so the agent knows its constraints (a private clone, `devbox fetch`
+and `devbox sync`, no host bridge): pass `/home/agent/.devbox/environment.md` to the harness's
+option for appending to its system prompt in `command`, as both built-in profiles do. If the
+harness has no such option, point its global instructions file at it instead.
+
+## Containerfile
+
+```dockerfile
+ARG RUNTIME_IMAGE
+FROM ${RUNTIME_IMAGE}
+# Devbox passes the host's version when version_command finds one; this is the fallback.
+ARG HARNESS_VERSION=1.2.3
+RUN npm install -g example-agent@${HARNESS_VERSION}
+```
+
+- Build `FROM ${RUNTIME_IMAGE}`: the project image plus tmux, git and the `agent` user
+  (UID 10001, home `/home/agent`). Build steps run as root; the harness runs as `agent`.
+- Install the harness system-wide. Its home directory is bind-mounted from the host at run
+  time, so anything written under `/home/agent` during the build is hidden.
+- Pin a default `HARNESS_VERSION` so builds work without the harness on the host.
+- For `prepared_dirs`, install into `/opt/devbox/prepared/<dir>` and `chown -R agent:agent`
+  it. `ARG PREPARE_REVISION` changes on every explicit `devbox build`: reference it in a step
+  to refresh unpinned packages there.
+- The base is Debian or Ubuntu (apt, glibc).
+
+## hooks.py
+
+Plain functions, all optional. Raise `ValueError` with a user-facing message to stop a launch.
+
+- `build_files(seed_dir: Path) -> dict[str, str]`: extra build-context files (flat names, no
+  leading dot) derived from host config, such as a package list. They land in image layers:
+  never return credentials. Skipped with `--no-config`.
+- `adapt_seed(state_dir: Path) -> list[str]`: edit the copied config in place, e.g. remove
+  settings that name host paths or run host commands. Return a note per change.
+- `resume_file(session_id: str, cwd: str) -> str`: where, relative to `/home/agent`, the
+  harness expects a session snapshot to find it by ID. Without it, snapshots go to
+  `.devbox/resume.jsonl`.
+
+Copy credentials only if the guest can use them without changing the host's copy: a
+harness that refreshes tokens in place, like Claude Code's login, would invalidate the host's
+session. Prefer a separate long-lived token passed through `secrets`.

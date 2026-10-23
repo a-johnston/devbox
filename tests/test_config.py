@@ -93,6 +93,27 @@ def test_unsafe_artifacts_rejected(repository: Path, artifact: str) -> None:
         Project.discover(repository)
 
 
+@pytest.mark.parametrize(
+    "image",
+    [
+        'context = ".."',
+        'context = "/"',
+        'context = "linked"',
+        'context = ".git"',
+        'containerfile = "../Containerfile"',
+    ],
+)
+def test_image_inputs_must_stay_in_project(repository: Path, image: str) -> None:
+    (repository / "linked").symlink_to(repository.parent)
+    (repository.parent / "Containerfile").write_text("FROM scratch\n")
+    config = repository / ".devbox.toml"
+    key = image.split(" =")[0]
+    lines = [line for line in config.read_text().splitlines() if not line.startswith(key)]
+    config.write_text("\n".join(lines).replace("[image]", f"[image]\n{image}") + "\n")
+    with pytest.raises(DevboxError, match="outside .git"):
+        Project.discover(repository)
+
+
 def test_overlapping_artifacts_rejected(repository: Path) -> None:
     config = repository / ".devbox.toml"
     config.write_text(

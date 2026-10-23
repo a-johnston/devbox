@@ -123,6 +123,11 @@ class Project:
         ).resolve()
         if not context.is_dir() or not containerfile.is_file():
             raise DevboxError(f"Image context or Containerfile missing in {config}")
+        # Builds read these from the host; the guest can edit the manifest that names them.
+        real = root.resolve()
+        for path in (context, containerfile):
+            if not path.is_relative_to(real) or path.is_relative_to(real / ".git"):
+                raise DevboxError(f"{path} must be inside {root} and outside .git")
         artifacts = tuple(relative(v) for v in strings(workspace.get("artifacts", []), "artifacts"))
         if overlapping(artifacts):
             raise DevboxError("Artifact directories must not overlap")

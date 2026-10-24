@@ -53,6 +53,10 @@ instances get a random ID instead.
 
 `attach` and `shell` pass your `TERM` through when the guest has its terminfo, otherwise
 `xterm-256color`; install a custom entry in the project image to keep it.
+All harnesses share a terminal runtime with Vim installed and `EDITOR=vim`, `VISUAL=vim`,
+for shell commands and harness actions that open messages in an external editor. These
+are guest defaults, not copied from the host; override them in the manifest's `[environment]`
+if needed (the selected editor must be installed in the guest).
 **Ctrl-a, then d** detaches without stopping the harness. After `stop`, use `resume` to
 continue a conversation. `kill-all` removes all managed containers but keeps saved history.
 See `devbox --help` and `<command> --help` for options, including JSON output and shell completion.

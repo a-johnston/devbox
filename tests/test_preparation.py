@@ -7,10 +7,24 @@ from typing import Any
 import pytest
 
 from devbox.app import App
-from devbox.config import Harness, Project
+from devbox.config import ASSETS, Harness, Project
 from devbox.errors import DevboxError
 from devbox.state import Store, build_files, host_version
 from tests.fakes import FakeEngine
+
+
+@pytest.mark.parametrize("name", ["pi", "claude"])
+def test_built_in_harnesses_share_vim_runtime(name: str, project: Project, tmp_path: Path) -> None:
+    harness = replace(Harness.load(ASSETS / "harnesses" / name), version_command=())
+    engine = FakeEngine()
+    App(engine, Store(tmp_path / "state")).build(project, harness, no_config=True)
+    _, runtime, prepared = engine.builds
+    assert runtime.file == ASSETS / "runtime/Containerfile"
+    containerfile = runtime.file.read_text()
+    assert "vim" in containerfile.split("apt-get install", 1)[1].split("&&", 1)[0].split()
+    assert "ENV EDITOR=vim VISUAL=vim" in containerfile.splitlines()
+    assert prepared.args["RUNTIME_IMAGE"] == runtime.tag
+    assert "FROM ${RUNTIME_IMAGE}" in (harness.directory / "Containerfile").read_text()
 
 
 def test_second_new_never_enters_build_scope(

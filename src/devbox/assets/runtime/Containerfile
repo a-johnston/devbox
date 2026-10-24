@@ -3,13 +3,15 @@ FROM ${PROJECT_IMAGE}
 USER root
 # safe.directory: shared checkouts are owned by a host UID the guest user lacks.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash ca-certificates git less ripgrep tmux \
+    bash ca-certificates git less ripgrep tmux vim \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 agent \
     && useradd --create-home --uid 10001 --gid 10001 --shell /bin/bash agent \
     && git config --system safe.directory '*'
 # TERM comes from the host terminal on attach; tmux.conf sets the panes' own.
 ENV HOME=/home/agent
+# Shared by interactive shells and harness actions that open an external editor.
+ENV EDITOR=vim VISUAL=vim
 WORKDIR /home/agent
 # The harness runs in tmux via exec; the container only needs to stay alive.
 ENTRYPOINT ["sleep", "infinity"]

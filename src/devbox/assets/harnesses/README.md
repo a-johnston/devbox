@@ -66,8 +66,11 @@ ARG HARNESS_VERSION=1.2.3
 RUN npm install -g example-agent@${HARNESS_VERSION}
 ```
 
-- Build `FROM ${RUNTIME_IMAGE}`: the project image plus tmux, git and the `agent` user
-  (UID 10001, home `/home/agent`). Build steps run as root; the harness runs as `agent`.
+- Build `FROM ${RUNTIME_IMAGE}`: the project image plus shared terminal tools (including
+  tmux, git and Vim) and the `agent` user (UID 10001, home `/home/agent`). The runtime sets
+  `EDITOR=vim` and `VISUAL=vim` for shells and external-editor actions; harnesses do not need
+  to install or configure an editor separately. Build steps run as root; the harness runs
+  as `agent`.
 - Install the harness system-wide. Its home directory is bind-mounted from the host at run
   time, so anything written under `/home/agent` during the build is hidden.
 - Pin a default `HARNESS_VERSION` so builds work without the harness on the host.

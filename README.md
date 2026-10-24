@@ -43,6 +43,7 @@ devbox sync [id] [branch ...]         # deliver host branches to an instance as 
 devbox resume [session-id]            # fork a conversation into a new container
 devbox build pi                       # rebuild the project/runtime/harness image
 devbox cleanup                       # confirm deletion of orphaned state and unused images
+devbox cleanup --only images         # or --only instances
 ```
 
 `stop` and `rm` accept multiple IDs or unique prefixes; omit IDs for a multi-select picker.
@@ -163,13 +164,18 @@ merge or overwrite an existing destination; split legacy state by backend if nec
 
 `cleanup` previews orphaned saved instances and unused, ownership-labelled Devbox images,
 then asks for confirmation. **Deleting saved instances permanently deletes their conversations,
-unfetched clones and copied credentials.** Use `cleanup --select` to choose instances with fzf. Running and
+unfetched clones and copied credentials.** Use `cleanup --select` to choose instances and then images with fzf;
+only images freed by the chosen instances (or used by no instance) are offered. Limit the
+scope with `--only instances` or `--only images`; an image-only cleanup still keeps images
+that retained instances use. Running and
 stopped containers protect state; retained instances also protect their images. Cleanup does
 not remove containers, unrelated images, shared harness authentication, or shared build caches.
-Its summary reports approximate space recovered separately for instance folders and images.
-Image estimates count each deleted image once, only after its last reference is removed, and 
+The confirmation shows approximate totals for both, counting each image ID once; its
+summary reports approximate space recovered separately for instance folders and images.
+Image estimates count each deleted image once, only after its last reference is removed, and
 use the engine's full image sizes; shared layers and build caches can make actual recovery lower.
-If size metadata is unavailable, the image estimate is reported as unavailable rather than zero.
+When some image sizes are unavailable, totals cover only the known sizes (shown as `>N`);
+an estimate with no known sizes is reported as unavailable rather than zero.
 
 On macOS each container is a VM; Linux rootless containers share the host kernel and run
 with `no-new-privileges` and no capabilities. Devbox refuses a krun default

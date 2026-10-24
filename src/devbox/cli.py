@@ -19,7 +19,8 @@ import argcomplete
 from devbox import __version__
 from devbox.app import App
 from devbox.config import Harness, Project, harnesses, init
-from devbox.engine import Container
+from devbox.engine import Container, Image
+from devbox.engine.engine import image_identity
 from devbox.errors import DevboxError
 from devbox.repository import Fetched
 from devbox.state import Instance, Session, Store
@@ -96,21 +97,43 @@ def format_size(size: int) -> str:
     return f"{value:.1f} TiB"
 
 
-def cleanup(app: App, *, select: bool) -> None:
+def size_estimate(sizes: dict[str, int | None]) -> str:
+    """Total known sizes, keyed by image ID so several references count once."""
+    known = [size for size in sizes.values() if size is not None]
+    if not known and sizes:
+        return "size unavailable"
+    return (">" if len(known) < len(sizes) else "~") + format_size(sum(known))
+
+
+def cleanup(app: App, *, select: bool, only: str | None = None) -> None:
     require_terminal("Cleanup requires a terminal for confirmation")
-    instances = app.orphaned_instances()
+    with_instances, with_images = only != "images", only != "instances"
+    instances = app.orphaned_instances() if with_instances else []
+    picked_nothing = False
 
     def label(instance: Instance) -> str:
         return f"{instance.id}  ~{format_size(instance.size)}"
 
+    def image_label(image: Image) -> str:
+        return f"{image.reference}  {size_estimate({image.id: image.size})}"
+
     if select and instances:
         instances = select_many(instances, "Orphaned instances", label)
-        if not instances:
-            print("No instances selected. Nothing removed.")
-            return
-    images = app.unused_images(instances)
+        picked_nothing = not instances
+    # Only the chosen instances release their images; others keep protecting theirs.
+    images = app.unused_images(instances) if with_images else []
+    if select and images:
+        images = select_many(images, "Unused images", image_label)
+        picked_nothing = picked_nothing or not images
     if not instances and not images:
-        print("No orphaned instances or unused Devbox images.")
+        if picked_nothing:
+            print("Nothing selected. Nothing removed.")
+            return
+        missing = [
+            *(["orphaned instances"] if with_instances else []),
+            *(["unused Devbox images"] if with_images else []),
+        ]
+        print(f"No {' or '.join(missing)}.")
         return
     if instances:
         print(f"Orphaned instances in {app.store.instances}:")
@@ -120,22 +143,31 @@ def cleanup(app: App, *, select: bool) -> None:
     if images:
         print("Unused Devbox image references:")
         for image in images:
-            estimate = "size unavailable" if image.size is None else f"~{format_size(image.size)}"
-            print(f"  {image.reference}  {estimate}")
+            print(f"  {image_label(image)}")
         print("Images can be rebuilt; shared layers and build caches may remain.")
-    size = format_size(sum(instance.size for instance in instances))
-    targets = f"{len(instances)} instances (~{size}) and {len(images)} images"
-    if not query(f"Delete {targets}?"):
+    targets = []
+    if with_instances:
+        size = format_size(sum(instance.size for instance in instances))
+        targets.append(f"{len(instances)} instances (~{size})")
+    if with_images:
+        sizes = {image_identity(image.id): image.size for image in images}
+        targets.append(f"{len(images)} images ({size_estimate(sizes)})")
+    if not query(f"Delete {' and '.join(targets)}?"):
         print("Cancelled. Nothing removed.")
         return
-    removed, recovered = app.cleanup(instances)
-    print(f"Removed {removed} instances; approximately {format_size(recovered)} recovered.")
-    removed_images, recovered_images = app.cleanup_images(images)
-    estimate = (
-        "approximate recovered space unavailable"
-        if recovered_images is None
-        else f"approximately {format_size(recovered_images)} recovered"
-    )
+    if instances:
+        removed, recovered = app.cleanup(instances)
+        print(f"Removed {removed} instances; approximately {format_size(recovered)} recovered.")
+    if not images:
+        return
+    removed_images, reclaimed = app.cleanup_images(images)
+    known = [size for size in reclaimed.values() if size is not None]
+    if reclaimed and not known:
+        estimate = "approximate recovered space unavailable"
+    else:
+        estimate = f"approximately {format_size(sum(known))} recovered"
+        if len(known) < len(reclaimed):
+            estimate += ", plus images of unknown size"
     print(f"Removed {removed_images} image references; {estimate}.")
     if removed_images:
         print(
@@ -445,7 +477,12 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument(
         "--select",
         action="store_true",
-        help="Choose instances with fzf before confirming",
+        help="Choose instances, then images, with fzf before confirming",
+    )
+    command.add_argument(
+        "--only",
+        choices=("instances", "images"),
+        help="Clean up only orphaned instances or only unused images",
     )
     command = commands.add_parser(
         "init", help="Create a template .devbox.toml and .devbox/Containerfile if missing"

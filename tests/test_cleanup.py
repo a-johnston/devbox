@@ -211,10 +211,12 @@ def test_cleanup_confirmation_and_summary(
 
     monkeypatch.setattr("builtins.input", confirm)
     dispatch(parser().parse_args(["cleanup"]), app)
-    assert prompts == [f"Delete 1 instances (~{format_size(expected)}) and 0 images? [y/N] "]
+    assert prompts == [
+        f"Delete 1 instances (~{format_size(expected)}) and 0 images (~0.0 B)? [y/N] "
+    ]
     text = capsys.readouterr().out
     assert f"Removed 1 instances; approximately {format_size(expected)} recovered." in text
-    assert "Removed 0 image references; approximately 0.0 B recovered." in text
+    assert "image references" not in text
     assert not directory.exists()
 
 

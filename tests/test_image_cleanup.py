@@ -1,5 +1,6 @@
 import json
 import subprocess
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from devbox.cli import dispatch, format_size, parser
 from devbox.config import Harness, Project
 from devbox.engine import IMAGE_KIND, IMAGE_SCHEMA, IMAGE_STORE, MANAGED, Image, image_labels
 from devbox.engine.apple import AppleEngine
+from devbox.engine.engine import image_identity
 from devbox.engine.podman import PodmanEngine
 from devbox.errors import DevboxError
 from devbox.state import Store, disk_usage
@@ -83,7 +85,7 @@ def test_cleanup_only_owns_labeled_images_in_this_store(app: App) -> None:
     engine.inventory = [image, foreign_store, legacy, future, unknown]
     assert app.unused_images() == [image]
     # The other references keep this image's bytes alive, even though we do not own them.
-    assert app.cleanup_images([image, image, foreign_store, legacy, future, unknown]) == (1, 0)
+    assert app.cleanup_images([image, image, foreign_store, legacy, future, unknown]) == (1, {})
     assert engine.deleted == [image.reference]
 
 
@@ -100,7 +102,10 @@ def test_saved_instances_and_all_container_images_protect_aliases(app: App) -> N
     # Containers may reference a digest or a qualified local tag, irrespective of ownership.
     engine.used = {"sha256:running", "localhost/stopped:latest"}
     assert app.unused_images() == [unused]
-    assert app.cleanup_images([alias, saved, running, stopped, unused]) == (1, unused.size)
+    assert app.cleanup_images([alias, saved, running, stopped, unused]) == (
+        1,
+        {image_identity(unused.id): unused.size},
+    )
     assert engine.deleted == [unused.reference]
 
 
@@ -137,7 +142,7 @@ def test_cleanup_rechecks_after_confirmation(app: App, change: str) -> None:
         engine.inventory = [replace(image, labels={})]
     else:
         engine.inventory = []
-    assert app.cleanup_images(candidates) == (0, 0)
+    assert app.cleanup_images(candidates) == (0, {})
     assert engine.deleted == []
 
 
@@ -149,7 +154,7 @@ def test_cleanup_never_adds_new_image_candidates(app: App) -> None:
     candidates = app.unused_images()
     newer = owned(app, "newer:latest", "sha256:newer")
     engine.inventory.append(newer)
-    assert app.cleanup_images(candidates) == (1, image.size)
+    assert app.cleanup_images(candidates) == (1, {image_identity(image.id): image.size})
     assert engine.inventory == [newer]
 
 
@@ -186,7 +191,12 @@ def test_image_only_cleanup_still_confirms(
     image = owned(app)
     engine.inventory = [image]
     patch_require_terminal(monkeypatch)
-    monkeypatch.setattr("devbox.cli.select_many", lambda *a: pytest.fail("no instances to pick"))
+
+    def pick(rows: list, prompt: str, label: object) -> list:
+        assert prompt == "Unused images", "no instances to pick"
+        return rows
+
+    monkeypatch.setattr("devbox.cli.select_many", pick)
 
     def confirm(prompt: str) -> str:
         assert image.reference in capsys.readouterr().out
@@ -234,7 +244,10 @@ def test_select_keeps_unselected_sessions_and_their_images(
     retained = retain(app, kept.reference)
     patch_require_terminal(monkeypatch)
     monkeypatch.setattr(
-        "devbox.cli.select_many", lambda rows, *a: [row for row in rows if row.id == selected]
+        "devbox.cli.select_many",
+        lambda rows, prompt, label: (
+            rows if prompt == "Unused images" else [row for row in rows if row.id == selected]
+        ),
     )
     patch_input(monkeypatch)
     dispatch(parser().parse_args(["cleanup", "--select"]), app)
@@ -456,7 +469,7 @@ def test_references_are_rechecked_between_deletions(
         retain(app, second.reference)
 
     monkeypatch.setattr(engine, "remove_image", remove_then_retain)
-    assert app.cleanup_images([first, second]) == (1, first.size)
+    assert app.cleanup_images([first, second]) == (1, {image_identity(first.id): first.size})
     assert engine.deleted == [first.reference]
     assert engine.inventory == [second]
 
@@ -468,7 +481,10 @@ def test_image_recovery_counts_each_deleted_id_once(app: App) -> None:
     alias = replace(first, reference="alias:latest")
     second = replace(owned(app, "second:latest", "sha256:second"), size=8192)
     engine.inventory = [first, alias, second]
-    assert app.cleanup_images([first, first, alias, second]) == (3, 12288)
+    assert app.cleanup_images([first, first, alias, second]) == (
+        3,
+        {image_identity(first.id): 4096, image_identity(second.id): 8192},
+    )
     assert engine.inventory == []
 
 
@@ -479,7 +495,7 @@ def test_image_recovery_uses_rechecked_sizes(app: App) -> None:
     engine.inventory = [image]
     candidates = app.unused_images()
     engine.inventory = [replace(image, size=8192)]
-    assert app.cleanup_images(candidates) == (1, 8192)
+    assert app.cleanup_images(candidates) == (1, {image_identity(image.id): 8192})
 
 
 def test_image_recovery_with_unknown_size_is_not_reported_as_zero(
@@ -493,6 +509,22 @@ def test_image_recovery_with_unknown_size_is_not_reported_as_zero(
     dispatch(parser().parse_args(["cleanup"]), app)
     text = capsys.readouterr().out
     assert "Removed 1 image references; approximate recovered space unavailable." in text
+
+
+def test_image_recovery_reports_known_sizes_beside_unknown_ones(
+    app: App, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    engine = app.engine
+    assert isinstance(engine, ImageEngine)
+    engine.inventory = [replace(owned(app), size=None), owned(app, "known:latest", "sha256:known")]
+    patch_require_terminal(monkeypatch)
+    patch_input(monkeypatch)
+    dispatch(parser().parse_args(["cleanup"]), app)
+    text = capsys.readouterr().out
+    assert (
+        "Removed 2 image references; approximately 4.0 KiB recovered, plus images of unknown size."
+        in text
+    )
 
 
 def test_apple_image_size_includes_all_variants(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -579,3 +611,175 @@ def test_image_became_referenced_during_confirmation_is_skipped(
     monkeypatch.setattr("builtins.input", confirm)
     dispatch(parser().parse_args(["cleanup"]), app)
     assert engine.deleted == []
+
+
+@pytest.mark.parametrize(
+    ("sizes", "estimate"),
+    [
+        ((4096, 8192), "~12.0 KiB"),
+        ((4096, None), ">4.0 KiB"),
+        ((None, None), "size unavailable"),
+        ((), "~0.0 B"),
+    ],
+)
+def test_cleanup_confirmation_totals_image_sizes(
+    app: App,
+    sizes: tuple[int | None, ...],
+    estimate: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = app.engine
+    assert isinstance(engine, ImageEngine)
+    images = [
+        replace(owned(app, f"image{n}:latest", f"sha256:image{n}"), size=size)
+        for n, size in enumerate(sizes)
+    ]
+    # Another tag of the first image must not count its bytes twice.
+    engine.inventory = [
+        *images,
+        *[replace(image, reference="alias:latest") for image in images[:1]],
+    ]
+    _, directory = saved_instance(app.store)
+    instance_size = format_size(disk_usage(directory))
+    patch_require_terminal(monkeypatch)
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or "n")
+    dispatch(parser().parse_args(["cleanup"]), app)
+    count = len(engine.inventory)
+    assert prompts == [
+        f"Delete 1 instances (~{instance_size}) and {count} images ({estimate})? [y/N] "
+    ]
+    assert engine.deleted == []
+
+
+def test_cleanup_only_instances_leaves_images_alone(
+    app: App, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    engine = app.engine
+    assert isinstance(engine, ImageEngine)
+    image = owned(app)
+    engine.inventory = [image]
+    monkeypatch.setattr(app, "unused_images", lambda *a: pytest.fail("images are out of scope"))
+    id = retain(app, image.reference)
+    size = format_size(disk_usage(app.store.directory(id)))
+    patch_require_terminal(monkeypatch)
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or "y")
+    dispatch(parser().parse_args(["cleanup", "--only", "instances"]), app)
+    assert prompts == [f"Delete 1 instances (~{size})? [y/N] "]
+    assert not (app.store.instances / id).exists()
+    assert engine.deleted == []
+    text = capsys.readouterr().out
+    assert "Removed 1 instances" in text
+    assert "image" not in text.lower()
+
+
+def test_cleanup_only_images_keeps_instances_and_their_images(
+    app: App, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    engine = app.engine
+    assert isinstance(engine, ImageEngine)
+    unused = owned(app)
+    kept = owned(app, "kept:latest", "sha256:kept")
+    engine.inventory = [unused, kept]
+    id = retain(app, kept.reference)
+    patch_require_terminal(monkeypatch)
+    prompts = []
+    monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or "y")
+    dispatch(parser().parse_args(["cleanup", "--only", "images"]), app)
+    assert prompts == ["Delete 1 images (~4.0 KiB)? [y/N] "]
+    assert engine.deleted == [unused.reference]
+    assert app.store.directory(id).exists()
+    text = capsys.readouterr().out
+    assert "Orphaned instances" not in text
+    assert "Removed 1 image references; approximately 4.0 KiB recovered." in text
+    assert "Removed 1 instances" not in text
+
+
+@pytest.mark.parametrize(
+    ("only", "message"),
+    [("instances", "No orphaned instances.\n"), ("images", "No unused Devbox images.\n")],
+)
+def test_cleanup_only_reports_empty_scope(
+    app: App,
+    only: str,
+    message: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    engine = app.engine
+    assert isinstance(engine, ImageEngine)
+    # Whatever the other scope holds must not be offered.
+    if only == "instances":
+        engine.inventory = [owned(app)]
+    else:
+        saved_instance(app.store)
+    patch_require_terminal(monkeypatch)
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("nothing to confirm"))
+    dispatch(parser().parse_args(["cleanup", "--only", only]), app)
+    assert capsys.readouterr().out == message
+    assert engine.deleted == []
+
+
+@pytest.mark.parametrize(
+    ("only", "offered"),
+    # Images freed by chosen instances are offered; --only images keeps every instance.
+    [(None, ["chosen:latest", "free:latest"]), ("images", ["free:latest"])],
+)
+def test_cleanup_select_offers_images_after_instances(
+    app: App,
+    only: str | None,
+    offered: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    engine = app.engine
+    assert isinstance(engine, ImageEngine)
+    free = owned(app, "free:latest", "sha256:free")
+    chosen = owned(app, "chosen:latest", "sha256:chosen")
+    kept = replace(owned(app, "kept:latest", "sha256:kept"), size=None)
+    engine.inventory = [free, chosen, kept]
+    chosen_id = retain(app, chosen.reference)
+    kept_id = retain(app, kept.reference)
+    patch_require_terminal(monkeypatch)
+    pickers = []
+
+    def pick(rows: list, prompt: str, label: Callable[[object], str]) -> list:
+        pickers.append((prompt, [label(row) for row in rows]))
+        if prompt == "Orphaned instances":
+            return [row for row in rows if row.id == chosen_id]
+        assert [row.reference for row in rows] == offered
+        return rows[-1:]
+
+    prompts = []
+    monkeypatch.setattr("devbox.cli.select_many", pick)
+    monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or "y")
+    dispatch(parser().parse_args(["cleanup", "--select", *(["--only", only] if only else [])]), app)
+    assert [prompt for prompt, _ in pickers] == (
+        ["Unused images"] if only else ["Orphaned instances", "Unused images"]
+    )
+    assert pickers[-1][1][-1] == "free:latest  ~4.0 KiB"
+    assert engine.deleted == ["free:latest"]
+    assert (app.store.instances / kept_id).exists()
+    assert (app.store.instances / chosen_id).exists() == bool(only)
+    if only:
+        assert prompts == ["Delete 1 images (~4.0 KiB)? [y/N] "]
+    else:
+        assert prompts[0].endswith("and 1 images (~4.0 KiB)? [y/N] ")
+    assert "Removed 1 image references" in capsys.readouterr().out
+
+
+def test_cleanup_select_with_nothing_picked_removes_nothing(
+    app: App, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    engine = app.engine
+    assert isinstance(engine, ImageEngine)
+    engine.inventory = [owned(app)]
+    id = retain(app, "other:latest")
+    patch_require_terminal(monkeypatch)
+    monkeypatch.setattr("devbox.cli.select_many", lambda *a: [])
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("nothing to confirm"))
+    dispatch(parser().parse_args(["cleanup", "--select"]), app)
+    assert capsys.readouterr().out == "Nothing selected. Nothing removed.\n"
+    assert engine.deleted == []
+    assert (app.store.instances / id).exists()

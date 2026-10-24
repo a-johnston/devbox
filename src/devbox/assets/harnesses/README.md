@@ -1,6 +1,6 @@
 # Harness profiles
 
-A harness profile tells Devbox how to install, configure and launch one coding agent. Built-in
+A harness profile tells devbox how to install, configure and launch one coding agent. Built-in
 profiles live here. To add your own, create
 `$XDG_CONFIG_HOME/devbox/harnesses/<name>/` (default `~/.config/devbox/harnesses/<name>/`).
 A user profile with the same `name` replaces a built-in one. Use [`pi`](pi) and
@@ -35,7 +35,7 @@ runs on the host. Install only profiles you trust.
 | `secrets` | no | Host environment variable names forwarded only to the harness process, never to images, container config or saved state. |
 | `[environment]` | no | Plain `NAME = "value"` variables for the container. Never put secrets here. |
 
-Load Devbox's instructions so the agent knows its constraints (a private clone, `devbox fetch`
+Load devbox's instructions so the agent knows its constraints (a private clone, `devbox fetch`
 and `devbox sync`, no host bridge): pass `/home/agent/.devbox/environment.md` to the harness's
 option for appending to its system prompt in `command`, as both built-in profiles do. If the
 harness has no such option, point its global instructions file at it instead.
@@ -43,7 +43,7 @@ harness has no such option, point its global instructions file at it instead.
 ## Shared state
 
 Unlike seed files, shared directories have live writers from multiple instances. They must
-not overlap the harness state/session/prepared directories, each other, or Devbox's runtime
+not overlap the harness state/session/prepared directories, each other, or devbox's runtime
 files. Keep their contents limited to intentionally shared state, not executable settings or
 conversation history. Mount the directory containing both a credential and its ephemeral
 lock; mounting only the file or an already-existing lock directory cannot coordinate refreshes.
@@ -61,7 +61,7 @@ refresh token. See [Pi's profile notes](pi/README.md).
 ```dockerfile
 ARG RUNTIME_IMAGE
 FROM ${RUNTIME_IMAGE}
-# Devbox passes the host's version when version_command finds one; this is the fallback.
+# devbox passes the host's version when version_command finds one; this is the fallback.
 ARG HARNESS_VERSION=1.2.3
 RUN npm install -g example-agent@${HARNESS_VERSION}
 ```

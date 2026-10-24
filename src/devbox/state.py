@@ -37,8 +37,6 @@ class Instance:
 class Store:
     def __init__(self, root: Path | None = None, *, backend: str | None = None) -> None:
         self.backend = backend or backend_name()
-        if self.backend not in {"apple", "podman"}:
-            raise DevboxError(f"Unknown state backend: {self.backend}")
         base = (
             root
             or Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "devbox"

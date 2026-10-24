@@ -1,4 +1,4 @@
-# Devbox project manifest. Paths are relative to this file.
+# devbox project manifest. Paths are relative to this file.
 version = 1
 
 [image]

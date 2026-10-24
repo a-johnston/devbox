@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const HELP = `Usage: devbox-pi [--append-system-prompt FILE] [--fork SESSION]
 
-Starts Pi's interactive UI with Devbox's shared credential store.
+Starts Pi's interactive UI with devbox's shared credential store.
 DEVBOX_SHARED_AUTH selects the directory containing auth.json and its lock.
 Without it, credentials stay in Pi's normal, instance-local agent directory.
 
@@ -180,7 +180,7 @@ export async function launch(
   try {
     sdk.initTheme(runtime.services.settingsManager.getTheme());
     console.log(
-      `Pi credentials: ${authPath}${env.DEVBOX_SHARED_AUTH ? " (shared by Devbox instances)" : " (isolated)"}`,
+      `Pi credentials: ${authPath}${env.DEVBOX_SHARED_AUTH ? " (shared by devbox instances)" : " (isolated)"}`,
     );
     await new sdk.InteractiveMode(runtime, {
       startupDiagnostics: runtime.diagnostics,

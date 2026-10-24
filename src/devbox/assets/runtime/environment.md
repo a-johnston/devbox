@@ -1,6 +1,6 @@
 # Devbox
 
-You are running in Devbox instance {id}, a Linux {architecture} {isolation}, as a non-root user.
+You are running in devbox instance {id}, a Linux {architecture} container, as a non-root user.
 `DEVBOX_INSTANCE={id}` is set in your environment.
 
 ## Repository

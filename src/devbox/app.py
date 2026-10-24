@@ -280,7 +280,6 @@ class App:
             .format(
                 id=id,
                 architecture=architecture,
-                isolation=self.engine.isolation,
                 checkout=project.checkout,
                 start=start,
             )

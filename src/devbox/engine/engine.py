@@ -122,8 +122,6 @@ class Engine(ABC):
     name: str
     executable: str
     install_hint: str
-    # How the guest is isolated from the host, as told to the agent.
-    isolation: str
     # Backend-specific `run` flags, placed before the shared ones.
     run_options: tuple[str, ...] = ()
 
@@ -262,7 +260,7 @@ def backend_name() -> str:
     defaults = {"darwin": "apple", "linux": "podman"}
     if sys.platform not in defaults:
         raise DevboxError(f"No container engine for {sys.platform}")
-    return defaults[sys.platform]
+    return defaults[os.getenv("DEVBOX_CONTAINER_BACKEND", sys.platform)]
 
 
 def select_engine() -> Engine:

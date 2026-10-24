@@ -30,7 +30,6 @@ class PodmanEngine(Engine):
     name = "podman"
     executable = "podman"
     install_hint = "Podman is required: https://podman.io/docs/installation"
-    isolation = "container"
     run_options = (
         "--userns",
         AGENT_USERNS,

@@ -1,8 +1,8 @@
-# Pi's shared Devbox login
+# Pi's shared devbox login
 
 ## Storage and first login
 
-Pi instances launched with configuration enabled share a **Devbox-only** credential store:
+Pi instances launched with configuration enabled share a **devbox-only** credential store:
 
 - Host: `$XDG_CONFIG_HOME/devbox/shared/pi/auth/` (default `~/.config/devbox/shared/pi/auth/`).
 - Guest: `/home/agent/.devbox/pi-auth/`, selected by `DEVBOX_SHARED_AUTH`.
@@ -10,7 +10,7 @@ Pi instances launched with configuration enabled share a **Devbox-only** credent
 
 The host directory is created privately (`0700`); Pi creates `auth.json` with mode `0600`.
 The whole directory is mounted read/write so Pi's native lock acquisition, token refresh,
-and credential write operate on the same shared filesystem in every instance. Devbox never
+and credential write operate on the same shared filesystem in every instance. devbox never
 reads its contents or copies credentials into images or per-instance homes.
 
 Run `/login` in any guest once. New instances and `devbox resume` reuse that login. Each
@@ -30,11 +30,11 @@ credential store under `.pi/agent` and can log in independently.
 
 1. Stop old Pi instances that were given copies of the host's OAuth credentials. They do not
    acquire this shared store or launcher retroactively and can still invalidate the host login.
-2. After updating Devbox, run `devbox build pi` in each project whose prepared image you use.
-3. Launch a new Pi instance and run `/login` for a fresh Devbox-only authorization. Do not
+2. After updating devbox, run `devbox build pi` in each project whose prepared image you use.
+3. Launch a new Pi instance and run `/login` for a fresh devbox-only authorization. Do not
    copy an existing host/old-instance OAuth login into the shared directory.
 4. If the host login was already invalidated, log in again on the host after stopping the old
-   instances. Host Pi and Devbox then refresh separate authorizations.
+   instances. Host Pi and devbox then refresh separate authorizations.
 
 Old saved homes are left untouched, including any old auth files; deleting an old instance
 through `cleanup` removes its saved copies, but not the new shared login.
@@ -66,7 +66,7 @@ actual credential path at startup, and the SDK writes to that selected path.
 
 Unmodified host Pi continues to use its own login. To opt into the same shared identity,
 run this launcher on the host with the Pi SDK installed beside it and set `DEVBOX_SHARED_AUTH`
-to the host directory above. For example, from a Devbox source checkout:
+to the host directory above. For example, from a devbox source checkout:
 
 ```sh
 launcher="$HOME/.local/share/devbox/pi-launcher"
@@ -77,7 +77,7 @@ DEVBOX_SHARED_AUTH="${XDG_CONFIG_HOME:-$HOME/.config}/devbox/shared/pi/auth" \
   node "$launcher/launcher.mjs"
 ```
 
-This is optional, manual setup, separate from Devbox's Python installation. Keep the SDK
+This is optional, manual setup, separate from devbox's Python installation. Keep the SDK
 version compatible with the guest and recopy the launcher after updating it. The launcher
 is exercised against Pi 1.3.0 (the image fallback) and the development environment's Pi.
 **Only do this if you trust guests to write state that a host process consumes**, including

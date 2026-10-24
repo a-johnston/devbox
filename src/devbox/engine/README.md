@@ -1,33 +1,25 @@
 # Container engines
 
-`App` talks to a container engine only through `Engine` in [engine.py](engine.py). Each
-backend is a small adapter around one CLI: [apple.py](apple.py) for Apple's `container`
-(a VM per container) and [podman.py](podman.py) for rootless Podman (shared-kernel
-containers). Use them as worked examples.
+`App` talks to a container engine through the [`Engine`](engine.py) interface. Each backend
+is a small adapter around its engine: [apple.py](apple.py) for Apple's `container` and [podman.py](podman.py)
+for rootless Podman, as examples.
 
 ## Adding a backend
 
-1. Subclass `Engine` in `devbox/engine/<name>.py`.
-2. Register it: add the class to `select_engine` and the platform to `backend_name` in
-   engine.py, and the name to the backends `Store` accepts in [state.py](../state.py).
-   The backend is chosen by host OS today; a second backend on the same OS would need an
-   explicit selection mechanism first.
-3. Add `tests/engine/test_<name>.py` (see Testing below).
-4. Document installation and isolation in the top-level README.
+1. Implement a new `Engine` subclass in `devbox/engine/<name>.py`.
+2. Add the class to `select_engine` and the platform to `backend_name` in `engine.py`.
+3. Add tests to `tests/engine/test_<name>.py` and update docs
 
 ## Attributes
 
-| Attribute | Meaning |
-| --- | --- |
-| `name` | Backend name and saved-state namespace (`<state>/<name>/`). Never reuse one: state is not portable between engines. |
-| `executable` | CLI that `call` runs. |
-| `install_hint` | Error shown when the executable is missing. |
-| `isolation` | Noun the agent is told it runs in, e.g. `VM` or `container`. |
-| `run_options` | Backend-specific `run` flags placed before the shared ones, e.g. user namespace and capability settings. |
+- `name`: Backend name and saved-state namespace (`<state>/<name>/`)
+- `executable`: CLI that `call` runs
+- `install_hint`: Error shown when the executable is missing
+- `run_options`: Backend-specific `run` flags placed before the shared ones, e.g. user namespace and capability settings
 
-## What the shared methods assume
+## Methods
 
-`run`, `exec`, `connect` and `stop` are implemented in the base class for a Docker-like CLI.
+The base class provides `run`, `exec`, `connect` and `stop` implementations for a Docker-like CLI.
 Override any whose syntax differs:
 
 - `run`: `run --detach --init --name <id> <run_options> --cpus N --memory M`, then
@@ -65,7 +57,7 @@ Override any whose syntax differs:
 - **Fail closed.** If CLI output is not in the expected shape, raise `DevboxError` rather than
   returning a partial list: cleanup decides what to delete from these inventories.
 - **Never clean up by wildcard.** No `prune`, global `--all` deletion or force flags; select
-  by Devbox's ownership labels or exact names.
+  by devbox's ownership labels or exact names.
 - **Mount only what `RunSpec` lists**: the instance's clone at the checkout path, its home at
   `/home/agent`, and any explicitly declared, narrow shared harness state directories. No host
   home or full harness config directory, sockets, devices or host networking. Shared-directory

@@ -41,11 +41,6 @@ def test_store_scopes_custom_roots_and_leaves_legacy_state_untouched(tmp_path: P
     assert directory.is_dir()
 
 
-def test_store_rejects_unknown_backend(tmp_path: Path) -> None:
-    with pytest.raises(DevboxError, match="Unknown state backend"):
-        Store(tmp_path, backend="../apple")
-
-
 def test_seed_is_copy_not_shared_state(tmp_path: Path, harness: Harness) -> None:
     source = tmp_path / "source"
     source.mkdir()

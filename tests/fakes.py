@@ -31,7 +31,6 @@ class ExecRequest:
 
 class FakeEngine(Engine):
     name = backend_name()
-    isolation = "VM"
 
     def __init__(self) -> None:
         self.builds: list[BuildRequest] = []

@@ -129,8 +129,17 @@ def cleanup(app: App, *, select: bool) -> None:
         return
     removed, recovered = app.cleanup(instances)
     print(f"Removed {removed} instances; approximately {format_size(recovered)} recovered.")
-    removed_images = app.cleanup_images(images)
-    print(f"Removed {removed_images} image references.")
+    removed_images, recovered_images = app.cleanup_images(images)
+    estimate = (
+        "approximate recovered space unavailable"
+        if recovered_images is None
+        else f"approximately {format_size(recovered_images)} recovered"
+    )
+    print(f"Removed {removed_images} image references; {estimate}.")
+    if removed_images:
+        print(
+            "Image estimates use full image sizes; shared layers and build caches may reduce recovery."
+        )
 
 
 def match[T](

@@ -434,16 +434,28 @@ class App:
             key=lambda image: image.reference,
         )
 
-    def cleanup_images(self, images: list[Image]) -> int:
+    def cleanup_images(self, images: list[Image]) -> tuple[int, int | None]:
         removed = 0
+        sizes: dict[str, int | None] = {}
         # Recheck each deletion: new sessions/containers must protect an image even
         # if they appeared during confirmation or an earlier deletion.
         for candidate in dict.fromkeys((image.reference, image.id) for image in images):
-            current = {(image.reference, image.id) for image in self.unused_images()}
+            current = {(image.reference, image.id): image for image in self.unused_images()}
             if candidate in current:
-                self.engine.remove_image(candidate[0])
+                image = current[candidate]
+                self.engine.remove_image(image.reference)
                 removed += 1
-        return removed
+                sizes[image_identity(image.id)] = image.size
+        if not removed:
+            return 0, 0
+        # Removing a tag need not remove its image. Count each ID only once, and only
+        # after its last reference disappears, including aliases we do not own.
+        remaining = {image_identity(image.id) for image in self.engine.images()}
+        reclaimed = [size for id, size in sizes.items() if id not in remaining]
+        recovered = (
+            None if None in reclaimed else sum(size for size in reclaimed if size is not None)
+        )
+        return removed, recovered
 
     def kill_all(self) -> int:
         containers = self.engine.containers()

@@ -17,6 +17,7 @@ from devbox.engine.engine import (
     Image,
     RunSpec,
     image_labels,
+    image_size,
     image_strings,
 )
 from devbox.errors import DevboxError
@@ -131,7 +132,15 @@ class PodmanEngine(Engine):
                 digests = image_strings(row.get("RepoDigests") or [])
                 labels = image_labels(row["Config"])
                 for reference in tags or (id,):
-                    images.append(Image(reference, actual_id, labels, (*tags, *digests)))
+                    images.append(
+                        Image(
+                            reference,
+                            actual_id,
+                            labels,
+                            (*tags, *digests),
+                            image_size(row.get("Size")),
+                        )
+                    )
             return images
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             raise DevboxError("Cannot safely determine existing images; refusing cleanup") from exc

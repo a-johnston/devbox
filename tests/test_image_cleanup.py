@@ -6,13 +6,13 @@ from pathlib import Path
 import pytest
 
 from devbox.app import App
-from devbox.cli import dispatch, parser
+from devbox.cli import dispatch, format_size, parser
 from devbox.config import Harness, Project
 from devbox.engine import IMAGE_KIND, IMAGE_SCHEMA, IMAGE_STORE, MANAGED, Image, image_labels
 from devbox.engine.apple import AppleEngine
 from devbox.engine.podman import PodmanEngine
 from devbox.errors import DevboxError
-from devbox.state import Store
+from devbox.state import Store, disk_usage
 from tests.fakes import FakeEngine
 from tests.test_cleanup import InventoryEngine, saved_instance
 from tests.test_utils import patch_input, patch_require_terminal
@@ -42,7 +42,7 @@ def app(tmp_path: Path) -> App:
 
 
 def owned(app: App, reference: str = "unused:latest", id: str = "sha256:unused") -> Image:
-    return Image(reference, id, {**app.image_owner, IMAGE_KIND: "prepared"})
+    return Image(reference, id, {**app.image_owner, IMAGE_KIND: "prepared"}, size=4096)
 
 
 def retain(app: App, image: str) -> str:
@@ -82,7 +82,8 @@ def test_cleanup_only_owns_labeled_images_in_this_store(app: App) -> None:
     unknown = replace(image, reference="unknown", labels={**image.labels, IMAGE_KIND: "unknown"})
     engine.inventory = [image, foreign_store, legacy, future, unknown]
     assert app.unused_images() == [image]
-    assert app.cleanup_images([image, image, foreign_store, legacy, future, unknown]) == 1
+    # The other references keep this image's bytes alive, even though we do not own them.
+    assert app.cleanup_images([image, image, foreign_store, legacy, future, unknown]) == (1, 0)
     assert engine.deleted == [image.reference]
 
 
@@ -99,7 +100,7 @@ def test_saved_instances_and_all_container_images_protect_aliases(app: App) -> N
     # Containers may reference a digest or a qualified local tag, irrespective of ownership.
     engine.used = {"sha256:running", "localhost/stopped:latest"}
     assert app.unused_images() == [unused]
-    assert app.cleanup_images([alias, saved, running, stopped, unused]) == 1
+    assert app.cleanup_images([alias, saved, running, stopped, unused]) == (1, unused.size)
     assert engine.deleted == [unused.reference]
 
 
@@ -136,7 +137,7 @@ def test_cleanup_rechecks_after_confirmation(app: App, change: str) -> None:
         engine.inventory = [replace(image, labels={})]
     else:
         engine.inventory = []
-    assert app.cleanup_images(candidates) == 0
+    assert app.cleanup_images(candidates) == (0, 0)
     assert engine.deleted == []
 
 
@@ -148,7 +149,7 @@ def test_cleanup_never_adds_new_image_candidates(app: App) -> None:
     candidates = app.unused_images()
     newer = owned(app, "newer:latest", "sha256:newer")
     engine.inventory.append(newer)
-    assert app.cleanup_images(candidates) == 1
+    assert app.cleanup_images(candidates) == (1, image.size)
     assert engine.inventory == [newer]
 
 
@@ -196,23 +197,29 @@ def test_image_only_cleanup_still_confirms(
     monkeypatch.setattr("builtins.input", confirm)
     dispatch(parser().parse_args(["cleanup", *(["--select"] if select else [])]), app)
     assert engine.deleted == [image.reference]
-    assert "Removed 1 image references." in capsys.readouterr().out
+    text = capsys.readouterr().out
+    assert "Removed 1 image references; approximately 4.0 KiB recovered." in text
+    assert "shared layers and build caches may reduce recovery" in text
     assert not app.store.root.exists()
 
 
 def test_combined_cleanup_removes_images_after_selected_homes(
-    app: App, monkeypatch: pytest.MonkeyPatch
+    app: App, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     engine = app.engine
     assert isinstance(engine, ImageEngine)
     image = owned(app)
     engine.inventory = [image]
-    retain(app, image.reference)
+    id = retain(app, image.reference)
+    instance_size = disk_usage(app.store.directory(id))
     patch_require_terminal(monkeypatch)
     patch_input(monkeypatch)
     dispatch(parser().parse_args(["cleanup"]), app)
     assert engine.deleted == [image.reference]
     assert list(app.store.instances.iterdir()) == []
+    text = capsys.readouterr().out
+    assert f"Removed 1 instances; approximately {format_size(instance_size)} recovered." in text
+    assert "Removed 1 image references; approximately 4.0 KiB recovered." in text
 
 
 def test_select_keeps_unselected_sessions_and_their_images(
@@ -256,6 +263,7 @@ def apple_image(labels: dict[str, str] | None = None) -> dict:
         "variants": [
             {
                 "digest": "sha256:manifest",
+                "size": 2048,
                 "platform": {"os": "linux"},
                 "config": {"config": {"Labels": labels or {}}},
             }
@@ -286,7 +294,7 @@ def test_apple_image_inventory_uses_oci_labels_and_variant_digests(
     row["configuration"]["descriptor"]["annotations"] = {"unrelated": "yes"}
     calls = reply(monkeypatch, engine, [row])
     assert engine.images() == [
-        Image("docker.io/library/ours:latest", "sha256:index", labels, ("sha256:manifest",))
+        Image("docker.io/library/ours:latest", "sha256:index", labels, ("sha256:manifest",), 2048)
     ]
     assert calls == [("image", "list", "--format", "json")]
 
@@ -338,7 +346,15 @@ def test_podman_images_include_dangling_and_all_tags(monkeypatch: pytest.MonkeyP
                 if id.endswith("tagged")
                 else None
             )
-            rows = [{"Id": id, "RepoTags": tags, "RepoDigests": [], "Config": {"Labels": labels}}]
+            rows = [
+                {
+                    "Id": id,
+                    "RepoTags": tags,
+                    "RepoDigests": [],
+                    "Config": {"Labels": labels},
+                    "Size": 4096,
+                }
+            ]
         return subprocess.CompletedProcess(args, 0, json.dumps(rows), "")
 
     monkeypatch.setattr(engine, "call", call)
@@ -350,6 +366,7 @@ def test_podman_images_include_dangling_and_all_tags(monkeypatch: pytest.MonkeyP
     ]
     assert images[0].aliases == ("localhost/ours:latest", "localhost/alias:latest")
     assert all(image.labels == labels for image in images)
+    assert all(image.size == 4096 for image in images)
     assert calls[0] == ("image", "list", "--all", "--no-trunc", "--format", "json")
 
 
@@ -421,9 +438,72 @@ def test_references_are_rechecked_between_deletions(
         retain(app, second.reference)
 
     monkeypatch.setattr(engine, "remove_image", remove_then_retain)
-    assert app.cleanup_images([first, second]) == 1
+    assert app.cleanup_images([first, second]) == (1, first.size)
     assert engine.deleted == [first.reference]
     assert engine.inventory == [second]
+
+
+def test_image_recovery_counts_each_deleted_id_once(app: App) -> None:
+    engine = app.engine
+    assert isinstance(engine, ImageEngine)
+    first = owned(app)
+    alias = replace(first, reference="alias:latest")
+    second = replace(owned(app, "second:latest", "sha256:second"), size=8192)
+    engine.inventory = [first, alias, second]
+    assert app.cleanup_images([first, first, alias, second]) == (3, 12288)
+    assert engine.inventory == []
+
+
+def test_image_recovery_uses_rechecked_sizes(app: App) -> None:
+    engine = app.engine
+    assert isinstance(engine, ImageEngine)
+    image = owned(app)
+    engine.inventory = [image]
+    candidates = app.unused_images()
+    engine.inventory = [replace(image, size=8192)]
+    assert app.cleanup_images(candidates) == (1, 8192)
+
+
+def test_image_recovery_with_unknown_size_is_not_reported_as_zero(
+    app: App, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    engine = app.engine
+    assert isinstance(engine, ImageEngine)
+    engine.inventory = [replace(owned(app), size=None)]
+    patch_require_terminal(monkeypatch)
+    patch_input(monkeypatch)
+    dispatch(parser().parse_args(["cleanup"]), app)
+    text = capsys.readouterr().out
+    assert "Removed 1 image references; approximate recovered space unavailable." in text
+
+
+def test_apple_image_size_includes_all_variants(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = AppleEngine()
+    row = apple_image()
+    row["variants"].append({**row["variants"][0], "digest": "sha256:other", "size": 4096})
+    reply(monkeypatch, engine, [row])
+    assert engine.images()[0].size == 6144
+
+
+@pytest.mark.parametrize("value", [None, -1, True, "4096", 1.5, {}])
+@pytest.mark.parametrize("backend", ["apple", "podman"])
+def test_optional_image_size_metadata_can_be_unavailable(
+    monkeypatch: pytest.MonkeyPatch, backend: str, value: object
+) -> None:
+    engine: AppleEngine | PodmanEngine
+    if backend == "apple":
+        engine = AppleEngine()
+        row = apple_image()
+        row["variants"][0]["size"] = value
+    else:
+        engine = PodmanEngine()
+        row = {
+            "Id": "sha256:ours",
+            "Config": {"Labels": {MANAGED: "1"}},
+            "Size": value,
+        }
+    reply(monkeypatch, engine, [row])
+    assert engine.images()[0].size is None
 
 
 def test_inventory_failure_does_not_delete_instance_homes(

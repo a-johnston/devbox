@@ -87,12 +87,19 @@ def image_labels(config: object) -> dict[str, str]:
     return labels
 
 
+def image_size(value: object) -> int | None:
+    """Optional size metadata must not turn an unknown estimate into zero bytes."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
 @dataclass(frozen=True)
 class Image:
     reference: str
     id: str
     labels: dict[str, str]
     aliases: tuple[str, ...] = ()
+    # Full image bytes, not exclusive disk usage: layers may be shared or cached.
+    size: int | None = None
 
     @property
     def identities(self) -> set[str]:

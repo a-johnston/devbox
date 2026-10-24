@@ -11,7 +11,15 @@ from pathlib import Path
 from typing import Any
 
 from devbox.config import size
-from devbox.engine.engine import MANAGED, Container, Engine, Image, image_labels, image_strings
+from devbox.engine.engine import (
+    MANAGED,
+    Container,
+    Engine,
+    Image,
+    image_labels,
+    image_size,
+    image_strings,
+)
 from devbox.errors import DevboxError
 
 
@@ -129,7 +137,9 @@ class AppleEngine(Engine):
                     for key, value in labels[0].items()
                     if all(label.get(key) == value for label in labels)
                 }
-                images.append(Image(reference, id, common, tuple(aliases)))
+                sizes = [image_size(variant.get("size")) for variant in variants]
+                size = None if None in sizes else sum(value for value in sizes if value is not None)
+                images.append(Image(reference, id, common, tuple(aliases), size))
             return images
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             raise DevboxError("Cannot safely determine existing images; refusing cleanup") from exc

@@ -49,7 +49,9 @@ Override any whose syntax differs:
   service (Apple starts it and stops it again if it was not running).
 - `build(tag, file, context, args, *, platform, cpus, labels)`: build a Containerfile. The
   labels must land in the image's OCI config, because cleanup reads them from there.
-- `images()`: every image, including dangling ones, with their OCI config labels.
+- `images()`: every image, including dangling ones, with their OCI config labels and full
+  size in bytes (`None` when unavailable). Size estimates may include shared layers; they
+  are not exclusive disk usage. All references to the same image must have the same ID.
 - `container_images()`: references and IDs used by all containers, running or stopped,
   whoever owns them.
 - `remove_image(reference)`: delete exactly that reference, without force or pruning.

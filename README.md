@@ -142,7 +142,11 @@ merge or overwrite an existing destination; split legacy state by backend if nec
 then asks for confirmation. **Deleting saved instances permanently deletes their conversations,
 unfetched clones and copied credentials.** Use `cleanup --select` to choose instances with fzf. Running and
 stopped containers protect state; retained instances also protect their images. Cleanup does
-not remove containers, unrelated images or shared build caches.
+not remove containers, unrelated images or shared build caches. Its summary reports approximate
+space recovered separately for instance folders and images. Image estimates count each deleted
+image once, only after its last reference is removed, and use the engine's full image sizes;
+shared layers and build caches can make actual recovery lower. If size metadata is unavailable,
+the image estimate is reported as unavailable rather than zero.
 
 On macOS each container is a VM; Linux rootless containers share the host kernel and run
 with `no-new-privileges` and no capabilities. Devbox refuses a krun default

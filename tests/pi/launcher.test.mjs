@@ -216,6 +216,33 @@ test("unapproved project resources are skipped in a headless launch", async (t) 
   assert.equal(calls.trusted, false);
 });
 
+test("an undefined stored trust decision still asks", async (t) => {
+  const dir = temp(t);
+  let asked = false;
+  const { sdk, calls } = mockSdk(join(dir, "agent"), (runtime) =>
+    runtime.replace({
+      projectTrustContext: {
+        hasUI: true,
+        ui: {
+          confirm: async () => {
+            asked = true;
+            return true;
+          },
+        },
+      },
+    }),
+  );
+  sdk.ProjectTrustStore = class {
+    get() {
+      return undefined;
+    }
+  };
+  sdk.hasTrustRequiringProjectResources = () => true;
+  await launch(sdk, parseArgs([]), {}, dir);
+  assert.equal(asked, true);
+  assert.equal(calls.trusted, true);
+});
+
 test("switching workspace uses the active TUI for a trust question", async (t) => {
   const dir = temp(t);
   let asked = false;

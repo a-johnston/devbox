@@ -104,7 +104,8 @@ export async function launch(
     if (projectTrusted === undefined) {
       projectTrusted =
         !sdk.hasTrustRequiringProjectResources(cwd) || trustStore.get(cwd);
-      if (projectTrusted === null) {
+      // A missing decision may be null or undefined; neither is a refusal.
+      if (projectTrusted == null) {
         const policy = settingsManager.getDefaultProjectTrust();
         const confirm = () =>
           projectTrustContext?.hasUI

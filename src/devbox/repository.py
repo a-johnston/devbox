@@ -27,7 +27,8 @@ class Fetched:
     rewritten: bool
     # Changed image inputs and manifest-declared paths, relative to the repository root.
     watched: tuple[str, ...]
-    branch: str
+    # No local branch is published when there are no commits beyond the starting point.
+    branch: str | None
     branch_current: bool
 
 
@@ -71,7 +72,7 @@ def local_branch(repository: Path, name: str, new: str, old: str | None) -> bool
     if f"branch {ref}" in worktrees.split("\0"):
         return False
     # Compare-and-swap: do not clobber a branch created or moved since we checked it.
-    # Ref collisions (e.g. an existing devbox/<id> branch) also leave host refs intact.
+    # Ref collisions (e.g. an existing <instance> branch) also leave host refs intact.
     return (
         git_output(repository, "update-ref", "--no-deref", ref, new, current or "0" * len(new))
         is not None
@@ -79,9 +80,15 @@ def local_branch(repository: Path, name: str, new: str, old: str | None) -> bool
 
 
 def fetch(
-    repository: Path, clone: Path, namespace: str, base: str, watched: Sequence[str]
+    repository: Path,
+    clone: Path,
+    namespace: str,
+    base: str,
+    watched: Sequence[str],
+    *,
+    branch_prefix: str,
 ) -> list[Fetched]:
-    """Copy clone branches under namespace and publish safe, namespaced local branches."""
+    """Copy clone refs under namespace; publish new work under a concise local prefix."""
     before = refs(repository, namespace)
     git(
         repository,
@@ -100,18 +107,19 @@ def fetch(
     for ref, new in refs(repository, namespace).items():
         old = before.get(ref)
         changed = git(repository, "diff", "--name-only", "-z", f"{base}...{new}", "--", *watched)
-        branch = ref.removeprefix("refs/")
+        commits = int(git(repository, "rev-list", "--count", f"{base}..{new}"))
+        branch = f"{branch_prefix}/{ref.removeprefix(namespace)}" if commits else None
         fetched.append(
             Fetched(
                 ref,
-                int(git(repository, "rev-list", "--count", f"{base}..{new}")),
+                commits,
                 # Rewritten since the last fetch: an earlier review no longer applies.
                 old is not None
                 and old != new
                 and git_output(repository, "merge-base", "--is-ancestor", old, new) is None,
                 tuple(changed.split("\0")[:-1]),
                 branch,
-                local_branch(repository, branch, new, old),
+                branch is not None and local_branch(repository, branch, new, old),
             )
         )
     return fetched

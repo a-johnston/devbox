@@ -350,8 +350,9 @@ def test_fetch_dispatch_prints_flagged_refs(
     dispatch(parser().parse_args(["fetch", id.removeprefix("devbox-")[:6]]), app)
     out = capsys.readouterr().out
     assert f"refs/devbox/{id}/feature  1 new commit  CHANGES .devbox/Containerfile" in out
-    assert f"refs/devbox/{id}/main  0 new commits  local branch devbox/{id}/main\n" in out
-    assert f"local branch devbox/{id}/feature" in out
+    assert f"refs/devbox/{id}/main  0 new commits\n" in out
+    assert f"local branch {id.removeprefix('devbox-')}/feature" in out
+    assert "WARNING" not in out
     base = app.store.metadata(id)["base"]
     assert f"Counted from {base[:12]}, where {id} started; see devbox review." in out
     assert "merge" not in out

@@ -391,7 +391,7 @@ class App:
         return branch, head, branch or head[:12]
 
     def fetch(self, id: str) -> list[repository.Fetched]:
-        """Fetch instance refs and publish local devbox/<id>/* branches when safe."""
+        """Fetch instance refs and publish new work as <short-instance>/<branch>."""
         metadata = self.store.metadata(id)
         clone = self.store.directory(id) / "repo"
         # The host's manifest, not the clone's, decides which changes need attention.
@@ -403,7 +403,12 @@ class App:
             if path.is_relative_to(project.checkout)
         ] + [f":(glob){pattern}" for pattern in project.watch]
         return repository.fetch(
-            project.root, clone, f"refs/devbox/{id}/", metadata["base"], watched
+            project.root,
+            clone,
+            f"refs/devbox/{id}/",
+            metadata["base"],
+            watched,
+            branch_prefix=id.removeprefix("devbox-"),
         )
 
     def review(self, id: str, ref: str, *options: str) -> None:

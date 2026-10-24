@@ -63,14 +63,97 @@ def test_fetch_namespaces_branches_and_flags_trusted_paths(
         "hooks/a/run.sh",
     )
     assert git(project.root, "rev-parse", f"refs/devbox/{id}/plain") == plain
-    for ref, branch in fetched.items():
-        assert branch.branch == ref.removeprefix("refs/")
+    for name in ("plain", "risky"):
+        branch = fetched[f"refs/devbox/{id}/{name}"]
+        assert branch.branch == f"{id.removeprefix('devbox-')}/{name}"
         assert branch.branch_current
         assert git(project.root, "rev-parse", f"refs/heads/{branch.branch}") == git(
-            project.root, "rev-parse", ref
+            project.root, "rev-parse", branch.ref
         )
+    assert fetched[f"refs/devbox/{id}/main"].branch is None
+    assert set(repository.refs(project.root, "refs/heads/")) == {
+        "refs/heads/main",
+        *(f"refs/heads/{id.removeprefix('devbox-')}/{name}" for name in ("plain", "risky")),
+    }
     assert git(project.root, "rev-parse", "main") == host_main
     assert git(project.root, "tag") == ""
+
+
+def test_fetch_with_no_new_work_only_updates_tracking_refs(
+    project: Project, instance: tuple[App, str, Path]
+) -> None:
+    app, id, clone = instance
+    base = git(clone, "rev-parse", "main")
+    git(clone, "branch", "untouched")
+    for _ in range(2):
+        fetched = app.fetch(id)
+        assert {branch.ref for branch in fetched} == {
+            f"refs/devbox/{id}/main",
+            f"refs/devbox/{id}/untouched",
+        }
+        assert all(branch.commits == 0 and branch.branch is None for branch in fetched)
+        assert not any(branch.branch_current for branch in fetched)
+        assert repository.refs(project.root, "refs/heads/") == {"refs/heads/main": base}
+
+
+def test_fetch_does_not_reset_a_published_branch_when_guest_drops_all_new_work(
+    project: Project, instance: tuple[App, str, Path]
+) -> None:
+    app, id, clone = instance
+    tip = commit(clone, "feature", {"a": "1"})
+    published = next(branch for branch in app.fetch(id) if branch.ref.endswith("/feature"))
+    git(clone, "reset", "--hard", "main")
+    branch = next(branch for branch in app.fetch(id) if branch.ref.endswith("/feature"))
+    assert branch.commits == 0
+    assert branch.branch is None
+    assert not branch.branch_current
+    assert branch.rewritten
+    assert git(project.root, "rev-parse", branch.ref) == git(clone, "rev-parse", "main")
+    assert git(project.root, "rev-parse", f"refs/heads/{published.branch}") == tip
+
+
+def test_fetch_publishes_main_when_it_has_new_work(
+    project: Project, instance: tuple[App, str, Path]
+) -> None:
+    app, id, clone = instance
+    base = git(project.root, "rev-parse", "main")
+    tip = commit(clone, "main", {"a": "1"})
+    (branch,) = app.fetch(id)
+    assert branch.commits == 1
+    assert branch.branch == f"{id.removeprefix('devbox-')}/main"
+    assert branch.branch_current
+    assert git(project.root, "rev-parse", f"refs/heads/{branch.branch}") == tip
+    assert git(project.root, "rev-parse", "main") == base
+
+
+def test_fetch_keeps_different_instances_branches_separate(
+    project: Project, harness: Harness, instance: tuple[App, str, Path]
+) -> None:
+    app, first_id, first_clone = instance
+    second_id = app.new(project, harness, no_config=True)
+    second_clone = app.store.directory(second_id) / "repo"
+    first = commit(first_clone, "feature", {"a": "1"})
+    second = commit(second_clone, "feature", {"a": "2"})
+    for id, tip in ((first_id, first), (second_id, second)):
+        branch = next(branch for branch in app.fetch(id) if branch.ref.endswith("/feature"))
+        assert branch.branch_current
+        assert branch.branch == f"{id.removeprefix('devbox-')}/feature"
+        assert git(project.root, "rev-parse", f"refs/heads/{branch.branch}") == tip
+
+
+def test_fetch_leaves_legacy_local_branches_untouched(
+    project: Project, instance: tuple[App, str, Path]
+) -> None:
+    app, id, clone = instance
+    first = commit(clone, "feature", {"a": "1"})
+    app.fetch(id)
+    legacy = f"devbox/{id}/feature"
+    git(project.root, "branch", legacy, first)
+    second = commit(clone, "feature", {"a": "2"})
+    branch = next(branch for branch in app.fetch(id) if branch.ref.endswith("/feature"))
+    assert branch.branch_current
+    assert git(project.root, "rev-parse", f"refs/heads/{branch.branch}") == second
+    assert git(project.root, "rev-parse", f"refs/heads/{legacy}") == first
 
 
 def test_fetch_from_a_worktree_watches_repository_relative_paths(
@@ -106,9 +189,12 @@ def test_fetch_reports_rewritten_and_pruned_branches(
     assert set(fetched) == {"main", "feature"}
     assert fetched["feature"].rewritten
     assert fetched["feature"].branch_current
-    assert git(project.root, "rev-parse", f"refs/heads/devbox/{id}/feature") == rewritten
+    assert (
+        git(project.root, "rev-parse", f"refs/heads/{id.removeprefix('devbox-')}/feature")
+        == rewritten
+    )
     # Prune tracking refs, never local branches that may hold reviewed or host work.
-    assert git(project.root, "rev-parse", f"refs/heads/devbox/{id}/gone") == gone
+    assert git(project.root, "rev-parse", f"refs/heads/{id.removeprefix('devbox-')}/gone") == gone
 
 
 def test_fetch_refreshes_untouched_local_branches(
@@ -132,7 +218,7 @@ def test_fetch_does_not_move_checked_out_local_branches(
     app, id, clone = instance
     first = commit(clone, "feature", {"a": "1"})
     app.fetch(id)
-    name = f"devbox/{id}/feature"
+    name = f"{id.removeprefix('devbox-')}/feature"
     checkout = tmp_path / "review" if linked else project.root
     if linked:
         git(project.root, "worktree", "add", "--quiet", str(checkout), name)
@@ -153,7 +239,7 @@ def test_fetch_preserves_locally_changed_branches_and_warns(
     app, id, clone = instance
     commit(clone, "feature", {"a": "1"})
     app.fetch(id)
-    local = f"devbox/{id}/feature"
+    local = f"{id.removeprefix('devbox-')}/feature"
     host_main = git(project.root, "rev-parse", "main")
     git(project.root, "branch", "--force", local, host_main)
     tip = commit(clone, "feature", {"a": "2"})
@@ -171,13 +257,13 @@ def test_fetch_preserves_existing_host_refs_on_first_fetch(
 ) -> None:
     app, id, clone = instance
     tip = commit(clone, "feature", {"a": "1"})
-    name = f"devbox/{id}/feature"
+    name = f"{id.removeprefix('devbox-')}/feature"
     host_main = git(project.root, "rev-parse", "main")
     if collision == "symbolic":
         git(project.root, "symbolic-ref", f"refs/heads/{name}", "refs/heads/main")
     else:
         if collision == "prefix":
-            name = f"devbox/{id}"
+            name = id.removeprefix("devbox-")
         git(project.root, "branch", name, host_main)
     branch = next(branch for branch in app.fetch(id) if branch.ref.endswith("/feature"))
     assert not branch.branch_current
@@ -200,7 +286,7 @@ def test_fetch_does_not_overwrite_a_concurrently_created_or_moved_branch(
     if existing:
         app.fetch(id)
         tip = commit(clone, "feature", {"a": "2"})
-    local = f"refs/heads/devbox/{id}/feature"
+    local = f"refs/heads/{id.removeprefix('devbox-')}/feature"
     host_main = git(project.root, "rev-parse", "main")
     original = repository.git_output
 

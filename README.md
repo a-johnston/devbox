@@ -36,7 +36,7 @@ devbox attach [id]                    # omit ID for a picker; unique prefixes wo
 devbox shell [id]                     # non-root inspection shell
 devbox stop [id ...]                  # stop processes, keep container disk
 devbox rm [id ...]                    # remove container, keep history and clone
-devbox fetch [id]                     # fetch refs and local devbox/<id>/* branches
+devbox fetch [id]                     # fetch new work as local <short-instance>/<branch>
 devbox review [id] [branch]           # fetch, pick a branch and show its diff
 devbox sessions                       # saved conversations, including removed containers
 devbox sync [id] [branch ...]         # deliver host branches to an instance as host/<branch>
@@ -93,19 +93,23 @@ context and Containerfile must be inside the project and outside `.git`.
 Each instance clones the committed `HEAD` of the checkout you launch from (a worktree or
 the primary) into its saved state, and mounts the clone at the checkout's path. Uncommitted
 changes are not copied. The clone has no remote: the agent commits to branches, and
-`devbox fetch` copies them into `refs/devbox/<id>/` in your repository and creates matching
-local branches named `devbox/<id>/<branch>`, so Git can list and tab-complete them. It reports
-new commits, branches rewritten since the last fetch, and changes to
+`devbox fetch` copies them into `refs/devbox/<id>/` in your repository. For branches with
+commits beyond the instance's starting point, it publishes local branches named
+`<short-instance>/<branch>` (for example, `orange/harness-vim` from `devbox-orange`), so
+Git can list and tab-complete them without mixing different instances' work. Branches with
+`0 new commits` are still tracked and reported, but do not create or update local branches.
+It reports new commits, branches rewritten since the last fetch, and changes to
 the manifest, Containerfile, build context and `[review] watch` paths (Git glob pathspecs).
 Watched paths always come from your manifest, not the clone's. `devbox review [id] [branch]`
 fetches, picks a branch (with fzf when more than one has new commits) and shows its changes
 since the instance started with `git diff` in your repository; `--stat` summarizes them.
 Land fetched branches however your project does, for example with
-`git merge devbox/<id>/<branch>` after review. Later fetches refresh a local branch only if
+`git merge orange/harness-vim` after review. Later fetches refresh a local branch only if
 it still points to the last fetched commit and is not checked out in any worktree. Existing
 branches with different tips, checked-out branches and naming conflicts are left alone with
 a warning; the `refs/devbox/<id>/` refs still update and remain the source for review. Local
-branches are not pruned when an instance branch disappears; remove them with Git when no
+branches are not pruned when an instance branch disappears or loses its new commits;
+legacy `devbox/<id>/<branch>` branches are also left untouched. Remove them with Git when no
 longer needed. Do not run Git or project tooling inside a clone on the host: its config and
 hooks are agent-controlled.
 

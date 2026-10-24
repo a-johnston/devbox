@@ -331,13 +331,14 @@ def fetched_label(branch: Fetched) -> str:
         notes.append("REWRITTEN since the last fetch")
     if branch.watched:
         notes.append("CHANGES " + ", ".join(printable(path) for path in branch.watched))
-    if branch.branch_current:
-        notes.append("local branch " + printable(branch.branch))
-    else:
-        notes.append(
-            f"WARNING: local branch {printable(branch.branch)} not updated "
-            f"(checked out, changed locally, or could not be created); use {printable(branch.ref)}"
-        )
+    if branch.branch is not None:
+        if branch.branch_current:
+            notes.append("local branch " + printable(branch.branch))
+        else:
+            notes.append(
+                f"WARNING: local branch {printable(branch.branch)} not updated "
+                f"(checked out, changed locally, or could not be created); use {printable(branch.ref)}"
+            )
     return f"{printable(branch.ref)}  {'  '.join(notes)}"
 
 
@@ -432,7 +433,7 @@ def parser() -> argparse.ArgumentParser:
         command.set_defaults(func=func)
         command.add_argument("--json", dest="json_output", action="store_true")
     command = commands.add_parser(
-        "fetch", help="Fetch an instance's branches and create local devbox/<id>/* branches"
+        "fetch", help="Fetch new work as local <short-instance>/<branch> branches"
     )
     command.set_defaults(func=_fetch)
     command.add_argument("id", nargs="?", help="Instance ID, including removed containers")

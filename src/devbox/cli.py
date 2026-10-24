@@ -120,7 +120,8 @@ def cleanup(app: App, *, select: bool) -> None:
     if images:
         print("Unused Devbox image references:")
         for image in images:
-            print(f"  {image.reference}")
+            estimate = "size unavailable" if image.size is None else f"~{format_size(image.size)}"
+            print(f"  {image.reference}  {estimate}")
         print("Images can be rebuilt; shared layers and build caches may remain.")
     size = format_size(sum(instance.size for instance in instances))
     targets = f"{len(instances)} instances (~{size}) and {len(images)} images"

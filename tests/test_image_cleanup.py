@@ -242,14 +242,32 @@ def test_select_keeps_unselected_sessions_and_their_images(
     assert app.store.directory(retained).exists()
 
 
-def test_image_cleanup_cancellation_deletes_nothing(
-    app: App, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("size", "estimate"),
+    [(4096, "~4.0 KiB"), (2 * 1024**2, "~2.0 MiB"), (0, "~0.0 B"), (None, "size unavailable")],
+)
+def test_image_cleanup_lists_sizes_before_confirmation_and_cancellation_deletes_nothing(
+    app: App,
+    size: int | None,
+    estimate: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     engine = app.engine
     assert isinstance(engine, ImageEngine)
-    engine.inventory = [owned(app)]
+    image = replace(owned(app), size=size)
+    other = replace(owned(app, "other:latest", "sha256:other"), size=8192)
+    engine.inventory = [image, other]
     patch_require_terminal(monkeypatch)
-    patch_input(monkeypatch, "n")
+
+    def confirm(prompt: str) -> str:
+        text = capsys.readouterr().out
+        assert f"  {image.reference}  {estimate}\n" in text
+        assert f"  {other.reference}  ~8.0 KiB\n" in text
+        assert not engine.deleted
+        return "n"
+
+    monkeypatch.setattr("builtins.input", confirm)
     dispatch(parser().parse_args(["cleanup"]), app)
     assert engine.deleted == []
 

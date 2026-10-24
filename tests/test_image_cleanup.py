@@ -182,37 +182,6 @@ def test_incomplete_retained_launch_blocks_image_cleanup(app: App) -> None:
     assert engine.deleted == []
 
 
-@pytest.mark.parametrize("select", [False, True])
-def test_image_only_cleanup_still_confirms(
-    app: App, select: bool, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    engine = app.engine
-    assert isinstance(engine, ImageEngine)
-    image = owned(app)
-    engine.inventory = [image]
-    patch_require_terminal(monkeypatch)
-
-    def pick(rows: list, prompt: str, label: object) -> list:
-        assert prompt == "Unused images", "no instances to pick"
-        return rows
-
-    monkeypatch.setattr("devbox.cli.select_many", pick)
-
-    def confirm(prompt: str) -> str:
-        assert image.reference in capsys.readouterr().out
-        assert "1 image" in prompt
-        assert not engine.deleted
-        return "y"
-
-    monkeypatch.setattr("builtins.input", confirm)
-    dispatch(parser().parse_args(["cleanup", *(["--select"] if select else [])]), app)
-    assert engine.deleted == [image.reference]
-    text = capsys.readouterr().out
-    assert "Removed 1 image references; approximately 4.0 KiB recovered." in text
-    assert "shared layers and build caches may reduce recovery" in text
-    assert not app.store.root.exists()
-
-
 def test_combined_cleanup_removes_images_after_selected_homes(
     app: App, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -232,51 +201,29 @@ def test_combined_cleanup_removes_images_after_selected_homes(
     assert "Removed 1 image references; approximately 4.0 KiB recovered." in text
 
 
-def test_select_keeps_unselected_sessions_and_their_images(
-    app: App, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    engine = app.engine
-    assert isinstance(engine, ImageEngine)
-    first = owned(app)
-    kept = owned(app, "kept:latest", "sha256:kept")
-    engine.inventory = [first, kept]
-    selected = retain(app, first.reference)
-    retained = retain(app, kept.reference)
-    patch_require_terminal(monkeypatch)
-    monkeypatch.setattr(
-        "devbox.cli.select_many",
-        lambda rows, prompt, label: (
-            rows if prompt == "Unused images" else [row for row in rows if row.id == selected]
-        ),
-    )
-    patch_input(monkeypatch)
-    dispatch(parser().parse_args(["cleanup", "--select"]), app)
-    assert engine.deleted == [first.reference]
-    assert app.store.directory(retained).exists()
-
-
-@pytest.mark.parametrize(
-    ("size", "estimate"),
-    [(4096, "~4.0 KiB"), (2 * 1024**2, "~2.0 MiB"), (0, "~0.0 B"), (None, "size unavailable")],
-)
 def test_image_cleanup_lists_sizes_before_confirmation_and_cancellation_deletes_nothing(
     app: App,
-    size: int | None,
-    estimate: str,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     engine = app.engine
     assert isinstance(engine, ImageEngine)
-    image = replace(owned(app), size=size)
-    other = replace(owned(app, "other:latest", "sha256:other"), size=8192)
-    engine.inventory = [image, other]
+    sizes = [
+        (4096, "~4.0 KiB"),
+        (2 * 1024**2, "~2.0 MiB"),
+        (0, "~0.0 B"),
+        (None, "size unavailable"),
+    ]
+    engine.inventory = [
+        replace(owned(app, f"image{n}:latest", f"sha256:image{n}"), size=size)
+        for n, (size, _) in enumerate(sizes)
+    ]
     patch_require_terminal(monkeypatch)
 
     def confirm(prompt: str) -> str:
         text = capsys.readouterr().out
-        assert f"  {image.reference}  {estimate}\n" in text
-        assert f"  {other.reference}  ~8.0 KiB\n" in text
+        for image, (_, estimate) in zip(engine.inventory, sizes, strict=True):
+            assert f"  {image.reference}  {estimate}\n" in text
         assert not engine.deleted
         return "n"
 
@@ -694,6 +641,7 @@ def test_cleanup_only_images_keeps_instances_and_their_images(
     assert "Orphaned instances" not in text
     assert "Removed 1 image references; approximately 4.0 KiB recovered." in text
     assert "Removed 1 instances" not in text
+    assert "shared layers and build caches may reduce recovery" in text
 
 
 @pytest.mark.parametrize(

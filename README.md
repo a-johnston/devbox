@@ -113,7 +113,10 @@ Targets python >= 3.12
 uv sync --locked
 uv run prek install
 uv run pytest                        # no running container engine needed
-uv run prek run --all-files           # lint, format, types and tests
+uv run prek run --all-files           # lint, format and types
 ```
+
+Tests run explicitly, not in prek: the full suite exercises real Git clones, worktrees,
+fetches and rebases, whose subprocess overhead makes it unsuitable for a per-commit hook.
 
 - [adding a container engine](src/devbox/engine/README.md)

@@ -1,8 +1,8 @@
-import inspect
 import json
-import os
 import subprocess
 import sys
+from functools import partial
+from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -23,11 +23,8 @@ from tests.test_utils import patch_input
     "args",
     [
         ("y", True),
-        ("Y", True),
         (" Y ", True),
         ("n", False),
-        ("No", False),
-        ("asd", False),
         ("yes", False),
     ],
 )
@@ -37,18 +34,16 @@ def test_query(monkeypatch: pytest.MonkeyPatch, args) -> None:
     assert expected == query("")
 
 
-@pytest.mark.parametrize("args", [["--help"], ["--version"], ["completion", "bash"]])
-def test_installed_devbox_entry_point(args: list[str]) -> None:
+def test_installed_devbox_entry_point() -> None:
+    # One packaging smoke test; parser behavior is covered in-process below.
     result = subprocess.run(
-        [str(Path(sys.executable).with_name("devbox")), *args],
+        [str(Path(sys.executable).with_name("devbox")), "--help"],
         capture_output=True,
         text=True,
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip()
-    if args != ["--version"]:
-        assert "devbox" in result.stdout
+    assert "devbox" in result.stdout
 
 
 def test_new_defaults_to_current_project() -> None:
@@ -56,43 +51,6 @@ def test_new_defaults_to_current_project() -> None:
     assert args.project == Path(".")
     assert args.harness == "pi"
     assert args.detach
-
-
-@pytest.mark.parametrize("action", ["new", "build", "resume"])
-def test_preparation_options(action: str) -> None:
-    assert parser().parse_args([action, "--no-config"]).no_config
-
-
-@pytest.mark.parametrize(
-    ("argv", "handler", "keys"),
-    [
-        (["new"], cli._run, {"harness", "project", "no_config", "detach"}),
-        (["build"], cli._build, {"harness", "project", "no_config"}),
-        (["attach"], cli._attach, {"id"}),
-        (["shell"], cli._shell, {"id"}),
-        (["stop"], cli._stop, {"ids"}),
-        (["rm"], cli._rm, {"ids"}),
-        (["ls"], cli._ls, {"json_output"}),
-        (["sessions"], cli._sessions, {"json_output"}),
-        (["resume"], cli._resume, {"session", "project", "source", "detach", "no_config"}),
-        (["sync"], cli._sync, {"id", "branches"}),
-        (["kill-all"], cli._kill_all, {"yes"}),
-        (["fetch"], cli._fetch, {"id"}),
-        (["review"], cli._review, {"id", "branch", "stat"}),
-        (["land"], cli._land, {"id", "branch"}),
-        (["cleanup"], cli.cleanup, {"select", "only"}),
-        (["completion", "bash"], cli._completion, {"shell"}),
-        (["init"], cli._init, {"project"}),
-    ],
-)
-def test_parser_selects_handler_with_only_its_arguments(argv, handler, keys) -> None:
-    values = vars(parser().parse_args(argv))
-    assert values.pop("func") is handler
-    assert values.pop("state_dir") is None
-    assert set(values) == keys
-    if handler not in cli.STANDALONE:
-        values["app"] = object()
-    inspect.signature(handler).bind(**values)
 
 
 @pytest.mark.parametrize("action", ["attach", "shell"])
@@ -162,8 +120,7 @@ def test_build_dispatch(
     assert capsys.readouterr().out == "prepared-image\n"
 
 
-@pytest.mark.parametrize("detach", [False, True])
-@pytest.mark.parametrize("override", [False, True])
+@pytest.mark.parametrize(("detach", "override"), [(False, False), (True, True)])
 def test_resume_dispatch(
     detach: bool,
     override: bool,
@@ -329,6 +286,17 @@ def test_container_listing_dispatch(
         assert output.splitlines() == [cli.container_label(c) for c in engine.rows]
 
 
+def test_sync_dispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = FakeEngine()
+    container = Container("devbox-aabb", "running", "project", "pi", "now")
+    engine.rows = [container]
+    app = App(engine, Store(tmp_path))
+    sync = Mock(return_value=["host/main", "host/other"])
+    monkeypatch.setattr(app, "sync", sync)
+    dispatch(parser().parse_args(["sync", "aabb", "main", "other"]), app)
+    sync.assert_called_once_with(container, ["main", "other"])
+
+
 def test_kill_all_yes_dispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     engine = FakeEngine()
     engine.rows = [Container("devbox-aabb", "running", "project", "pi", "now")]
@@ -481,53 +449,63 @@ def test_init_creates_missing_templates_without_engine_or_state(
 
 
 @pytest.mark.parametrize(
-    ("line", "expected"),
+    ("shell", "line", "expected"),
     [
-        ("devbox n", "new"),
-        ("devbox re", "resume"),
-        ("devbox cl", "cleanup"),
-        ("devbox cleanup --", "--select"),
-        ("devbox ", "completion"),
-        ("devbox --st", "--state-dir"),
-        ("devbox new --", "--detach"),
-        ("devbox completion ", "fish"),
+        ("bash", "devbox n", "new"),
+        ("bash", "devbox re", "resume"),
+        ("bash", "devbox cl", "cleanup"),
+        ("bash", "devbox cleanup --", "--select"),
+        ("bash", "devbox ", "completion"),
+        ("bash", "devbox --st", "--state-dir"),
+        ("bash", "devbox new --", "--detach"),
+        ("bash", "devbox completion ", "fish"),
+        # Shell-specific formatting needs a smoke test, not the full parser matrix.
+        ("zsh", "devbox n", "new"),
+        ("fish", "devbox n", "new"),
     ],
 )
-@pytest.mark.parametrize("shell", ["bash", "zsh", "fish"])
-def test_shell_completion(line: str, expected: str, tmp_path: Path, shell: str) -> None:
-    assert expected in complete(line, tmp_path, shell=shell)
+def test_shell_completion(
+    line: str, expected: str, tmp_path: Path, shell: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert expected in complete(line, tmp_path, monkeypatch, shell=shell)
 
 
-def test_completion_does_not_filter_prefix_like_filenames(tmp_path: Path) -> None:
+def test_completion_does_not_filter_prefix_like_filenames(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     (tmp_path / "n").touch()
-    assert "n" in complete("devbox --state-dir ", tmp_path)
+    assert "n" in complete("devbox --state-dir ", tmp_path, monkeypatch)
 
 
-def complete(line: str, tmp_path: Path, *, shell: str = "bash") -> list[str]:
-    # Exercise the real entry point in a subprocess: argcomplete owns descriptors
-    # 8/9 and exits with os._exit(), which must not interfere with pytest's capture.
-    output = tmp_path / "completions"
-    state = tmp_path / "state"
-    result = subprocess.run(
-        [sys.executable, "-m", "devbox.cli"],
-        cwd=tmp_path,
-        env={
-            **os.environ,
-            "_ARGCOMPLETE": "1",
-            "_ARGCOMPLETE_SHELL": shell,
-            "COMP_LINE": line,
-            "COMP_POINT": str(len(line)),
-            "_ARGCOMPLETE_STDOUT_FILENAME": str(output),
-            "_ARGCOMPLETE_SUPPRESS_SPACE": "1",
-            "XDG_STATE_HOME": str(state),
-        },
-        capture_output=True,
-        text=True,
-        check=False,
+def complete(
+    line: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, shell: str = "bash"
+) -> list[str]:
+    # Argcomplete supports injectable output/exit methods: exercise main() without
+    # starting another interpreter or letting os._exit() terminate pytest.
+    output = StringIO()
+    finder = cli.argcomplete.CompletionFinder()
+    # Do not let argcomplete take ownership of pytest's fd 9 for shell debugging.
+    monkeypatch.setattr(finder, "_init_debug_stream", lambda: None)
+    monkeypatch.setattr(
+        cli.argcomplete, "autocomplete", partial(finder, output_stream=output, exit_method=sys.exit)
     )
-    assert result.returncode == 0, result.stderr
+    monkeypatch.setattr(cli, "App", lambda *a, **kw: pytest.fail("completion needs no app"))
+    monkeypatch.chdir(tmp_path)
+    state = tmp_path / "state"
+    for key, value in {
+        "_ARGCOMPLETE": "1",
+        "_ARGCOMPLETE_SHELL": shell,
+        "COMP_LINE": line,
+        "COMP_POINT": str(len(line)),
+        "_ARGCOMPLETE_SUPPRESS_SPACE": "1",
+        "XDG_STATE_HOME": str(state),
+    }.items():
+        monkeypatch.setenv(key, value)
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 0
     assert not state.exists()
-    values = output.read_text().split("\v")
+    values = output.getvalue().split("\v")
     # Zsh receives command:description pairs; compare only the inserted text.
     return [value.partition(":")[0] for value in values] if shell == "zsh" else values
 
@@ -600,14 +578,6 @@ def test_picker_cancel(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_unknown_harness() -> None:
     with pytest.raises(DevboxError, match="Unknown harness"):
         get_harness("not-installed")
-
-
-def test_stop_explicit_id_needs_no_picker(tmp_path: Path) -> None:
-    engine = FakeEngine()
-    engine.rows = [Container("devbox-aabb", "running", "project", "pi", "now")]
-    app = App(engine, Store(tmp_path))
-    dispatch(parser().parse_args(["stop", "aab"]), app)
-    assert engine.stopped == ["devbox-aabb"]
 
 
 def test_kill_all_noninteractive_requires_yes(

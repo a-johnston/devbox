@@ -1,5 +1,7 @@
 import os
+import shutil
 import subprocess
+from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 
@@ -8,15 +10,17 @@ import pytest
 from devbox.config import ASSETS, Harness, Project
 
 
-@pytest.fixture(autouse=True)
-def isolated_git_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.fixture(scope="session", autouse=True)
+def isolated_git_environment() -> Iterator[None]:
     # Git hooks export repository-local variables. Never let fixture operations
     # inherit a parent commit's index/worktree or the user's executable hooks.
-    for key in os.environ:
-        if key.startswith("GIT_"):
-            monkeypatch.delenv(key)
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
-    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    with pytest.MonkeyPatch.context() as patch:
+        for key in os.environ:
+            if key.startswith("GIT_"):
+                patch.delenv(key)
+        patch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+        patch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -25,11 +29,17 @@ def isolated_devbox_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
 
 
-@pytest.fixture
-def repository(tmp_path: Path) -> Path:
-    root = tmp_path / "project with spaces"
-    root.mkdir()
-    subprocess.run(["git", "init", "-b", "main", str(root)], check=True, capture_output=True)
+@pytest.fixture(scope="session")
+def repository_template(
+    tmp_path_factory: pytest.TempPathFactory, isolated_git_environment: None
+) -> Path:
+    root = tmp_path_factory.mktemp("repository-template")
+    subprocess.run(
+        ["git", "init", "--template=", "-b", "main", str(root)], check=True, capture_output=True
+    )
+    # Empty template omits sample hooks; retain the directories used by tests.
+    (root / ".git/info").mkdir()
+    (root / ".git/hooks").mkdir()
     (root / ".devbox").mkdir()
     (root / ".devbox/Containerfile").write_text("FROM ubuntu:24.04\n")
     (root / ".devbox.toml").write_text("""version = 1
@@ -55,6 +65,13 @@ context = ".devbox"
         capture_output=True,
     )
     return root
+
+
+@pytest.fixture
+def repository(tmp_path: Path, repository_template: Path) -> Path:
+    # Copy, never share/hardlink: tests mutate refs, config, index and worktrees.
+    # Only the initial git init/add/commit is amortized across the session.
+    return Path(shutil.copytree(repository_template, tmp_path / "project with spaces"))
 
 
 @pytest.fixture

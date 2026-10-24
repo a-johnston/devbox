@@ -272,11 +272,6 @@ class App:
             "resumed_from": session.id if session else None,
         }
         (directory / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
-        artifacts = [str(project.checkout / artifact) for artifact in project.artifacts]
-        for artifact in project.artifacts:
-            # Engines create missing mount points; rootless Podman would leave them owned by
-            # a subordinate UID, which the host user could not remove.
-            (cloned / artifact).mkdir(parents=True, exist_ok=True)
         spec = RunSpec(
             name=id,
             image=image,
@@ -288,34 +283,11 @@ class App:
                 "dev.devbox.harness": harness.name,
             },
             binds=((str(cloned), str(project.checkout)), (str(home), "/home/agent")),
-            volumes=tuple((f"{id}-{i}", target) for i, target in enumerate(artifacts)),
             env={**env, **git_identity(project.cwd), "DEVBOX_INSTANCE": id},
         )
         started = time.monotonic()
         try:
             self.engine.run(spec)
-            if artifacts:
-                # Fresh volumes are root-owned ext4 filesystems.
-                self.engine.exec(
-                    id,
-                    "sh",
-                    "-c",
-                    'chown agent:agent "$@" && find "$@" -maxdepth 1 -name lost+found -delete',
-                    "sh",
-                    *artifacts,
-                    user="root",
-                )
-                # Restore tracked files (e.g. .worktrees/.gdignore) that the volumes hide,
-                # so they don't appear deleted to the guest.
-                self.engine.exec(
-                    id,
-                    "sh",
-                    "-c",
-                    'cd "$1" && shift && git ls-files -z -- "$@" | xargs -0 -r git checkout --',
-                    "sh",
-                    str(project.checkout),
-                    *project.artifacts,
-                )
             self.engine.exec(
                 id,
                 "tmux",
@@ -333,7 +305,7 @@ class App:
                 env=secrets,
             )
         except (DevboxError, KeyboardInterrupt):
-            # Retain state for diagnosis, but do not leak a container or its volumes.
+            # Retain state for diagnosis, but do not leak a container.
             self.engine.remove(id)
             raise
         print(

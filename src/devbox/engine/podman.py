@@ -21,7 +21,6 @@ from devbox.engine.engine import (
 )
 from devbox.errors import DevboxError
 
-INSTANCE = "dev.devbox.instance"
 # Map the host user onto the guest's agent user, so files it writes stay owned by the host user.
 AGENT_USERNS = "keep-id:uid=10001,gid=10001"
 
@@ -36,11 +35,9 @@ class PodmanEngine(Engine):
         AGENT_USERNS,
         "--security-opt",
         "no-new-privileges",
-        # The agent is unprivileged; guest root only chowns fresh artifact volumes.
+        # Devbox only ever runs the guest as the unprivileged agent.
         "--cap-drop",
         "all",
-        "--cap-add",
-        "CHOWN",
     )
     # Rootless cgroupfs cannot delegate controllers, so Podman silently drops --cpus/--memory.
     limits_ignored = False
@@ -157,17 +154,6 @@ class PodmanEngine(Engine):
         self.call("image", "rm", "--", reference)
 
     def run(self, spec: RunSpec) -> None:
-        # Labelled up front, so removal finds them even if the container never starts.
-        for name, _ in spec.volumes:
-            self.call(
-                "volume",
-                "create",
-                "--label",
-                f"{MANAGED}=1",
-                "--label",
-                f"{INSTANCE}={spec.name}",
-                name,
-            )
         if self.limits_ignored:
             print(
                 "Warning: CPU and memory limits are not enforced with Podman's cgroupfs manager;"
@@ -234,11 +220,6 @@ class PodmanEngine(Engine):
             raise DevboxError("Unexpected podman JSON") from exc
 
     def remove(self, id: str) -> None:
-        """Volumes carry their container's name as a label; --ignore covers a failed start."""
+        """--ignore covers a failed start."""
         self.call("stop", id, check=False)
         self.call("rm", "--ignore", id)
-        result = self.call(
-            "volume", "ls", "--filter", f"label={INSTANCE}={id}", "--format", "{{.Name}}"
-        )
-        for volume in result.stdout.split():
-            self.call("volume", "rm", volume)

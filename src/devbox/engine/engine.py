@@ -34,10 +34,10 @@ def host_platform() -> str:
     return PLATFORMS[machine.lower()]
 
 
-def mount(source: Path | str, target: str, *, type: str = "bind") -> tuple[str, str]:
+def mount(source: Path | str, target: str) -> tuple[str, str]:
     if any(c in str(source) + target for c in ",\n\r"):
         raise DevboxError("Mount paths cannot contain commas or newlines")
-    return "--mount", f"type={type},source={source},target={target}"
+    return "--mount", f"type=bind,source={source},target={target}"
 
 
 # Runs in the guest before an interactive command: keep TERM only if it has terminfo there.
@@ -106,9 +106,8 @@ class RunSpec:
     cpus: int
     memory: str
     labels: dict[str, str]
-    # (host source, guest target) and (volume name, guest target), in mount order.
+    # (host source, guest target), in mount order.
     binds: tuple[tuple[str, str], ...]
-    volumes: tuple[tuple[str, str], ...]
     env: dict[str, str]
 
 
@@ -190,18 +189,13 @@ class Engine(ABC):
 
     @abstractmethod
     def remove(self, id: str) -> None:
-        """Delete a container and only its own artifact volumes."""
+        """Delete a container, even if it never started."""
 
     def run(self, spec: RunSpec) -> None:
         flags = [
             *(flag for key, value in spec.labels.items() for flag in ("--label", f"{key}={value}")),
             *(flag for source, target in spec.binds for flag in mount(source, target)),
             *(flag for key, value in spec.env.items() for flag in ("--env", f"{key}={value}")),
-            *(
-                flag
-                for source, target in spec.volumes
-                for flag in mount(source, target, type="volume")
-            ),
         ]
         self.call(
             "run",
@@ -222,7 +216,6 @@ class Engine(ABC):
         self,
         id: str,
         *args: str,
-        user: str = "agent",
         check: bool = True,
         env: dict[str, str] | None = None,
         input: str | None = None,
@@ -232,7 +225,7 @@ class Engine(ABC):
         if input is not None:
             flags.append("--interactive")
         return self.call(
-            "exec", "--user", user, *flags, id, *args, check=check, env=env, input=input
+            "exec", "--user", "agent", *flags, id, *args, check=check, env=env, input=input
         )
 
     def connect(self, id: str, *args: str, cwd: str | None = None) -> None:

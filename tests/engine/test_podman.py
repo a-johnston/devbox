@@ -170,7 +170,7 @@ def test_podman_build_argv(monkeypatch: pytest.MonkeyPatch) -> None:
     assert recorder.kwargs == [{"capture": False}]
 
 
-def test_podman_run_creates_labelled_volumes_then_runs_with_keep_id(
+def test_podman_run_drops_capabilities_and_keeps_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     engine, recorder = engine_with(monkeypatch)
@@ -182,14 +182,10 @@ def test_podman_run_creates_labelled_volumes_then_runs_with_keep_id(
             memory="4G",
             labels={MANAGED: "1", "dev.devbox.harness": "pi"},
             binds=(("/src", "/src"), ("/state/home", "/home/agent")),
-            volumes=(("devbox-1-0", "/src/.venv"), ("devbox-1-1", "/src/dist")),
             env={"A": "b"},
         )
     )
-    volume = ("volume", "create", "--label", f"{MANAGED}=1", "--label")
     assert recorder.calls == [
-        (*volume, "dev.devbox.instance=devbox-1", "devbox-1-0"),
-        (*volume, "dev.devbox.instance=devbox-1", "devbox-1-1"),
         (
             "run",
             "--detach",
@@ -202,8 +198,6 @@ def test_podman_run_creates_labelled_volumes_then_runs_with_keep_id(
             "no-new-privileges",
             "--cap-drop",
             "all",
-            "--cap-add",
-            "CHOWN",
             "--cpus",
             "2",
             "--memory",
@@ -218,10 +212,6 @@ def test_podman_run_creates_labelled_volumes_then_runs_with_keep_id(
             "type=bind,source=/state/home,target=/home/agent",
             "--env",
             "A=b",
-            "--mount",
-            "type=volume,source=devbox-1-0,target=/src/.venv",
-            "--mount",
-            "type=volume,source=devbox-1-1,target=/src/dist",
             "img:latest",
         ),
     ]
@@ -325,25 +315,12 @@ def test_podman_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     assert recorder.calls == [("stop", "devbox-a")]
 
 
-@pytest.mark.parametrize("listed", ["devbox-a-0\ndevbox-a-1\n", ""])
-def test_podman_remove_deletes_only_labelled_volumes(
-    monkeypatch: pytest.MonkeyPatch, listed: str
+def test_podman_remove_ignores_a_container_that_never_started(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    engine, recorder = engine_with(monkeypatch, {("volume", "ls"): (0, listed, "")})
+    engine, recorder = engine_with(monkeypatch)
     engine.remove("devbox-a")
-    assert recorder.calls == [
-        ("stop", "devbox-a"),
-        ("rm", "--ignore", "devbox-a"),
-        (
-            "volume",
-            "ls",
-            "--filter",
-            "label=dev.devbox.instance=devbox-a",
-            "--format",
-            "{{.Name}}",
-        ),
-        *(("volume", "rm", name) for name in listed.split()),
-    ]
+    assert recorder.calls == [("stop", "devbox-a"), ("rm", "--ignore", "devbox-a")]
     assert recorder.kwargs[0] == {"check": False}
 
 
@@ -352,7 +329,7 @@ def test_podman_run_explains_unreachable_systemd(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(
         subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 126, "", error)
     )
-    spec = RunSpec("devbox-1", "img", 1, "1G", {}, (), (), {})
+    spec = RunSpec("devbox-1", "img", 1, "1G", {}, (), {})
     with pytest.raises(
         DevboxError, match=r"(?s)sd-bus call.*DBUS_SESSION_BUS_ADDRESS.*\[engine\] cgroup_manager"
     ):
@@ -378,5 +355,5 @@ def test_podman_warns_when_rootless_cgroupfs_ignores_limits(
     }
     engine, _ = engine_with(monkeypatch, {("info",): (0, json.dumps(info), "")})
     engine.require_running()
-    engine.run(RunSpec("devbox-1", "img", 1, "1G", {}, (), (), {}))
+    engine.run(RunSpec("devbox-1", "img", 1, "1G", {}, (), {}))
     assert ("not enforced" in capsys.readouterr().err) is warned

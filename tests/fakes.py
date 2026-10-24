@@ -24,7 +24,6 @@ class BuildRequest:
 class ExecRequest:
     id: str
     args: tuple[str, ...]
-    user: str
     check: bool
     env: dict[str, str] | None
     input: str | None = None
@@ -103,12 +102,11 @@ class FakeEngine(Engine):
         self,
         id: str,
         *args: str,
-        user: str = "agent",
         check: bool = True,
         env: dict[str, str] | None = None,
         input: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        self.execs.append(ExecRequest(id, args, user, check, env, input))
+        self.execs.append(ExecRequest(id, args, check, env, input))
         return subprocess.CompletedProcess(args, 0, "", "")
 
     def connect(self, id: str, *args: str, cwd: str | None = None) -> None:

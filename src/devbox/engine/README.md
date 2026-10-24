@@ -31,9 +31,8 @@ containers). Use them as worked examples.
 Override any whose syntax differs:
 
 - `run`: `run --detach --init --name <id> <run_options> --cpus N --memory M`, then
-  `--label k=v`, `--mount type=bind,source=,target=`, `--env K=V` and
-  `--mount type=volume,source=,target=`, then the image.
-- `exec`: `exec --user <user> [--env NAME ...] [--interactive] <id> <args>`. Variables are
+  `--label k=v`, `--mount type=bind,source=,target=` and `--env K=V`, then the image.
+- `exec`: `exec --user agent [--env NAME ...] [--interactive] <id> <args>`. Variables are
   passed by name, so values stay out of the process list. With `input`, stdin is piped
   (`devbox sync` sends a bundle this way).
 - `connect`: replaces the Devbox process with `exec -it --user agent [--env TERM]
@@ -57,8 +56,7 @@ Override any whose syntax differs:
 - `container_ids()`: IDs of all containers, regardless of labels; saved state for any of
   them is protected from cleanup.
 - `containers()`: only containers labelled `dev.devbox.managed=1`.
-- `remove(id)`: delete the container and only its own artifact volumes (named `<id>-<n>`),
-  even if it never started.
+- `remove(id)`: delete the container, even if it never started.
 
 ## Rules
 
@@ -67,11 +65,11 @@ Override any whose syntax differs:
 - **Never clean up by wildcard.** No `prune`, global `--all` deletion or force flags; select
   by Devbox's ownership labels or exact names.
 - **Mount only what `RunSpec` lists**: the instance's clone at the checkout path, its home at
-  `/home/agent` and its named volumes. No host home, sockets, devices or host networking.
+  `/home/agent`. No host home, sockets, devices or host networking.
 - **Ownership must work both ways.** The guest's `agent` user (UID 10001) writes the
   bind-mounted clone and home, and the host user must be able to read and delete what it
-  writes (Podman maps the host user to 10001 with `keep-id`). Guest root only chowns fresh
-  volumes, so keep its privileges to that (Podman keeps only `CHOWN`).
+  writes (Podman maps the host user to 10001 with `keep-id`). Devbox never runs commands as
+  guest root, so drop every capability the engine allows.
 - **Builds see only their context.** Never add host mounts, secrets or SSH forwarding.
 - **Limits.** Apply `cpus` and `memory`; warn if the engine silently ignores them.
 

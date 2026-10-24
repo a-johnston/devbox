@@ -16,13 +16,15 @@ def test_self_hosting_manifest(tmp_path: Path) -> None:
     project = Project.discover(tmp_path)
     assert project.containerfile == tmp_path / ".devbox/Containerfile"
     assert project.context == tmp_path / ".devbox"
-    assert project.artifacts == (".venv", ".pytest_cache", ".ruff_cache", "dist", ".worktrees")
     assert project.env == {"UV_LINK_MODE": "copy", "PYTHONDONTWRITEBYTECODE": "1"}
     assert (project.cpus, project.memory) == (4, "8G")
     assert project.watch == ("prek.toml",)
 
 
-@pytest.mark.parametrize("watch", ['"prek.toml"', '["/etc/x"]', '["../x"]', '[""]', "[1]"])
+@pytest.mark.parametrize(
+    "watch",
+    ['"prek.toml"', '["/etc/x"]', '["../x"]', '[".git"]', '[".git/objects"]', '[""]', "[1]"],
+)
 def test_invalid_review_watch_rejected(repository: Path, watch: str) -> None:
     with (repository / ".devbox.toml").open("a") as stream:
         stream.write(f"\n[review]\nwatch = {watch}\n")
@@ -39,7 +41,7 @@ def test_init_template_documents_every_option(tmp_path: Path) -> None:
     config.write_text(re.sub(r"(?m)^# (?=\[|\w+ = )", "", config.read_text()))
     project = Project.discover(tmp_path)
     assert (project.cpus, project.memory) == (4, "8G")
-    assert project.artifacts and project.env and project.watch
+    assert project.env and project.watch
 
 
 def test_discovery_from_subdirectory(repository: Path) -> None:
@@ -80,9 +82,7 @@ def test_discovery_ignores_inherited_git_hook_scope(
     assert Project.discover(tree).root == repository
 
 
-def test_worktree_is_its_own_checkout_beneath_artifacts(repository: Path) -> None:
-    config = repository / ".devbox.toml"
-    config.write_text(config.read_text().replace('".godot", "tests/bin"', '".godot", ".worktrees"'))
+def test_worktree_is_its_own_checkout(repository: Path) -> None:
     tree = repository / ".worktrees/feature"
     subprocess.run(
         ["git", "-C", str(repository), "worktree", "add", "-b", "feature", str(tree)],
@@ -91,9 +91,6 @@ def test_worktree_is_its_own_checkout_beneath_artifacts(repository: Path) -> Non
     )
     (tree / ".devbox.toml").unlink()
     assert Project.discover(tree).checkout == tree
-    (tree / ".godot/sub").mkdir(parents=True)
-    with pytest.raises(DevboxError, match="hidden"):
-        Project.discover(tree / ".godot/sub")
 
 
 def test_external_worktree_rejected(repository: Path, tmp_path: Path) -> None:
@@ -105,16 +102,6 @@ def test_external_worktree_rejected(repository: Path, tmp_path: Path) -> None:
     )
     with pytest.raises(DevboxError, match="inside the primary"):
         Project.discover(tree)
-
-
-@pytest.mark.parametrize("artifact", ["/tmp/cache", "../outside", ".git", ".git/objects", "."])
-def test_unsafe_artifacts_rejected(repository: Path, artifact: str) -> None:
-    config = repository / ".devbox.toml"
-    config.write_text(
-        config.read_text().replace('".godot", "tests/bin", "tests/obj"', f'"{artifact}"')
-    )
-    with pytest.raises(DevboxError, match="safe relative"):
-        Project.discover(repository)
 
 
 @pytest.mark.parametrize(
@@ -135,15 +122,6 @@ def test_image_inputs_must_stay_in_project(repository: Path, image: str) -> None
     lines = [line for line in config.read_text().splitlines() if not line.startswith(key)]
     config.write_text("\n".join(lines).replace("[image]", f"[image]\n{image}") + "\n")
     with pytest.raises(DevboxError, match="outside .git"):
-        Project.discover(repository)
-
-
-def test_overlapping_artifacts_rejected(repository: Path) -> None:
-    config = repository / ".devbox.toml"
-    config.write_text(
-        config.read_text().replace('".godot", "tests/bin", "tests/obj"', '"tests", "tests/obj"')
-    )
-    with pytest.raises(DevboxError, match="overlap"):
         Project.discover(repository)
 
 

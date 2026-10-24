@@ -124,7 +124,6 @@ class Project:
     checkout: Path
     containerfile: Path
     context: Path
-    artifacts: tuple[str, ...]
     env: dict[str, str]
     cpus: int = 4
     memory: str = "8G"
@@ -153,7 +152,6 @@ class Project:
         if data.get("version") != 1:
             raise DevboxError(f"{config}: expected version = 1")
         image = table(data.get("image", {}), "image")
-        workspace = table(data.get("workspace", {}), "workspace")
         container = table(data.get("container", {}), "container")
         review = table(data.get("review", {}), "review")
         context = (config.parent / text(image.get("context", "."), "image.context")).resolve()
@@ -167,13 +165,8 @@ class Project:
         for path in (context, containerfile):
             if not path.is_relative_to(real) or path.is_relative_to(real / ".git"):
                 raise DevboxError(f"{path} must be inside {root} and outside .git")
-        artifacts = tuple(relative(v) for v in strings(workspace.get("artifacts", []), "artifacts"))
-        if overlapping(artifacts):
-            raise DevboxError("Artifact directories must not overlap")
         toplevel = git_output(cwd, "rev-parse", "--show-toplevel")
         checkout = Path(toplevel).resolve() if toplevel else root
-        if any(cwd.is_relative_to(checkout / artifact) for artifact in artifacts):
-            raise DevboxError(f"{cwd} is hidden by a guest-local artifact directory in the guest")
         cpus = container.get("cpus", 4)
         if type(cpus) is not int or cpus < 1:
             raise DevboxError("container.cpus must be a positive integer")
@@ -184,7 +177,6 @@ class Project:
             checkout,
             containerfile,
             context,
-            artifacts,
             environment(data.get("environment", {})),
             cpus,
             size(container.get("memory", "8G"), "container.memory"),

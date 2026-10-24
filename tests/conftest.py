@@ -30,8 +30,6 @@ def repository(tmp_path: Path) -> Path:
 [image]
 containerfile = ".devbox/Containerfile"
 context = ".devbox"
-[workspace]
-artifacts = [".godot", "tests/bin", "tests/obj"]
 """)
     subprocess.run(["git", "-C", str(root), "add", "."], check=True)
     subprocess.run(

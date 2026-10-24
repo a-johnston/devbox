@@ -7,7 +7,7 @@ import pytest
 
 from devbox.app import App, accent, tmux_config
 from devbox.config import Harness, Project
-from devbox.engine import Container, RunSpec, mount
+from devbox.engine import Container, mount
 from devbox.errors import DevboxError
 from devbox.state import Session, Store
 from tests.fakes import FakeEngine
@@ -26,21 +26,11 @@ def test_new_composes_images_and_mounts_only_selected_paths(
         (str(clone), str(project.checkout)),
         (str(app.store.directory(id) / "home"), "/home/agent"),
     )
-    assert run.volumes == tuple(
-        (f"{id}-{i}", str(project.root / artifact))
-        for i, artifact in enumerate((".godot", "tests/bin", "tests/obj"))
-    )
     assert run.cpus == project.cpus
     assert run.memory == project.memory
     assert run.image == engine.builds[-1].tag
-    chown, restore, startup = engine.execs
-    assert chown.id == id and chown.user == "root"
-    assert "chown" in chown.args[2]
-    assert chown.args[-3:] == tuple(str(project.root / a) for a in project.artifacts)
-    assert restore.id == id and restore.user == "agent"
-    assert "git ls-files" in restore.args[2]
-    assert restore.args[-4:] == (str(project.root), ".godot", "tests/bin", "tests/obj")
-    assert startup.id == id and startup.user == "agent"
+    (startup,) = engine.execs
+    assert startup.id == id
     assert startup.args == (
         "tmux",
         "-u",
@@ -142,7 +132,7 @@ def test_resume_snapshots_and_forks(project: Project, harness: Harness, tmp_path
     assert engine.execs[-1].args[-2:] == ("--fork", "/home/agent/.devbox/resume.jsonl")
 
 
-def test_failed_start_removes_container_and_volumes_but_retains_state(
+def test_failed_start_removes_container_but_retains_state(
     project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     engine = FakeEngine()
@@ -233,19 +223,3 @@ def test_describes_the_engine_isolation(
     id = app.new(project, harness, no_config=True)
     text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()
     assert f"Devbox instance {id}, a Linux ARM64 container, as a non-root user." in text
-
-
-def test_missing_artifact_mount_points_are_created_by_the_host_user(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
-    created = []
-
-    class Recording(FakeEngine):
-        def run(self, spec: RunSpec) -> None:
-            clone = Path(spec.binds[0][0])
-            created.extend((clone / a).is_dir() for a in project.artifacts)
-            super().run(spec)
-
-    App(Recording(), Store(tmp_path / "state")).new(project, harness, no_config=True)
-    assert created == [True] * len(project.artifacts)
-    assert not (project.root / "tests/bin").exists()

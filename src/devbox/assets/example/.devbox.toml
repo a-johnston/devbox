@@ -10,10 +10,6 @@ context = ".devbox"
 # cpus = 4
 # memory = "8G"                       # a K, M or G suffix
 
-# [workspace]
-# Container-local volumes over these paths in the instance's clone; lost on `devbox rm`.
-# artifacts = [".venv", "node_modules", "build"]
-
 # [environment]
 # Plain values for the guest. Never put secrets here.
 # MY_SETTING = "value"

@@ -20,6 +20,5 @@ user's working tree: they see your work only after fetching it.
 
 ## Environment
 
-- Declared build/import outputs are guest-local and disappear when the container is removed.
 - Any previous session's processes, temporary files and OS assumptions do not carry over.
 - There is no host shell bridge. Do not assume host tools or the host editor are available.

@@ -474,13 +474,7 @@ def test_init_creates_missing_templates_without_engine_or_state(
         repository / ".devbox/Containerfile",
         repository / ".devbox",
     )
-    assert (project.cpus, project.memory, project.artifacts, project.env, project.watch) == (
-        4,
-        "8G",
-        (),
-        {},
-        (),
-    )
+    assert (project.cpus, project.memory, project.env, project.watch) == (4, "8G", {}, ())
 
 
 @pytest.mark.parametrize(

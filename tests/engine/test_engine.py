@@ -26,24 +26,12 @@ def test_ownership_filter(monkeypatch: pytest.MonkeyPatch) -> None:
     assert [c.id for c in AppleEngine().containers()] == ["ours"]
 
 
-def test_remove_deletes_only_this_containers_volumes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apple_remove_stops_then_deletes(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = []
-    volumes = [{"id": "ours-0"}, {"id": "ours-1"}, {"id": "ours2-0"}, {"id": "other"}]
-
-    def call(*args: str, **kwargs: bool) -> subprocess.CompletedProcess[str]:
-        calls.append(args)
-        return subprocess.CompletedProcess(args, 0, json.dumps(volumes), "")
-
     engine = AppleEngine()
-    monkeypatch.setattr(engine, "call", call)
+    monkeypatch.setattr(engine, "call", lambda *a, **kw: calls.append(a))
     engine.remove("ours")
-    assert calls == [
-        ("stop", "ours"),
-        ("delete", "ours"),
-        ("volume", "list", "--format", "json"),
-        ("volume", "delete", "ours-0"),
-        ("volume", "delete", "ours-1"),
-    ]
+    assert calls == [("stop", "ours"), ("delete", "ours")]
 
 
 @pytest.mark.parametrize("engine", [AppleEngine(), PodmanEngine()])
@@ -170,7 +158,6 @@ def test_apple_run_translates_spec(monkeypatch: pytest.MonkeyPatch) -> None:
             memory="4G",
             labels={MANAGED: "1"},
             binds=(("/src", "/src"),),
-            volumes=(("devbox-1-0", "/src/.venv"),),
             env={"A": "b"},
         )
     )
@@ -191,8 +178,6 @@ def test_apple_run_translates_spec(monkeypatch: pytest.MonkeyPatch) -> None:
             "type=bind,source=/src,target=/src",
             "--env",
             "A=b",
-            "--mount",
-            "type=volume,source=devbox-1-0,target=/src/.venv",
             "img:latest",
         )
     ]

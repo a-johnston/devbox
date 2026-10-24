@@ -199,16 +199,5 @@ class AppleEngine(Engine):
             raise DevboxError("Unexpected container JSON; devbox requires container 1.5+") from exc
 
     def remove(self, id: str) -> None:
-        """Volumes are named after their container."""
         self.call("stop", id, check=False)
         self.call("delete", id)
-        for volume in self.volumes(id):
-            self.call("volume", "delete", volume)
-
-    def volumes(self, id: str) -> list[str]:
-        result = self.call("volume", "list", "--format", "json")
-        try:
-            names = [row["id"] for row in json.loads(result.stdout)]
-        except (ValueError, KeyError, TypeError) as exc:
-            raise DevboxError("Unexpected volume JSON") from exc
-        return [name for name in names if name.startswith(f"{id}-")]

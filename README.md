@@ -35,7 +35,7 @@ devbox ls                             # running and stopped managed containers
 devbox attach [id]                    # omit ID for a picker; unique prefixes work
 devbox shell [id]                     # non-root inspection shell
 devbox stop [id ...]                  # stop processes, keep container disk
-devbox rm [id ...]                    # remove container and artifact volumes, keep history and clone
+devbox rm [id ...]                    # remove container, keep history and clone
 devbox fetch [id]                     # fetch an instance's branches into refs/devbox/<id>/
 devbox review [id] [branch]           # fetch, pick a branch and show its diff
 devbox sessions                       # saved conversations, including removed containers
@@ -70,9 +70,6 @@ context = ".devbox"                  # keep source and .git out of the build con
 cpus = 4
 memory = "8G"
 
-[workspace]
-artifacts = [".worktrees", "build"]   # guest-local volumes over these clone directories
-
 [environment]
 MY_SETTING = "value"
 
@@ -106,10 +103,6 @@ guest. `resume` clones the previous instance's repository when it still exists; 
 Agents learn these constraints from Devbox's [instructions](src/devbox/assets/runtime/environment.md),
 which every harness appends to its system prompt, and `DEVBOX_INSTANCE` holds the instance
 ID. Project agent files need not repeat them.
-
-Artifact volumes survive `stop` but are deleted by `rm`. Tracked files under artifact paths
-are restored into the volumes. Commits in guest-created worktrees under an artifact path
-live in the clone, but **uncommitted files there are lost on `rm`**.
 
 The first launch builds an image; subsequent launches reuse it. Run `devbox build <harness>`
 after changing Containerfiles, build contexts or Devbox. Harness versions follow the host
@@ -149,10 +142,10 @@ merge or overwrite an existing destination; split legacy state by backend if nec
 then asks for confirmation. **Deleting saved instances permanently deletes their conversations,
 unfetched clones and copied credentials.** Use `cleanup --select` to choose instances with fzf. Running and
 stopped containers protect state; retained instances also protect their images. Cleanup does
-not remove containers, volumes, unrelated images or shared build caches.
+not remove containers, unrelated images or shared build caches.
 
 On macOS each container is a VM; Linux rootless containers share the host kernel and run
-with `no-new-privileges` and only `CHOWN` among capabilities. Devbox refuses a krun default
+with `no-new-privileges` and no capabilities. Devbox refuses a krun default
 runtime: krun cannot `exec` inside its microVM, so the harness would run outside it. Isolation
 protects unmounted host files and your repository: the harness writes only its clone, and
 fetched work reaches your branches only when you merge it. It can still use provided

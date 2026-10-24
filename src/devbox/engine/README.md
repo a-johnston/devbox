@@ -67,7 +67,9 @@ Override any whose syntax differs:
 - **Never clean up by wildcard.** No `prune`, global `--all` deletion or force flags; select
   by Devbox's ownership labels or exact names.
 - **Mount only what `RunSpec` lists**: the instance's clone at the checkout path, its home at
-  `/home/agent`. No host home, sockets, devices or host networking.
+  `/home/agent`, and any explicitly declared, narrow shared harness state directories. No host
+  home or full harness config directory, sockets, devices or host networking. Shared-directory
+  mounts must preserve atomic directory creation/removal and mtime updates for credential locks.
 - **Ownership must work both ways.** The guest's `agent` user (UID 10001) writes the
   bind-mounted clone and home, and the host user must be able to read and delete what it
   writes (Podman maps the host user to 10001 with `keep-id`). Devbox never runs commands as

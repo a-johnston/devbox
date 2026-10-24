@@ -35,6 +35,7 @@ from devbox.state import (
     host_version,
     run_hook,
     seed_config,
+    shared_config,
     snapshot_session,
 )
 
@@ -211,6 +212,16 @@ class App:
         secrets = {} if no_config else environment_secrets(harness)
         if secrets:
             print("Forwarding credentials from environment: " + ", ".join(secrets), flush=True)
+        shared_mounts = []
+        for name in harness.shared_dirs:
+            # Reserved for mounted state, never inherited from a project/profile.
+            env.pop(f"DEVBOX_SHARED_{name.upper()}", None)
+        if not no_config:
+            for name, source in shared_config(harness, project_root=project.root).items():
+                target = str(PurePosixPath("/home/agent") / harness.shared_dirs[name])
+                shared_mounts.append((str(source), target))
+                env[f"DEVBOX_SHARED_{name.upper()}"] = target
+                print(f"Sharing {harness.name} {name}: {source}", flush=True)
         id, directory = self.store.create()
         cloned = directory / "repo"
         previous = session.instance if session and from_instance else None
@@ -282,7 +293,11 @@ class App:
                 "dev.devbox.project": str(project.root),
                 "dev.devbox.harness": harness.name,
             },
-            binds=((str(cloned), str(project.checkout)), (str(home), "/home/agent")),
+            binds=(
+                (str(cloned), str(project.checkout)),
+                (str(home), "/home/agent"),
+                *shared_mounts,
+            ),
             env={**env, **git_identity(project.cwd), "DEVBOX_INSTANCE": id},
         )
         started = time.monotonic()

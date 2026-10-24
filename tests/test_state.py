@@ -77,7 +77,9 @@ def test_seed_is_copy_not_shared_state(tmp_path: Path, harness: Harness) -> None
     assert len(settings["packages"]) == 2
     assert not (target / "mcp.json").exists()
     assert "private" not in str(messages)
-    (target / "auth.json").write_text("changed")
+    assert not (target / "auth.json").exists()
+    (target / "settings.json").write_text("changed")
+    assert "defaultModel" in (source / "settings.json").read_text()
     assert "private" in (source / "auth.json").read_text()
 
 
@@ -86,9 +88,9 @@ def test_seed_skips_symlink_files(tmp_path: Path, harness: Harness) -> None:
     source.mkdir()
     outside = tmp_path / "secret"
     outside.write_text("private")
-    (source / "auth.json").symlink_to(outside)
+    (source / "keybindings.json").symlink_to(outside)
     seed_config(replace(harness, seed_dir=source), tmp_path / "home")
-    assert not (tmp_path / "home" / harness.state_dir / "auth.json").exists()
+    assert not (tmp_path / "home" / harness.state_dir / "keybindings.json").exists()
 
 
 def test_snapshot_ignores_incomplete_record(tmp_path: Path) -> None:

@@ -30,6 +30,7 @@ runs on the host. Install only profiles you trust.
 | `seed_dir` | yes | Host config directory to copy from, such as `~/.pi/agent`. Never mounted. |
 | `seed_files` | no | Files copied from `seed_dir` into `state_dir` per instance (symlinks are skipped). |
 | `prepared_dirs` | no | Directories, relative to `/home/agent`, prepared at build time under `/opt/devbox/prepared/` and linked into each home, e.g. installed packages. |
+| `[shared_dirs]` | no | Explicit read/write shared state: lowercase `name = "guest/relative/path"`. Each name mounts `$XDG_CONFIG_HOME/devbox/shared/<harness>/<name>/` and sets `DEVBOX_SHARED_<NAME>` to its guest path. Skipped with `--no-config`. |
 | `version_command` | no | Host command printing the installed version; it becomes the `HARNESS_VERSION` build argument so the guest matches the host. |
 | `secrets` | no | Host environment variable names forwarded only to the harness process, never to images, container config or saved state. |
 | `[environment]` | no | Plain `NAME = "value"` variables for the container. Never put secrets here. |
@@ -38,6 +39,22 @@ Load Devbox's instructions so the agent knows its constraints (a private clone, 
 and `devbox sync`, no host bridge): pass `/home/agent/.devbox/environment.md` to the harness's
 option for appending to its system prompt in `command`, as both built-in profiles do. If the
 harness has no such option, point its global instructions file at it instead.
+
+## Shared state
+
+Unlike seed files, shared directories have live writers from multiple instances. They must
+not overlap the harness state/session/prepared directories, each other, or Devbox's runtime
+files. Keep their contents limited to intentionally shared state, not executable settings or
+conversation history. Mount the directory containing both a credential and its ephemeral
+lock; mounting only the file or an already-existing lock directory cannot coordinate refreshes.
+The harness owns synchronization; Devbox does not read, copy or merge shared contents.
+Directories are private (mode `0700`), not included in images, independent of `--state-dir`,
+and never removed by instance cleanup. Names must match `[a-z][a-z0-9_]*`.
+
+For example, Pi declares `[shared_dirs] auth = ".devbox/pi-auth"`. This exposes only the
+Devbox-owned auth directory, never `~/.pi/agent`, and its launcher uses `DEVBOX_SHARED_AUTH`
+to select Pi's native locked credential store. A separate login avoids rotating the host's
+refresh token. See [Pi's profile notes](pi/README.md).
 
 ## Containerfile
 
@@ -73,5 +90,6 @@ Plain functions, all optional. Raise `ValueError` with a user-facing message to 
   `.devbox/resume.jsonl`.
 
 Copy credentials only if the guest can use them without changing the host's copy: a
-harness that refreshes tokens in place, like Claude Code's login, would invalidate the host's
-session. Prefer a separate long-lived token passed through `secrets`.
+harness that refreshes tokens in place, like Pi's OAuth login or Claude Code's login, would
+invalidate the host's session. Prefer a separate long-lived token passed through `secrets`,
+or a separate shared login with a harness that supports locked credential storage.

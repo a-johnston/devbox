@@ -30,5 +30,5 @@ id = "pytest"
 name = "pytest (project venv)"
 entry = "uv run --locked pytest"
 language = "system"
-types = ["python"]
+types_or = ["python", "javascript"]
 pass_filenames = false

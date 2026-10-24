@@ -119,9 +119,25 @@ to `4G`; override with `DEVBOX_BUILDER_MEMORY`.
 ## Config and credentials
 
 Each instance gets an isolated copy of selected harness settings; changes never sync back.
-Pi also copies auth and installs portable npm/git package declarations from host settings.
-Host-specific settings, local packages and Claude hooks/plugins are omitted. Use `--no-config`
-to skip importing settings, packages and credentials, then log in inside the guest.
+Pi installs portable npm/git package declarations from host settings. Host-specific settings,
+local packages and Claude hooks/plugins are omitted. Use `--no-config` to skip importing
+settings/packages/credentials and mounting shared harness state, then log in independently
+inside the guest.
+
+Pi's host `auth.json` is **never copied**. Instead, Pi instances share a separate Devbox login
+in `$XDG_CONFIG_HOME/devbox/shared/pi/auth/` (default `~/.config/devbox/shared/pi/auth/`).
+Only this private directory is mounted read/write: `auth.json` and its temporary lock share
+one filesystem, so Pi coordinates token refreshes across instances. Log in with `/login` in
+one guest; new and resumed instances reuse that login. `/logout` affects all participating
+instances. Shared auth survives container removal and `cleanup`, and is independent of
+`--state-dir`. `--no-config` uses instance-local auth instead.
+
+Pi uses a small SDK-based interactive launcher, not a Pi fork. Settings, packages and
+conversations remain per-instance; the rest of the host Pi directory is never mounted.
+Extensions that directly access the default auth path do not participate in shared auth.
+See [Pi's profile notes](src/devbox/assets/harnesses/pi/README.md) for launcher limitations,
+optional host use, and upgrading existing installations. Rebuild with `devbox build pi`
+after upgrading Devbox; old running instances retain their original credential copies.
 
 Claude's host login is **not copied**. Use `/login` in the guest, or create a separate token
 with `claude setup-token` and supply `CLAUDE_CODE_OAUTH_TOKEN` to Devbox only, for example via
@@ -149,17 +165,19 @@ merge or overwrite an existing destination; split legacy state by backend if nec
 then asks for confirmation. **Deleting saved instances permanently deletes their conversations,
 unfetched clones and copied credentials.** Use `cleanup --select` to choose instances with fzf. Running and
 stopped containers protect state; retained instances also protect their images. Cleanup does
-not remove containers, unrelated images or shared build caches. Its summary reports approximate
-space recovered separately for instance folders and images. Image estimates count each deleted
-image once, only after its last reference is removed, and use the engine's full image sizes;
-shared layers and build caches can make actual recovery lower. If size metadata is unavailable,
-the image estimate is reported as unavailable rather than zero.
+not remove containers, unrelated images, shared harness authentication, or shared build caches.
+Its summary reports approximate space recovered separately for instance folders and images.
+Image estimates count each deleted image once, only after its last reference is removed, and 
+use the engine's full image sizes; shared layers and build caches can make actual recovery lower.
+If size metadata is unavailable, the image estimate is reported as unavailable rather than zero.
 
 On macOS each container is a VM; Linux rootless containers share the host kernel and run
 with `no-new-privileges` and no capabilities. Devbox refuses a krun default
 runtime: krun cannot `exec` inside its microVM, so the harness would run outside it. Isolation
-protects unmounted host files and your repository: the harness writes only its clone, and
-fetched work reaches your branches only when you merge it. It can still use provided
+protects unmounted host files and your repository: repository edits stay in its private clone,
+and fetched work reaches your branches only when you merge it. Profiles can explicitly mount
+small shared state directories (Pi's auth, for example); guests can change that shared state.
+It can still use provided
 credentials and access the network, and code you merge runs when you run it. There is no
 host shell/socket/SSH-agent bridge. Trust manifests, Containerfiles and harness profiles as
 executable configuration, and review changes to them that `fetch` flags.

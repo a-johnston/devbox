@@ -8,7 +8,7 @@ import re
 import subprocess
 import tomllib
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -199,6 +199,7 @@ class Harness:
     session_glob: str = "**/*.jsonl"
     version_command: tuple[str, ...] = ()
     secrets: tuple[str, ...] = ()
+    shared_dirs: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def load(cls, directory: Path) -> Harness:
@@ -217,9 +218,27 @@ class Harness:
         prepared = tuple(
             relative(v) for v in strings(data.get("prepared_dirs", []), "prepared_dirs")
         )
+        state_dir = relative(text(data.get("state_dir"), "state_dir"))
         session_dir = relative(text(data.get("session_dir"), "session_dir"))
         if overlapping((*prepared, session_dir)):
             raise DevboxError("Prepared directories must not overlap each other or sessions")
+        shared = table(data.get("shared_dirs", {}), "shared_dirs")
+        if any(not re.fullmatch(r"[a-z][a-z0-9_]*", key) for key in shared):
+            raise DevboxError("Shared directory names must be lowercase identifiers")
+        shared = {key: relative(text(value, "shared_dirs")) for key, value in shared.items()}
+        if overlapping(tuple(shared.values())) or any(
+            overlapping((target, reserved))
+            for target in shared.values()
+            for reserved in (
+                state_dir,
+                session_dir,
+                *prepared,
+                ".devbox/environment.md",
+                ".devbox/tmux.conf",
+                ".devbox/resume.jsonl",
+            )
+        ):
+            raise DevboxError("Shared directories must not overlap harness state or each other")
         if not (directory / "Containerfile").is_file():
             raise DevboxError(f"Missing {directory / 'Containerfile'}")
         return cls(
@@ -227,7 +246,7 @@ class Harness:
             directory,
             command,
             resume,
-            relative(text(data.get("state_dir"), "state_dir")),
+            state_dir,
             session_dir,
             Path(text(data.get("seed_dir"), "seed_dir")).expanduser(),
             tuple(relative(v) for v in strings(data.get("seed_files", []), "seed_files")),
@@ -236,6 +255,7 @@ class Harness:
             relative(text(data.get("session_glob", "**/*.jsonl"), "session_glob")),
             strings(data.get("version_command", []), "version_command"),
             tuple(environment({name: "" for name in strings(data.get("secrets", []), "secrets")})),
+            shared,
         )
 
     def hook(self, name: str) -> Callable[..., Any] | None:

@@ -1,5 +1,5 @@
 name = "pi"
-command = ["pi", "--append-system-prompt", "/home/agent/.devbox/environment.md"]
+command = ["devbox-pi", "--append-system-prompt", "/home/agent/.devbox/environment.md"]
 # Always fork the snapshot, so the source session never has two writers.
 resume_args = ["--fork", "{session}"]
 state_dir = ".pi/agent"
@@ -7,9 +7,13 @@ session_dir = ".pi/agent/sessions"
 prepared_dirs = [".pi/agent/npm", ".pi/agent/git"]
 version_command = ["pi", "--version"]
 seed_dir = "~/.pi/agent"
-seed_files = ["settings.json", "keybindings.json", "models.json", "auth.json", "AGENTS.md", "AGENTS.override.md", "APPEND_SYSTEM.md"]
+# OAuth credentials must never be copied: refresh-token rotation invalidates other copies.
+seed_files = ["settings.json", "keybindings.json", "models.json", "AGENTS.md", "AGENTS.override.md", "APPEND_SYSTEM.md"]
 
 [environment]
 PI_CODING_AGENT_DIR = "/home/agent/.pi/agent"
 PI_CODING_AGENT_SESSION_DIR = "/home/agent/.pi/agent/sessions"
 PI_CLIPBOARD_OSC52 = "1"
+
+[shared_dirs]
+auth = ".devbox/pi-auth"

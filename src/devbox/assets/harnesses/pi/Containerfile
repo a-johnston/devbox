@@ -9,6 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
     && (command -v fd >/dev/null || ln -s /usr/bin/fdfind /usr/local/bin/fd) \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g --ignore-scripts @earendil-works/pi-coding-agent@${HARNESS_VERSION}
+# Keep module resolution beside Pi's installed package; leave its full CLI intact.
+COPY launcher.mjs /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/devbox-launcher.mjs
+RUN chmod 755 /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/devbox-launcher.mjs \
+    && ln -s /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/devbox-launcher.mjs /usr/local/bin/devbox-pi
 # Replaced in the build context by hooks.build_files unless --no-config is used.
 COPY package-sources.txt /tmp/
 # Explicit builds refresh unpinned packages; normal launches reuse this image.

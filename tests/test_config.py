@@ -174,7 +174,7 @@ def test_custom_profile_overrides_builtin(
     (target / "profile.toml").write_text(
         (harness.directory / "profile.toml")
         .read_text()
-        .replace('command = ["pi",', 'command = ["custom-pi",')
+        .replace('command = ["devbox-pi",', 'command = ["custom-pi",')
     )
     (target / "Containerfile").write_text("ARG RUNTIME_IMAGE\nFROM ${RUNTIME_IMAGE}\n")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))

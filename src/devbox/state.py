@@ -206,6 +206,30 @@ def host_version(harness: Harness) -> str | None:
     return found.group() if found and result.returncode == 0 else None
 
 
+def shared_config(harness: Harness, *, project_root: Path | None = None) -> dict[str, Path]:
+    """Private, explicitly shared harness state, independent of per-instance cleanup.
+
+    Never inspect its contents: a guest can write them, including symlinks. Only
+    the host-owned mount directory and its parents are prepared on the host.
+    """
+    if not harness.shared_dirs:
+        return {}
+    base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config").expanduser().resolve()
+    root = base / "devbox/shared" / harness.name
+    paths = {name: root / name for name in harness.shared_dirs}
+    if project_root and any(path.resolve().is_relative_to(project_root) for path in paths.values()):
+        raise DevboxError("Keep shared harness state outside the project directory")
+    try:
+        for directory in (root.parent, root, *paths.values()):
+            if directory.is_symlink():
+                raise DevboxError(f"Refusing a symlinked shared state directory: {directory}")
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            directory.chmod(0o700)
+    except OSError as exc:
+        raise DevboxError(f"Cannot prepare shared state for {harness.name}: {exc}") from exc
+    return paths
+
+
 def seed_config(harness: Harness, home: Path) -> list[str]:
     """Copy a small allowlist, never mount the host harness home or its package tree."""
     destination = home / harness.state_dir

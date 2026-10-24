@@ -383,7 +383,7 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument(
             "--no-config",
             action="store_true",
-            help="Do not import host harness settings, packages or credentials",
+            help="Do not import host config/packages/credentials or mount shared harness state",
         )
         if name == "new":
             command.add_argument("--detach", action="store_true", help="Create without attaching")

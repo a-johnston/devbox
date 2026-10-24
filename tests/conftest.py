@@ -19,6 +19,12 @@ def isolated_git_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
 
 
+@pytest.fixture(autouse=True)
+def isolated_devbox_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Shared harness state must never touch the developer's actual credentials.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+
 @pytest.fixture
 def repository(tmp_path: Path) -> Path:
     root = tmp_path / "project with spaces"

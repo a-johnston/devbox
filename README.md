@@ -66,7 +66,10 @@ build context, and `[review] watch` paths.
 
 `devbox review [id] [branch]` fetches, picks a branch, and shows its changes vs the base with
 `git diff`. After review, `devbox land [id] [branch]` locally rebases `<short-instance>/<branch>`
-onto the current branch and then fast-forward merges.
+onto the current branch and then fast-forward merges. After a successful merge it deletes
+that local `<short-instance>/<branch>` branch, without forcing deletion. The instance's
+branch and the fetched tracking ref are retained; failed rebases or merges leave the local
+branch intact.
 
 ## Sync
 

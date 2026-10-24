@@ -126,7 +126,7 @@ def fetch(
 
 
 def land(repository: Path, fetched: Fetched) -> str:
-    """Rebase a published branch onto the current host branch, then fast-forward it.
+    """Rebase and fast-forward merge a published branch, then delete the landed local branch.
 
     A failed rebase deliberately stays in progress in the host checkout. Never run Git
     in the instance clone, reset a locally modified branch, or stash the user's work.
@@ -179,6 +179,7 @@ def land(repository: Path, fetched: Fetched) -> str:
         ) from exc
     git(repository, "checkout", "--quiet", target_name)
     git(repository, "merge", "--ff-only", "--no-autostash", source)
+    git(repository, "branch", "--delete", "--", branch)
     return target_name
 
 

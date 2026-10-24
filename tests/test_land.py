@@ -37,6 +37,9 @@ def test_land_fetches_and_fast_forwards_without_a_picker(
     assert git(project.root, "rev-parse", "main") == tip
     assert git(project.root, "branch", "--show-current") == "main"
     assert git(project.root, "status", "--porcelain") == ""
+    assert repository.refs(project.root, "refs/heads/") == {"refs/heads/main": tip}
+    assert git(project.root, "rev-parse", f"refs/devbox/{id}/feature/x") == tip
+    assert git(clone, "rev-parse", "feature/x") == tip
     assert f"Landed {id.removeprefix('devbox-')}/feature/x onto main." in capsys.readouterr().out
 
 
@@ -56,7 +59,10 @@ def test_land_rebases_before_fast_forwarding(
     assert git(project.root, "rev-parse", "main^") == host
     assert git(project.root, "rev-list", "--count", f"{host}..main") == "1"
     assert git(project.root, "rev-parse", "keep") == original
-    assert git(project.root, "rev-parse", f"{id.removeprefix('devbox-')}/feature") == tip
+    assert f"refs/heads/{id.removeprefix('devbox-')}/feature" not in repository.refs(
+        project.root, "refs/heads/"
+    )
+    assert git(project.root, "rev-parse", f"refs/devbox/{id}/feature") == original
     assert (project.root / "guest").read_text() == "new"
     assert (project.root / "host").read_text() == "new"
     assert git(clone, "rev-parse", "feature") == original
@@ -189,6 +195,9 @@ def test_land_uses_instance_and_branch_pickers(
     dispatch(parser().parse_args(["land"]), app)
     assert prompts == ["Instances", "Branches"]
     assert git(project.root, "rev-parse", "main") == tip
+    branches = repository.refs(project.root, "refs/heads/")
+    assert f"refs/heads/{id.removeprefix('devbox-')}/one" in branches
+    assert f"refs/heads/{id.removeprefix('devbox-')}/two" not in branches
 
 
 def test_land_unknown_branch_does_not_merge(
@@ -244,7 +253,7 @@ def test_land_requires_ff_merge(
     project: Project, instance: tuple[App, str, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app, id, clone = instance
-    commit(clone, "feature", {"guest": "new"})
+    guest = commit(clone, "feature", {"guest": "new"})
     original_git = repository.git
     host = []
 
@@ -257,4 +266,5 @@ def test_land_requires_ff_merge(
     with pytest.raises(DevboxError, match="Not possible to fast-forward"):
         dispatch(parser().parse_args(["land", id]), app)
     assert git(project.root, "rev-parse", "main") == host[0]
+    assert git(project.root, "rev-parse", f"{id.removeprefix('devbox-')}/feature") == guest
     assert not (project.root / "guest").exists()

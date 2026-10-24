@@ -351,22 +351,36 @@ def _fetch(app: App, *, id: str | None) -> None:
         print(f"Counted from {base[:12]}, where {instance} started; see devbox review.")
 
 
-def _review(app: App, *, id: str | None, branch: str | None, stat: bool) -> None:
-    instance, fetched = _fetched(app, id)
-    if not fetched:
-        return
-    # Without a name, skip the picker when only one branch has new work.
+def _selected_branch(instance: str, fetched: list[Fetched], branch: str | None) -> Fetched:
+    """Share review/land selection, including the single changed branch shortcut."""
     changed = [b for b in fetched if b.commits]
     namespace = f"refs/devbox/{instance}/"
-    selected = (
+    return (
         changed[0]
         if branch is None and len(changed) == 1
         else match(
             fetched, branch, "Branches", lambda b: b.ref.removeprefix(namespace), fetched_label
         )
     )
+
+
+def _review(app: App, *, id: str | None, branch: str | None, stat: bool) -> None:
+    instance, fetched = _fetched(app, id)
+    if not fetched:
+        return
+    selected = _selected_branch(instance, fetched, branch)
     print(fetched_label(selected), flush=True)
     app.review(instance, selected.ref, *(["--stat"] if stat else []))
+
+
+def _land(app: App, *, id: str | None, branch: str | None) -> None:
+    instance, fetched = _fetched(app, id)
+    if not fetched:
+        return
+    selected = _selected_branch(instance, fetched, branch)
+    print(fetched_label(selected), flush=True)
+    target = app.land(instance, selected)
+    print(f"Landed {printable(selected.branch or selected.ref)} onto {printable(target)}.")
 
 
 def _sync(app: App, *, id: str | None, branches: list[str]) -> None:
@@ -444,6 +458,12 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("id", nargs="?", help="Instance ID, including removed containers")
     command.add_argument("branch", nargs="?", help="Branch (omit for a picker)")
     command.add_argument("--stat", action="store_true", help="Summarize changed files")
+    command = commands.add_parser(
+        "land", help="Fetch, rebase onto the current host branch and fast-forward merge"
+    )
+    command.set_defaults(func=_land)
+    command.add_argument("id", nargs="?", help="Instance ID, including removed containers")
+    command.add_argument("branch", nargs="?", help="Branch (omit for a picker)")
     command = commands.add_parser(
         "sync", help="Deliver host branches to a running instance as host/<branch>"
     )

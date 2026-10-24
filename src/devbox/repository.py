@@ -125,6 +125,63 @@ def fetch(
     return fetched
 
 
+def land(repository: Path, fetched: Fetched) -> str:
+    """Rebase a published branch onto the current host branch, then fast-forward it.
+
+    A failed rebase deliberately stays in progress in the host checkout. Never run Git
+    in the instance clone, reset a locally modified branch, or stash the user's work.
+    """
+    branch = fetched.branch
+    if branch is None or not fetched.branch_current:
+        raise DevboxError("Cannot land: the fetched local branch is unavailable or changed locally")
+    source = f"refs/heads/{branch}"
+    for state in (
+        "rebase-merge",
+        "rebase-apply",
+        "MERGE_HEAD",
+        "CHERRY_PICK_HEAD",
+        "REVERT_HEAD",
+        "sequencer",
+    ):
+        path = Path(git(repository, "rev-parse", "--git-path", state).strip())
+        if (path if path.is_absolute() else repository / path).exists():
+            raise DevboxError(
+                f"Cannot land in {repository}: a Git operation is already in progress"
+            )
+    target = git_output(repository, "symbolic-ref", "--quiet", "HEAD")
+    if target is None or not target.startswith("refs/heads/"):
+        raise DevboxError(f"Cannot land in {repository}: check out a target branch first")
+    if target == source:
+        raise DevboxError("Cannot land a branch onto itself; check out the target branch first")
+    if git(repository, "status", "--porcelain", "--untracked-files=all").strip():
+        raise DevboxError(f"Cannot land in {repository}: the host checkout must be clean")
+    # Recheck after selection: fetch must not have left a stale or locally edited branch.
+    tip = git(repository, "rev-parse", "--verify", fetched.ref).strip()
+    if (
+        git_output(repository, "symbolic-ref", "--quiet", source) is not None
+        or git_output(repository, "show-ref", "--verify", "--hash", source) != tip
+    ):
+        raise DevboxError(f"Cannot land: {branch!r} no longer matches the fetched branch")
+    # Even an unchanged branch cannot be rebased while checked out in another worktree.
+    worktrees = git(repository, "worktree", "list", "--porcelain", "-z")
+    if f"branch {source}" in worktrees.split("\0"):
+        raise DevboxError(f"Cannot land: {branch!r} is checked out in a worktree")
+    target_name = target.removeprefix("refs/heads/")
+    try:
+        git(repository, "rebase", "--no-autostash", "--no-update-refs", target, branch)
+    except DevboxError as exc:
+        raise DevboxError(
+            f"{exc}\nRebase failed in {repository}; any rebase state has been left intact. "
+            f"Target branch: {target_name!r}; local branch: {branch!r}. "
+            "Resolve and run git rebase --continue, then check out the target branch "
+            "and git merge --ff-only the rebased local branch; or git rebase --abort, "
+            "check out the target branch and devbox sync it to fix it in the instance."
+        ) from exc
+    git(repository, "checkout", "--quiet", target_name)
+    git(repository, "merge", "--ff-only", "--no-autostash", source)
+    return target_name
+
+
 def show_diff(repository: Path, base: str, ref: str, *options: str) -> None:
     """Replace this process with git diff in the host repository, using the user's pager."""
     argv = ["git", "-C", str(repository), "diff", *options, f"{base}...{ref}", "--"]

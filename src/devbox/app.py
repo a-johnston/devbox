@@ -416,6 +416,11 @@ class App:
         metadata = self.store.metadata(id)
         repository.show_diff(Path(metadata["root"]), metadata["base"], ref, *options)
 
+    def land(self, id: str, branch: repository.Fetched) -> str:
+        """Land a fetched branch in the instance's host repository's primary checkout."""
+        metadata = self.store.metadata(id)
+        return repository.land(Path(metadata["root"]), branch)
+
     def sync(self, container: Container, branches: list[str]) -> list[str]:
         """Deliver host branches to a running instance as host/<branch>, for it to rebase onto.
 

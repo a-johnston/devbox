@@ -79,6 +79,7 @@ def test_preparation_options(action: str) -> None:
         (["kill-all"], cli._kill_all, {"yes"}),
         (["fetch"], cli._fetch, {"id"}),
         (["review"], cli._review, {"id", "branch", "stat"}),
+        (["land"], cli._land, {"id", "branch"}),
         (["cleanup"], cli.cleanup, {"select", "only"}),
         (["completion", "bash"], cli._completion, {"shell"}),
         (["init"], cli._init, {"project"}),

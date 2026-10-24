@@ -38,6 +38,7 @@ devbox stop [id ...]                  # stop processes, keep container disk
 devbox rm [id ...]                    # remove container, keep history and clone
 devbox fetch [id]                     # fetch new work as local <short-instance>/<branch>
 devbox review [id] [branch]           # fetch, pick a branch and show its diff
+devbox land [id] [branch]             # fetch, rebase onto the current host branch, ff-merge
 devbox sessions                       # saved conversations, including removed containers
 devbox sync [id] [branch ...]         # deliver host branches to an instance as host/<branch>
 devbox resume [session-id]            # fork a conversation into a new container
@@ -103,8 +104,25 @@ the manifest, Containerfile, build context and `[review] watch` paths (Git glob 
 Watched paths always come from your manifest, not the clone's. `devbox review [id] [branch]`
 fetches, picks a branch (with fzf when more than one has new commits) and shows its changes
 since the instance started with `git diff` in your repository; `--stat` summarizes them.
-Land fetched branches however your project does, for example with
-`git merge orange/harness-vim` after review. Later fetches refresh a local branch only if
+After review, `devbox land [id] [branch]` fetches again, selects a branch the same way as
+`review`, rebases its local `<short-instance>/<branch>` branch onto the branch currently
+checked out in the host repository's **primary checkout**, then merges with `--ff-only`.
+It returns that checkout to the target branch on success. The target is not necessarily
+`main` or the branch the instance started from; check out the intended target there first.
+Instance IDs and unique prefixes work even after container removal, and omitting the ID
+opens the usual picker. Landing requires a clean host checkout (including untracked files),
+no Git operation in progress, and an unchanged fetched local branch not checked out in any
+worktree. It never stashes changes or runs Git in the instance clone.
+
+A rebase conflict fails the command and leaves the rebase in progress in the primary
+checkout; nothing is merged and the instance clone stays untouched. Resolve it there with
+`git rebase --continue`, then check out the target branch and `git merge --ff-only` the
+rebased local branch. Alternatively, run `git rebase --abort`, check out the target branch,
+and use `devbox sync <id> <target-branch>` to let the agent fix the conflict in the instance
+before reviewing and landing again. Landing does not run project checks or delete branches,
+instances or conversations. You can also land fetched branches manually using Git.
+
+Later fetches refresh a local branch only if
 it still points to the last fetched commit and is not checked out in any worktree. Existing
 branches with different tips, checked-out branches and naming conflicts are left alone with
 a warning; the `refs/devbox/<id>/` refs still update and remain the source for review. Local

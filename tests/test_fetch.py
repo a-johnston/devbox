@@ -79,21 +79,23 @@ def test_fetch_namespaces_branches_and_flags_trusted_paths(
     assert git(project.root, "tag") == ""
 
 
-def test_fetch_with_no_new_work_only_updates_tracking_refs(
+def test_fetch_already_landed_work_only_updates_tracking_refs(
     project: Project, instance: tuple[App, str, Path]
 ) -> None:
     app, id, clone = instance
-    base = git(clone, "rev-parse", "main")
-    git(clone, "branch", "untouched")
+    landed = commit(clone, "landed", {"a": "done"})
+    app.fetch(id)
+    git(project.root, "merge", "--ff-only", landed)
+    git(project.root, "branch", "-d", f"{id.removeprefix('devbox-')}/landed")
     for _ in range(2):
         fetched = app.fetch(id)
         assert {branch.ref for branch in fetched} == {
             f"refs/devbox/{id}/main",
-            f"refs/devbox/{id}/untouched",
+            f"refs/devbox/{id}/landed",
         }
         assert all(branch.commits == 0 and branch.branch is None for branch in fetched)
         assert not any(branch.branch_current for branch in fetched)
-        assert repository.refs(project.root, "refs/heads/") == {"refs/heads/main": base}
+        assert repository.refs(project.root, "refs/heads/") == {"refs/heads/main": landed}
 
 
 def test_fetch_does_not_reset_a_published_branch_when_guest_drops_all_new_work(

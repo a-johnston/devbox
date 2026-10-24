@@ -375,7 +375,7 @@ class App:
             source = repository.git_directory(self.store.directory(previous) / "repo")
             metadata = self.store.metadata(previous)
             branch, head = repository.clone(source, target)
-            # Keep the original host starting point: fetch and sync compare against it.
+            # Keep the original host starting point for provenance and sync bundles.
             return metadata.get("branch"), metadata["base"], branch or head[:12]
         if git_output(project.checkout, "rev-parse", "--verify", "HEAD^{commit}") is None:
             raise DevboxError(f"{project.checkout} must be a Git repository with a commit")
@@ -405,15 +405,14 @@ class App:
             project.root,
             clone,
             f"refs/devbox/{id}/",
-            metadata["base"],
             watched,
             branch_prefix=id.removeprefix("devbox-"),
         )
 
     def review(self, id: str, ref: str, *options: str) -> None:
-        """Show a fetched branch's changes since the instance's starting point."""
+        """Show a fetched branch's changes since its merge base with the current host HEAD."""
         metadata = self.store.metadata(id)
-        repository.show_diff(Path(metadata["root"]), metadata["base"], ref, *options)
+        repository.show_diff(Path(metadata["root"]), ref, *options)
 
     def land(self, id: str, branch: repository.Fetched) -> str:
         """Land a fetched branch in the instance's host repository's primary checkout."""

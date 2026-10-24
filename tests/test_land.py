@@ -72,13 +72,18 @@ def test_land_targets_current_host_branch_not_starting_branch(
     project: Project, instance: tuple[App, str, Path]
 ) -> None:
     app, id, clone = instance
-    base = git(project.root, "rev-parse", "main")
+    # A prior stacked change has landed, and the current target is now divergent.
+    landed = commit(clone, "main", {"prior": "landed"})
     commit(clone, "feature", {"guest": "new"})
+    app.fetch(id)
+    git(project.root, "merge", "--ff-only", landed)
     host = commit(project.root, "release", {"host": "new"})
     dispatch(parser().parse_args(["land", id]), app)
     assert git(project.root, "branch", "--show-current") == "release"
     assert git(project.root, "rev-parse", "release^") == host
-    assert git(project.root, "rev-parse", "main") == base
+    assert git(project.root, "rev-parse", "main") == landed
+    assert git(project.root, "rev-list", "--count", f"{host}..release") == "1"
+    assert (project.root / "prior").read_text() == "landed"
 
 
 def test_land_leaves_conflicting_rebase_for_the_user(
@@ -159,7 +164,7 @@ def test_land_preserves_unavailable_local_branches(
         else:
             git(project.root, "branch", branch.split("/")[0])
     with pytest.raises(DevboxError, match="Cannot land"):
-        dispatch(parser().parse_args(["land", id]), app)
+        dispatch(parser().parse_args(["land", id, "feature"]), app)
     assert git(project.root, "rev-parse", "main") == base
     assert git(project.root, "rev-parse", fetched.ref) == tip
     if changed == "local":
@@ -215,6 +220,8 @@ def test_land_without_new_work_fails(instance: tuple[App, str, Path]) -> None:
     app, id, _ = instance
     with pytest.raises(DevboxError, match="unavailable"):
         dispatch(parser().parse_args(["land", id, "main"]), app)
+    with pytest.raises(DevboxError, match="No branches have new commits"):
+        dispatch(parser().parse_args(["land", id]), app)
 
 
 def test_land_from_a_worktree_targets_primary_checkout(

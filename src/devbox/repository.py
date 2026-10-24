@@ -27,7 +27,7 @@ class Fetched:
     rewritten: bool
     # Changed image inputs and manifest-declared paths, relative to the repository root.
     watched: tuple[str, ...]
-    # No local branch is published when there are no commits beyond the starting point.
+    # No local branch is published when all its commits are already in the host HEAD.
     branch: str | None
     branch_current: bool
 
@@ -83,7 +83,6 @@ def fetch(
     repository: Path,
     clone: Path,
     namespace: str,
-    base: str,
     watched: Sequence[str],
     *,
     branch_prefix: str,
@@ -103,11 +102,14 @@ def fetch(
         str(git_directory(clone)),
         f"+refs/heads/*:{namespace}*",
     )
+    # Snapshot the primary checkout's current HEAD, not the instance's creation base.
+    # Triple-dot diffs use each branch's merge base and exclude host-only changes.
+    head = git(repository, "rev-parse", "--verify", "HEAD").strip()
     fetched = []
     for ref, new in refs(repository, namespace).items():
         old = before.get(ref)
-        changed = git(repository, "diff", "--name-only", "-z", f"{base}...{new}", "--", *watched)
-        commits = int(git(repository, "rev-list", "--count", f"{base}..{new}"))
+        changed = git(repository, "diff", "--name-only", "-z", f"{head}...{new}", "--", *watched)
+        commits = int(git(repository, "rev-list", "--count", f"{head}..{new}"))
         branch = f"{branch_prefix}/{ref.removeprefix(namespace)}" if commits else None
         fetched.append(
             Fetched(
@@ -183,9 +185,9 @@ def land(repository: Path, fetched: Fetched) -> str:
     return target_name
 
 
-def show_diff(repository: Path, base: str, ref: str, *options: str) -> None:
-    """Replace this process with git diff in the host repository, using the user's pager."""
-    argv = ["git", "-C", str(repository), "diff", *options, f"{base}...{ref}", "--"]
+def show_diff(repository: Path, ref: str, *options: str) -> None:
+    """Diff from the merge base with the current host HEAD, using the user's pager."""
+    argv = ["git", "-C", str(repository), "diff", *options, f"HEAD...{ref}", "--"]
     os.execvpe("git", argv, git_environment())
 
 

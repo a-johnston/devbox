@@ -16,6 +16,7 @@ from devbox.engine import Container
 from devbox.errors import DevboxError
 from devbox.state import Session, Store
 from tests.fakes import FakeEngine
+from tests.test_fetch import commit, git
 from tests.test_utils import patch_input
 
 
@@ -322,9 +323,8 @@ def test_fetch_dispatch_prints_flagged_refs(
     assert f"refs/devbox/{id}/main  0 new commits\n" in out
     assert f"local branch {id.removeprefix('devbox-')}/feature" in out
     assert "WARNING" not in out
-    base = app.store.metadata(id)["base"]
-    assert f"Counted from {base[:12]}, where {id} started; see devbox review." in out
-    assert "merge" not in out
+    assert "Compared with the current host HEAD (merge base per branch); see devbox review." in out
+    assert "git merge" not in out
 
 
 @pytest.fixture
@@ -346,14 +346,27 @@ def commit_branch(clone: Path, branch: str) -> None:
     subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", branch], check=True)
 
 
-def test_review_diffs_the_only_changed_branch_without_a_picker(
-    reviewed: tuple[App, str, Path, list], monkeypatch: pytest.MonkeyPatch
+def test_review_diffs_the_only_unlanded_branch_from_its_merge_base(
+    reviewed: tuple[App, str, Path, list],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     app, id, clone, execs = reviewed
-    commit_branch(clone, "feature/x")
-    monkeypatch.setattr(cli, "select", lambda *a: pytest.fail("one changed branch needs no picker"))
-    dispatch(parser().parse_args(["review", id]), app)
     metadata = app.store.metadata(id)
+    root = Path(metadata["root"])
+    # The clone predates a landed ancestor and a divergent host-only commit.
+    landed = commit(clone, "main", {".devbox/Containerfile": "FROM prior\n"})
+    commit(clone, "feature/x", {"new": "still to land"})
+    app.fetch(id)
+    git(root, "merge", "--ff-only", landed)
+    commit(root, "release", {"host-only": "not part of the review"})
+    monkeypatch.setattr(cli, "select", lambda *a: pytest.fail("one changed branch needs no picker"))
+    capsys.readouterr()
+    dispatch(parser().parse_args(["review", id]), app)
+    text = capsys.readouterr().out
+    assert "1 new commit" in text
+    assert "CHANGES" not in text  # The watched Containerfile change already landed.
+    assert git(root, "diff", "--name-only", f"HEAD...refs/devbox/{id}/feature/x") == "new"
     assert execs == [
         (
             "git",
@@ -362,7 +375,7 @@ def test_review_diffs_the_only_changed_branch_without_a_picker(
                 "-C",
                 metadata["root"],
                 "diff",
-                f"{metadata['base']}...refs/devbox/{id}/feature/x",
+                f"HEAD...refs/devbox/{id}/feature/x",
                 "--",
             ],
         )
@@ -379,7 +392,7 @@ def test_review_matches_named_branches_and_passes_stat(
     ((_, argv),) = execs
     assert argv[4:] == [
         "--stat",
-        f"{app.store.metadata(id)['base']}...refs/devbox/{id}/feature/y",
+        f"HEAD...refs/devbox/{id}/feature/y",
         "--",
     ]
 
@@ -398,7 +411,7 @@ def test_review_picks_among_changed_branches(
 
     monkeypatch.setattr(cli, "select", pick)
     dispatch(parser().parse_args(["review", id]), app)
-    assert offered == [f"refs/devbox/{id}/{name}" for name in ("main", "one", "two")]
+    assert offered == [f"refs/devbox/{id}/{name}" for name in ("one", "two")]
     assert execs[0][1][-2].endswith(f"refs/devbox/{id}/two")
 
 

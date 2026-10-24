@@ -65,7 +65,7 @@ def test_resume_can_continue_from_the_instance_clone(
     original = app.store.metadata(first)
     metadata = app.store.metadata(resumed)
     assert (metadata["branch"], metadata["base"]) == (original["branch"], original["base"])
-    # Fetch still compares against the original host starting point.
+    # Fetch counts the resumed work against the current host HEAD.
     (branch,) = [b for b in app.fetch(resumed) if b.ref.endswith("/work")]
     assert branch.commits == 1
 

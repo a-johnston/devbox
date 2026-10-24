@@ -347,19 +347,24 @@ def _fetch(app: App, *, id: str | None) -> None:
     for branch in fetched:
         print(fetched_label(branch))
     if fetched:
-        base = app.store.metadata(instance)["base"]
-        print(f"Counted from {base[:12]}, where {instance} started; see devbox review.")
+        print("Compared with the current host HEAD (merge base per branch); see devbox review.")
 
 
 def _selected_branch(instance: str, fetched: list[Fetched], branch: str | None) -> Fetched:
     """Share review/land selection, including the single changed branch shortcut."""
     changed = [b for b in fetched if b.commits]
+    if branch is None and not changed:
+        raise DevboxError("No branches have new commits relative to the current host HEAD")
     namespace = f"refs/devbox/{instance}/"
     return (
         changed[0]
         if branch is None and len(changed) == 1
         else match(
-            fetched, branch, "Branches", lambda b: b.ref.removeprefix(namespace), fetched_label
+            changed if branch is None else fetched,
+            branch,
+            "Branches",
+            lambda b: b.ref.removeprefix(namespace),
+            fetched_label,
         )
     )
 

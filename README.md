@@ -60,16 +60,21 @@ when the project dependencies or harness version change.
 ## Fetch and Review
 
 Containers create local branches and `devbox fetch` copies them into the host repo. Container
-branches with new commits can then be referenced as local branches named `<id>/<branch>` (eg
-`orange/my-feature` from `devbox-orange`). Warns about any changes to the config, Containerfile,
-build context, and `[review] watch` paths.
+branches with commits not yet in the current host `HEAD` can then be referenced as local
+branches named `<id>/<branch>` (eg `orange/my-feature` from `devbox-orange`). Commit counts
+exclude work already in the host branch. Warnings about changes to the config, Containerfile,
+build context, and `[review] watch` paths use each branch's merge base with the current host
+`HEAD`, not the instance's original starting commit.
 
-`devbox review [id] [branch]` fetches, picks a branch, and shows its changes vs the base with
-`git diff`. After review, `devbox land [id] [branch]` locally rebases `<short-instance>/<branch>`
-onto the current branch and then fast-forward merges. After a successful merge it deletes
-that local `<short-instance>/<branch>` branch, without forcing deletion. The instance's
-branch and the fetched tracking ref are retained; failed rebases or merges leave the local
-branch intact.
+`devbox review [id] [branch]` fetches, picks a branch, and shows `git diff HEAD...<fetched-ref>`:
+only that branch's changes since its most recent shared ancestor with the host branch.
+Review and land use the **primary host checkout's current branch**, even if the instance
+started from another branch or worktree. Without an explicit branch, their picker omits
+branches with no new commits. After review, `devbox land [id] [branch]` locally rebases
+`<short-instance>/<branch>` onto that current host branch and then fast-forward merges.
+After a successful merge it deletes that local branch, without forcing deletion. The
+instance's branch and the fetched tracking ref are retained; failed rebases or merges
+leave the local branch intact.
 
 ## Sync
 

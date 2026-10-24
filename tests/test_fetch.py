@@ -3,8 +3,9 @@ from pathlib import Path
 
 import pytest
 
+from devbox import repository
 from devbox.app import App
-from devbox.cli import printable
+from devbox.cli import dispatch, parser, printable
 from devbox.config import Harness, Project
 from devbox.errors import DevboxError
 from devbox.state import Store
@@ -62,6 +63,12 @@ def test_fetch_namespaces_branches_and_flags_trusted_paths(
         "hooks/a/run.sh",
     )
     assert git(project.root, "rev-parse", f"refs/devbox/{id}/plain") == plain
+    for ref, branch in fetched.items():
+        assert branch.branch == ref.removeprefix("refs/")
+        assert branch.branch_current
+        assert git(project.root, "rev-parse", f"refs/heads/{branch.branch}") == git(
+            project.root, "rev-parse", ref
+        )
     assert git(project.root, "rev-parse", "main") == host_main
     assert git(project.root, "tag") == ""
 
@@ -79,19 +86,134 @@ def test_fetch_from_a_worktree_watches_repository_relative_paths(
     git(clone, "commit", "-qam", "change")
     (branch,) = [b for b in app.fetch(id) if b.ref.endswith("/next")]
     assert branch.watched == (".devbox/Containerfile",)
+    assert branch.branch_current
+    assert git(project.root, "rev-parse", f"refs/heads/{branch.branch}") == git(
+        clone, "rev-parse", "HEAD"
+    )
 
 
-def test_fetch_reports_rewritten_and_pruned_branches(instance: tuple[App, str, Path]) -> None:
+def test_fetch_reports_rewritten_and_pruned_branches(
+    project: Project, instance: tuple[App, str, Path]
+) -> None:
     app, id, clone = instance
     commit(clone, "feature", {"a": "1"})
-    commit(clone, "gone", {"b": "1"})
+    gone = commit(clone, "gone", {"b": "1"})
     assert not any(branch.rewritten for branch in app.fetch(id))
-    commit(clone, "feature", {"a": "2"})  # recreated from main: not a descendant
+    rewritten = commit(clone, "feature", {"a": "2"})  # recreated from main: not a descendant
     git(clone, "checkout", "--quiet", "main")
     git(clone, "branch", "-D", "gone")
     fetched = {branch.ref.rsplit("/", 1)[1]: branch for branch in app.fetch(id)}
     assert set(fetched) == {"main", "feature"}
     assert fetched["feature"].rewritten
+    assert fetched["feature"].branch_current
+    assert git(project.root, "rev-parse", f"refs/heads/devbox/{id}/feature") == rewritten
+    # Prune tracking refs, never local branches that may hold reviewed or host work.
+    assert git(project.root, "rev-parse", f"refs/heads/devbox/{id}/gone") == gone
+
+
+def test_fetch_refreshes_untouched_local_branches(
+    project: Project, instance: tuple[App, str, Path]
+) -> None:
+    app, id, clone = instance
+    commit(clone, "feature/nested", {"a": "1"})
+    app.fetch(id)
+    git(clone, "commit", "--quiet", "--allow-empty", "-m", "next")
+    tip = git(clone, "rev-parse", "HEAD")
+    for _ in range(2):  # An unchanged fetch is also harmless.
+        branch = next(branch for branch in app.fetch(id) if branch.ref.endswith("/feature/nested"))
+        assert branch.branch_current
+        assert git(project.root, "rev-parse", f"refs/heads/{branch.branch}") == tip
+
+
+@pytest.mark.parametrize("linked", [False, True])
+def test_fetch_does_not_move_checked_out_local_branches(
+    project: Project, instance: tuple[App, str, Path], tmp_path: Path, linked: bool
+) -> None:
+    app, id, clone = instance
+    first = commit(clone, "feature", {"a": "1"})
+    app.fetch(id)
+    name = f"devbox/{id}/feature"
+    checkout = tmp_path / "review" if linked else project.root
+    if linked:
+        git(project.root, "worktree", "add", "--quiet", str(checkout), name)
+    else:
+        git(project.root, "checkout", "--quiet", name)
+    (checkout / "a").write_text("uncommitted host edits")
+    second = commit(clone, "feature", {"a": "2"})
+    branch = next(branch for branch in app.fetch(id) if branch.ref.endswith("/feature"))
+    assert not branch.branch_current
+    assert git(checkout, "rev-parse", "HEAD") == first
+    assert (checkout / "a").read_text() == "uncommitted host edits"
+    assert git(project.root, "rev-parse", branch.ref) == second
+
+
+def test_fetch_preserves_locally_changed_branches_and_warns(
+    project: Project, instance: tuple[App, str, Path], capsys: pytest.CaptureFixture[str]
+) -> None:
+    app, id, clone = instance
+    commit(clone, "feature", {"a": "1"})
+    app.fetch(id)
+    local = f"devbox/{id}/feature"
+    host_main = git(project.root, "rev-parse", "main")
+    git(project.root, "branch", "--force", local, host_main)
+    tip = commit(clone, "feature", {"a": "2"})
+    dispatch(parser().parse_args(["fetch", id]), app)
+    assert git(project.root, "rev-parse", f"refs/heads/{local}") == host_main
+    assert git(project.root, "rev-parse", f"refs/devbox/{id}/feature") == tip
+    text = capsys.readouterr().out
+    assert f"WARNING: local branch {local} not updated" in text
+    assert f"use refs/devbox/{id}/feature" in text
+
+
+@pytest.mark.parametrize("collision", ["existing", "prefix", "symbolic"])
+def test_fetch_preserves_existing_host_refs_on_first_fetch(
+    project: Project, instance: tuple[App, str, Path], collision: str
+) -> None:
+    app, id, clone = instance
+    tip = commit(clone, "feature", {"a": "1"})
+    name = f"devbox/{id}/feature"
+    host_main = git(project.root, "rev-parse", "main")
+    if collision == "symbolic":
+        git(project.root, "symbolic-ref", f"refs/heads/{name}", "refs/heads/main")
+    else:
+        if collision == "prefix":
+            name = f"devbox/{id}"
+        git(project.root, "branch", name, host_main)
+    branch = next(branch for branch in app.fetch(id) if branch.ref.endswith("/feature"))
+    assert not branch.branch_current
+    assert git(project.root, "rev-parse", f"refs/heads/{name}") == host_main
+    assert git(project.root, "rev-parse", "main") == host_main
+    assert git(project.root, "rev-parse", branch.ref) == tip
+    if collision == "symbolic":
+        assert git(project.root, "symbolic-ref", f"refs/heads/{name}") == "refs/heads/main"
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_fetch_does_not_overwrite_a_concurrently_created_or_moved_branch(
+    project: Project,
+    instance: tuple[App, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    existing: bool,
+) -> None:
+    app, id, clone = instance
+    tip = commit(clone, "feature", {"a": "1"})
+    if existing:
+        app.fetch(id)
+        tip = commit(clone, "feature", {"a": "2"})
+    local = f"refs/heads/devbox/{id}/feature"
+    host_main = git(project.root, "rev-parse", "main")
+    original = repository.git_output
+
+    def race(directory: Path, *args: str) -> str | None:
+        if args[:3] == ("update-ref", "--no-deref", local):
+            git(project.root, "update-ref", local, host_main)
+        return original(directory, *args)
+
+    monkeypatch.setattr(repository, "git_output", race)
+    branch = next(branch for branch in app.fetch(id) if branch.ref.endswith("/feature"))
+    assert not branch.branch_current
+    assert git(project.root, "rev-parse", local) == host_main
+    assert git(project.root, "rev-parse", branch.ref) == tip
 
 
 def test_fetch_never_runs_clone_configured_commands(

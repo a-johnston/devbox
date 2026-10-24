@@ -27,6 +27,8 @@ class Fetched:
     rewritten: bool
     # Changed image inputs and manifest-declared paths, relative to the repository root.
     watched: tuple[str, ...]
+    branch: str
+    branch_current: bool
 
 
 def git_directory(clone: Path) -> Path:
@@ -54,10 +56,32 @@ def refs(repository: Path, namespace: str) -> dict[str, str]:
     return dict(line.split(" ", 1) for line in output.splitlines())
 
 
+def local_branch(repository: Path, name: str, new: str, old: str | None) -> bool:
+    """Publish a fetched tip without moving checked-out or locally changed branches."""
+    ref = f"refs/heads/{name}"
+    # Never follow a symbolic branch reference to some other host branch.
+    if git_output(repository, "symbolic-ref", "--quiet", ref) is not None:
+        return False
+    current = git_output(repository, "show-ref", "--verify", "--hash", ref)
+    if current == new:
+        return True
+    if current is not None and current != old:
+        return False
+    worktrees = git(repository, "worktree", "list", "--porcelain", "-z")
+    if f"branch {ref}" in worktrees.split("\0"):
+        return False
+    # Compare-and-swap: do not clobber a branch created or moved since we checked it.
+    # Ref collisions (e.g. an existing devbox/<id> branch) also leave host refs intact.
+    return (
+        git_output(repository, "update-ref", "--no-deref", ref, new, current or "0" * len(new))
+        is not None
+    )
+
+
 def fetch(
     repository: Path, clone: Path, namespace: str, base: str, watched: Sequence[str]
 ) -> list[Fetched]:
-    """Copy the clone's branches under namespace in the host repository, never its branches."""
+    """Copy clone branches under namespace and publish safe, namespaced local branches."""
     before = refs(repository, namespace)
     git(
         repository,
@@ -76,6 +100,7 @@ def fetch(
     for ref, new in refs(repository, namespace).items():
         old = before.get(ref)
         changed = git(repository, "diff", "--name-only", "-z", f"{base}...{new}", "--", *watched)
+        branch = ref.removeprefix("refs/")
         fetched.append(
             Fetched(
                 ref,
@@ -85,6 +110,8 @@ def fetch(
                 and old != new
                 and git_output(repository, "merge-base", "--is-ancestor", old, new) is None,
                 tuple(changed.split("\0")[:-1]),
+                branch,
+                local_branch(repository, branch, new, old),
             )
         )
     return fetched

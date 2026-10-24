@@ -358,7 +358,7 @@ class App:
         return branch, head, branch or head[:12]
 
     def fetch(self, id: str) -> list[repository.Fetched]:
-        """Copy an instance's branches into the host repository under refs/devbox/<id>/."""
+        """Fetch instance refs and publish local devbox/<id>/* branches when safe."""
         metadata = self.store.metadata(id)
         clone = self.store.directory(id) / "repo"
         # The host's manifest, not the clone's, decides which changes need attention.

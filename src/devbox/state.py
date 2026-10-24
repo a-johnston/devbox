@@ -9,6 +9,7 @@ import secrets
 import shutil
 import stat
 import subprocess
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -48,10 +49,19 @@ class Store:
     def instances(self) -> Path:
         return self.root / "instances"
 
-    def create(self) -> tuple[str, Path]:
-        id = "devbox-" + secrets.token_hex(4)
-        directory = self.instances / id
-        directory.mkdir(parents=True, mode=0o700)
+    def create(self, names: Iterable[str] = ()) -> tuple[str, Path]:
+        """Claim the first unused name, or a random ID once they are all taken."""
+        self.instances.mkdir(parents=True, exist_ok=True, mode=0o700)
+        for id in (*names, "devbox-" + secrets.token_hex(4)):
+            directory = self.instances / id
+            try:
+                # Exclusive creation: saved state keeps a name taken until cleanup.
+                directory.mkdir(mode=0o700)
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise DevboxError("Cannot allocate an instance ID")
         (directory / "home").mkdir(mode=0o700)
         return id, directory
 

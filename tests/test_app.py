@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from devbox.app import App, accent, tmux_config
+from devbox.app import COLORS, PALETTE, App, accent, tmux_config
 from devbox.config import Harness, Project
 from devbox.engine import Container, mount
 from devbox.errors import DevboxError
@@ -178,6 +178,24 @@ def test_accent_is_stable_and_status_cannot_inject_tmux_commands() -> None:
     assert "prefix C-a" in config
     assert "status-style" in config
     assert "' p | pi | id '" in tmux_config("id", "p", "pi")
+
+
+def test_instances_are_named_after_free_colors_then_fall_back(
+    project: Project, harness: Harness, tmp_path: Path
+) -> None:
+    app = App(FakeEngine(), Store(tmp_path / "state"))
+    first = app.new(project, harness, no_config=True)
+    second = app.new(project, harness, no_config=True)
+    assert first != second
+    color = first.removeprefix("devbox-")
+    assert {color, second.removeprefix("devbox-")} <= COLORS.keys()
+    home = app.store.directory(first) / "home"
+    assert f"bg=colour{COLORS[color]}," in (home / ".devbox/tmux.conf").read_text()
+    for color in COLORS:
+        (app.store.instances / f"devbox-{color}").mkdir(exist_ok=True)
+    fallback = app.new(project, harness, no_config=True)
+    assert fallback.removeprefix("devbox-") not in COLORS
+    assert accent(fallback) in PALETTE
 
 
 @pytest.mark.parametrize("path", ["/a,b", "/a\nb"])

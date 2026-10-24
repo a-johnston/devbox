@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
 import re
 import shutil
 import tempfile
@@ -41,6 +42,19 @@ from devbox.state import (
 
 PREPARED = PurePosixPath("/opt/devbox/prepared")
 PALETTE = (24, 25, 29, 53, 60, 88, 94, 96, 130)
+# Named instances use their own color; dark enough for the white status text.
+COLORS = {
+    "red": 124,
+    "orange": 166,
+    "yellow": 136,
+    "green": 28,
+    "teal": 30,
+    "blue": 25,
+    "purple": 91,
+    "pink": 162,
+    "brown": 94,
+    "gray": 240,
+}
 # Terminal capabilities the guest cannot detect itself; manifests and profiles override them.
 INHERITED = ("COLORTERM",)
 
@@ -60,6 +74,8 @@ def environment_secrets(harness: Harness) -> dict[str, str]:
 
 
 def accent(id: str) -> int:
+    if (color := COLORS.get(id.removeprefix("devbox-"))) is not None:
+        return color
     return PALETTE[int(hashlib.sha256(id.encode()).hexdigest()[:8], 16) % len(PALETTE)]
 
 
@@ -222,7 +238,9 @@ class App:
                 shared_mounts.append((str(source), target))
                 env[f"DEVBOX_SHARED_{name.upper()}"] = target
                 print(f"Sharing {harness.name} {name}: {source}", flush=True)
-        id, directory = self.store.create()
+        id, directory = self.store.create(
+            f"devbox-{color}" for color in random.sample(list(COLORS), len(COLORS))
+        )
         cloned = directory / "repo"
         previous = session.instance if session and from_instance else None
         branch, base, start = self._clone(project, cloned, previous)

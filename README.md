@@ -46,7 +46,10 @@ devbox cleanup                       # confirm deletion of orphaned state and un
 devbox cleanup --only images         # or --only instances
 ```
 
-`stop` and `rm` accept multiple IDs or unique prefixes; omit IDs for a multi-select picker.
+New instances take a random free color name, such as `devbox-red`, and their tmux status line
+uses that color. Saved state keeps a name taken until `cleanup`; once every color is taken,
+instances get a random ID instead.
+`stop` and `rm` accept multiple IDs or unique prefixes (`red`); omit IDs for a multi-select picker.
 
 `attach` and `shell` pass your `TERM` through when the guest has its terminfo, otherwise
 `xterm-256color`; install a custom entry in the project image to keep it.

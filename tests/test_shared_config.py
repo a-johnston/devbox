@@ -156,6 +156,19 @@ def test_shared_state_inside_project_is_rejected(
     assert not (project.root / "config").exists()
 
 
+def test_shared_state_inside_symlinked_project_is_rejected(
+    harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(project)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(project / "config"))
+    with pytest.raises(DevboxError, match="shared harness state outside"):
+        shared_config(harness, project_root=link)
+    assert not (project / "config").exists()
+
+
 def test_shared_config_resolves_a_relative_config_base(
     harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

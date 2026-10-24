@@ -217,7 +217,9 @@ def shared_config(harness: Harness, *, project_root: Path | None = None) -> dict
     base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config").expanduser().resolve()
     root = base / "devbox/shared" / harness.name
     paths = {name: root / name for name in harness.shared_dirs}
-    if project_root and any(path.resolve().is_relative_to(project_root) for path in paths.values()):
+    # Compare resolved paths: a symlinked project path must not hide an overlap.
+    project = project_root.resolve() if project_root else None
+    if project and any(path.resolve().is_relative_to(project) for path in paths.values()):
         raise DevboxError("Keep shared harness state outside the project directory")
     try:
         for directory in (root.parent, root, *paths.values()):

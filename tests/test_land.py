@@ -174,8 +174,10 @@ def selecting(project: Project, harness: Harness, tmp_path: Path, monkeypatch: p
 def landings(app: App, monkeypatch: pytest.MonkeyPatch) -> list[Fetched]:
     landed: list[Fetched] = []
 
-    def land(instance: str, branch: Fetched) -> Landing:
+    def land(instance: str, branch: Fetched, confirm) -> Landing:
         landed.append(branch)
+        if not confirm("main", [running(instance)]):
+            return Landing(Landed("main", "old", "new"), None)
         return Landing(Landed("main", "old", "new"), [(instance, ["main: fast-forwarded", "\x1b[2J"])])
 
     monkeypatch.setattr(app, "land", land)
@@ -214,6 +216,47 @@ def test_land_selects_named_branches_without_a_picker(
     assert not landed
     dispatch(parser().parse_args(["land", id.removeprefix("devbox-"), "one"]), app)
     assert [branch.ref for branch in landed] == [f"refs/devbox/{id}/one"]
+
+
+@pytest.mark.parametrize(
+    ("options", "terminal", "answer", "synced"),
+    [
+        ([], False, None, True),  # Not a terminal: sync as before, without asking.
+        ([], True, "", True),
+        ([], True, "n", False),
+        (["--sync"], True, None, True),
+        (["--no-sync"], True, None, False),
+        (["--no-sync"], False, None, False),
+    ],
+)
+def test_land_confirms_syncing_in_a_terminal(
+    selecting: tuple[App, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    options: list[str],
+    terminal: bool,
+    answer: str | None,
+    synced: bool,
+) -> None:
+    app, id = selecting
+    landings(app, monkeypatch)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: terminal)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: terminal)
+    asked = []
+
+    def ask(prompt: str) -> str:
+        asked.append(prompt)
+        assert answer is not None, "must not ask"
+        return answer
+
+    monkeypatch.setattr("builtins.input", ask)
+    dispatch(parser().parse_args(["land", id, "one", *options]), app)
+    out = capsys.readouterr().out
+    assert out.count("Landed ") == 1  # Before the question, and only once.
+    if answer is not None:
+        assert asked == [f"Sync main to {id}? Their local branches may move. [Y/n] "]
+    assert (f"{id}: main: fast-forwarded" in out) == synced
+    assert ("Not synced; devbox sync updates an instance later." in out) == (not synced)
 
 
 def test_land_without_new_work_fails(selecting: tuple[App, str], monkeypatch: pytest.MonkeyPatch) -> None:
@@ -297,7 +340,9 @@ def test_app_land_reports_sync_failures_without_failing(
         return recorded(container, branches, rewrites)
 
     monkeypatch.setattr(app, "sync", flaky)
-    assert app.land(first, fetched(first, "feature")).synced[:2] == [
+    synced = app.land(first, fetched(first, "feature")).synced
+    assert synced is not None
+    assert synced[:2] == [
         (first, ["not synced: container went away"]),
         (second, [f"{second} synced"]),
     ]
@@ -307,6 +352,27 @@ def test_app_land_reports_sync_failures_without_failing(
 
     monkeypatch.setattr(app.engine, "require_running", stopped)
     assert app.land(first, fetched(first, "feature")).synced == [(first, ["not synced: engine stopped"])]
+
+
+def test_app_land_asks_before_syncing_the_project(
+    project_instances: tuple[App, list[str], FakeGit, list[tuple]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, (first, second, idle), repository, synced = project_instances
+    asked = []
+
+    def decline(target: str, containers: list[Container]) -> bool:
+        asked.append((target, [c.id for c in containers]))
+        return False
+
+    landing = app.land(first, fetched(first, "feature"), decline)
+    assert landing.landed == repository.landed  # Landed regardless.
+    assert landing.synced is None and synced == []
+    assert asked == [("main", [first, second, idle])]
+
+    # Nothing to ask about without the project's containers.
+    monkeypatch.setattr(app.engine, "rows", [])
+    assert app.land(first, fetched(first, "feature"), decline).synced == []
+    assert len(asked) == 1
 
 
 def test_app_land_failure_syncs_nothing(

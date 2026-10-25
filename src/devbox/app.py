@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -126,8 +127,9 @@ def containerfile_base(file: Path) -> str:
 @dataclass(frozen=True)
 class Landing:
     landed: repository.Landed
-    # Per instance of the project: its sync report, or why it was not synced.
-    synced: list[tuple[str, list[str]]]
+    # Per instance of the project: its sync report, or why it was not synced. None when the
+    # sync was declined.
+    synced: list[tuple[str, list[str]]] | None
 
 
 class App:
@@ -509,38 +511,51 @@ class App:
         metadata = self.store.metadata(id)
         self.git(Path(metadata["root"])).show_diff(ref, *options)
 
-    def land(self, id: str, branch: repository.Fetched) -> Landing:
+    def land(
+        self,
+        id: str,
+        branch: repository.Fetched,
+        confirm: Callable[[str, list[Container]], bool] = lambda target, containers: True,
+    ) -> Landing:
         """Land a fetched branch in the instance's host repository's primary checkout, then
-        sync the landed target to every instance of the project.
+        sync the landed target to every instance of the project if confirm(target, containers)
+        agrees; it is asked only when the project has containers.
 
-        A failed sync never fails the landing. The landing instance's own branch also moves
-        to its rebased commits, so its history matches what was landed.
+        A failed or declined sync never fails the landing. The landing instance's own branch
+        also moves to its rebased commits, so its history matches what was landed.
         """
         root = self.store.metadata(id)["root"]
         landed = self.git(Path(root)).land(branch)
-        return Landing(landed, self._sync_landed(id, root, branch, landed))
-
-    def _sync_landed(
-        self, id: str, root: str, fetched: repository.Fetched, landed: repository.Landed
-    ) -> list[tuple[str, list[str]]]:
-        branch = fetched.ref.removeprefix(f"refs/devbox/{id}/")
         try:
             self.engine.require_running()
-            containers = self.engine.containers()
+            containers = self._project_containers(root)
         except DevboxError as exc:
-            return [(id, [f"not synced: {exc}"])]
-        report = []
-        for container in containers:
+            return Landing(landed, [(id, [f"not synced: {exc}"])])
+        if containers and not confirm(landed.target, containers):
+            return Landing(landed, None)
+        return Landing(landed, self._sync_landed(id, branch, landed, containers))
+
+    def _project_containers(self, root: str) -> list[Container]:
+        found = []
+        for container in self.engine.containers():
             try:
-                if self.store.metadata(container.id)["root"] != root:
-                    continue
+                if self.store.metadata(container.id)["root"] == root:
+                    found.append(container)
             except DevboxError:
                 continue  # Not one of ours, or its saved state is gone.
+        return found
+
+    def _sync_landed(
+        self, id: str, fetched: repository.Fetched, landed: repository.Landed, containers: list[Container]
+    ) -> list[tuple[str, list[str]]]:
+        branch = fetched.ref.removeprefix(f"refs/devbox/{id}/")
+        report = []
+        for container in containers:
+            if container.state != "running":
+                report.append((container.id, ["stopped, not synced; run devbox sync later"]))
+                continue
+            rewrites = [(branch, landed.fetched, landed.rebased)] if container.id == id else []
             try:
-                if container.state != "running":
-                    report.append((container.id, ["stopped, not synced; run devbox sync later"]))
-                    continue
-                rewrites = [(branch, landed.fetched, landed.rebased)] if container.id == id else []
                 report.append((container.id, self.sync(container, [landed.target], rewrites)))
             except DevboxError as exc:
                 report.append((container.id, [f"not synced: {exc}"]))
@@ -551,14 +566,18 @@ class App:
         container: Container,
         branches: list[str],
         rewrites: Sequence[tuple[str, str, str]] = (),
+        *,
+        force: bool = False,
     ) -> list[str]:
         """Deliver host branches to a running instance as host/<branch>, then update its
-        local branches where that loses nothing; returns one report line per branch.
+        local branches where that loses nothing; returns one report line per branch, also
+        left in the instance's ~/.devbox/sync.txt for the agent.
 
         The bundle is built in the host repository and unpacked by Git in the guest, which
         reports the clone's state; the host decides what is safe to move, and the guest moves
         it only while that state still holds (see devbox.sync). Each rewrite is a
         (branch, old, new) replacement that applies only while the branch is still at old.
+        Force also replaces branches that are diverged or ahead; never uncommitted changes.
         """
         if container.state != "running":
             raise DevboxError(f"{container.id} is stopped; sync needs a running container")
@@ -573,10 +592,17 @@ class App:
         inspected = self.engine.exec(
             container.id, "sh", "-c", sync.INSPECT, "sh", checkout, *arguments, input=delivery.data
         )
-        steps = sync.plan(sync.GuestClone.parse(inspected.stdout), branches, rewrites)
+        steps = sync.plan(sync.GuestClone.parse(inspected.stdout), branches, rewrites, force=force)
         moves = [step.argument for step in steps if isinstance(step, sync.Move)]
         results = self.engine.exec(container.id, "sh", "-c", sync.APPLY, "sh", checkout, *moves) if moves else None
-        return sync.report(steps, results.stdout.splitlines() if results else [])
+        lines = sync.report(steps, results.stdout.splitlines() if results else [])
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        # A convenience for the agent; the sync itself has happened.
+        with contextlib.suppress(OSError):
+            (self.store.directory(container.id) / "home/.devbox/sync.txt").write_text(
+                "".join(f"{line}\n" for line in [f"Last devbox sync, {stamp}, of {checkout}:", *lines])
+            )
+        return lines
 
     def put(
         self,

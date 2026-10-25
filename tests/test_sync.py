@@ -43,12 +43,30 @@ def state(
         (MISSING, "x: not delivered"),
         (GuestBranch(None, HOST, False, False), "x: delivered as host/x (no local branch)"),
         (GuestBranch(HOST, HOST, True, True), "x: up to date"),
-        (GuestBranch(LOCAL, HOST, True, False), "x: has commits beyond host/x; left alone"),
-        (GuestBranch(LOCAL, HOST, False, False), "x: diverged from host/x; left alone"),
+        (
+            GuestBranch(LOCAL, HOST, True, False),
+            "x: has commits beyond host/x; left alone (devbox sync --force replaces them)",
+        ),
+        (
+            GuestBranch(LOCAL, HOST, False, False),
+            "x: diverged from host/x; left alone (devbox sync --force replaces it)",
+        ),
     ],
 )
 def test_plan_leaves_branches_that_cannot_fast_forward(branch: GuestBranch, line: str) -> None:
     assert plan(state(branches={"x": branch}), ["x"]) == [line]
+
+
+@pytest.mark.parametrize("host_in_local", [True, False])
+def test_plan_force_resets_branches_that_cannot_fast_forward(host_in_local: bool) -> None:
+    clone = state(branches={"x": GuestBranch(LOCAL, HOST, host_in_local, False)})
+    assert plan(clone, ["x"], force=True) == [Move("x", LOCAL, HOST, "reset to host/x", reset=False)]
+    # Never over uncommitted changes, even when forced.
+    dirty = replace(clone, head="refs/heads/x", dirty=True)
+    assert plan(dirty, ["x"], force=True) == ["x: left alone (uncommitted changes); see host/x"]
+    # Force does not change what is fast-forwarded or rewritten.
+    behind = state(branches={"x": GuestBranch(LOCAL, HOST, False, True)})
+    assert plan(behind, ["x"], force=True) == [Move("x", LOCAL, HOST, "fast-forwarded", reset=False)]
 
 
 def test_plan_fast_forwards_a_branch_behind_the_host() -> None:
@@ -115,7 +133,7 @@ def test_report_describes_each_applied_move() -> None:
     ]
     assert report(steps, ["ok", "changed", "failed"]) == [
         "a: up to date",
-        "b: fast-forwarded",
+        f"b: fast-forwarded (was {LOCAL[:12]})",
         "c: left alone (changed meanwhile); see host/c",
         "d: left alone (reset failed); see host/d",
         "e: left alone (reset failed); see host/e",  # APPLY stopped before reporting it.
@@ -314,10 +332,15 @@ def test_sync_inspects_plans_and_applies_in_the_guest(project: Project, harness:
         "ok\nchanged\n",
     ]
     rewrites = [("feature", LOCAL, NEW)]
-    assert app.sync(running(id), [], rewrites) == [
-        "feature: moved to the rebased commits",
+    lines = [
+        f"feature: moved to the rebased commits (was {LOCAL[:12]})",
         "main: left alone (changed meanwhile); see host/main",
     ]
+    assert app.sync(running(id), [], rewrites) == lines
+    # The report is left for the agent.
+    report = (app.store.directory(id) / "home/.devbox/sync.txt").read_text().splitlines()
+    assert report[0].startswith("Last devbox sync, ") and report[0].endswith(f" of {project.workspace}:")
+    assert report[1:] == lines
     # Defaults to the branch the instance started from.
     assert repository.calls == [("bundle", project.root, ["main"], BASE)]
     inspect, apply = engine.execs
@@ -337,3 +360,9 @@ def test_sync_inspects_plans_and_applies_in_the_guest(project: Project, harness:
     assert app.sync(running(id), ["main"]) == ["main: up to date"]
     (inspect,) = engine.execs
     assert inspect.args[4] == metadata["checkout"]
+
+    # Force replaces a diverged branch.
+    engine.execs.clear()
+    engine.replies = [f"head -\nbusy 0\ndirty 0\nbranch main {LOCAL} {HOST} 0 0\n", "ok\n"]
+    assert app.sync(running(id), ["main"], force=True) == [f"main: reset to host/main (was {LOCAL[:12]})"]
+    assert engine.execs[1].args[5:] == (f"update:main:{LOCAL}:{HOST}",)

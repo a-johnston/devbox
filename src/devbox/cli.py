@@ -417,22 +417,43 @@ def _review(app: App, *, id: str | None, branch: str | None, stat: bool) -> None
     app.review(instance, selected.ref, *(["--stat"] if stat else []))
 
 
-def _land(app: App, *, id: str | None, branch: str | None) -> None:
+def _land(app: App, *, id: str | None, branch: str | None, sync: bool, no_sync: bool) -> None:
     instance, fetched = _fetched(app, id)
     if not fetched:
         return
     selected = _selected_branch(instance, fetched, branch)
     print(fetched_label(selected), flush=True)
-    landing = app.land(instance, selected)
-    print(f"Landed {printable(selected.branch or selected.ref)} onto {printable(landing.landed.target)}.")
+    announced = False
+
+    def announce(target: str) -> None:
+        nonlocal announced
+        if not announced:
+            print(f"Landed {printable(selected.branch or selected.ref)} onto {printable(target)}.", flush=True)
+            announced = True
+
+    def confirm(target: str, containers: list[Container]) -> bool:
+        if no_sync:
+            return False
+        if sync or not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return True
+        # Mistaken landings are easy to fix on the host, but not once clones have them.
+        announce(target)
+        names = ", ".join(c.id for c in containers)
+        return query(f"Sync {printable(target)} to {names}? Their local branches may move.", default_yes=True)
+
+    landing = app.land(instance, selected, confirm)
+    announce(landing.landed.target)
+    if landing.synced is None:
+        print("Not synced; devbox sync updates an instance later.")
+        return
     for container, lines in landing.synced:
         for line in lines:
             print(f"{container}: {printable(line)}")
 
 
-def _sync(app: App, *, id: str | None, branches: list[str]) -> None:
+def _sync(app: App, *, id: str | None, branches: list[str], force: bool) -> None:
     container = match(_containers(app, running=True), id, "Containers", lambda c: c.id, container_label)
-    for line in app.sync(container, branches):
+    for line in app.sync(container, branches, force=force):
         print(f"{container.id}: {printable(line)}")
 
 
@@ -532,10 +553,19 @@ def parser() -> argparse.ArgumentParser:
     command.set_defaults(func=_land)
     id_argument(command, "id", "?", "Instance ID, including removed containers", clones=True)
     command.add_argument("branch", nargs="?", help="Branch (omit for a picker)")
+    choice = command.add_mutually_exclusive_group()
+    choice.add_argument("--sync", action="store_true", help="Sync instances without confirming, as if not a tty")
+    choice.add_argument("--no-sync", action="store_true", help="Do not sync instances after landing")
     command = commands.add_parser("sync", help="Deliver host branches to a running instance as host/<branch>")
     command.set_defaults(func=_sync)
     id_argument(command, "id", "?", "Container ID")
     command.add_argument("branches", nargs="*", help="Host branches (default: the one the instance started from)")
+    command.add_argument(
+        "--force",
+        action="store_true",
+        help="Also replace local branches that are diverged from or ahead of the host's "
+        "(old tips are reported; uncommitted changes are never discarded)",
+    )
     command = commands.add_parser("put", help=f"Copy host files into a running instance's {transfer.INBOX}")
     command.set_defaults(func=_put)
     id_argument(command, "id", None, "Container ID")

@@ -96,10 +96,16 @@ branch with new commits available from a given instance.
 
 `devbox sync [id] [branch ...]` delivers host branches to a running instance as `host/<branch>`
 refs and fast-forwards branches when possible. If no branch is passed, the branch the instance
-was started with is synced.
+was started with is synced. Each moved branch is reported with its old tip, and the report is
+also left in the instance's `~/.devbox/sync.txt` for the agent. `--force` also replaces local
+branches that are diverged from or ahead of the host's (for example to undo a mistaken landing
+in the clones); uncommitted changes and in-progress Git operations are still never overridden,
+and replaced tips remain in the reflog.
 
 By default, `devbox land` automatically syncs the target branch with the landed changes in
-every running instance of the project.
+every running instance of the project. In a terminal it asks first, because a mistaken landing
+is easy to fix on the host but not once clones have it; declining leaves the landing in place.
+`--sync` skips the question and `--no-sync` skips the sync.
 
 ## Files
 

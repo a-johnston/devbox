@@ -18,7 +18,8 @@ user's working tree: they see your work only after fetching it.
   which you can then rebase onto. Landing also syncs. Safe updates happen to your repository
   without notice: local branches that are behind `host/<branch>` are fast-forwarded (the
   checked-out one only if it has no uncommitted changes), and a branch the user landed is
-  moved to its rebased commits. Check `git status` and the log after the user lands work.
+  moved to its rebased commits. `~/.devbox/sync.txt` reports the latest sync, with the old tip of
+  every branch that moved; check it, `git status` and the log after the user lands work.
 - Uncommitted changes are lost when the user cleans up this instance.
 
 ## Files

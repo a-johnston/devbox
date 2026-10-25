@@ -163,17 +163,25 @@ def inspect_arguments(
     ]
 
 
-def plan(clone: GuestClone, branches: Sequence[str], rewrites: Sequence[tuple[str, str, str]] = ()) -> list[str | Move]:
+def plan(
+    clone: GuestClone,
+    branches: Sequence[str],
+    rewrites: Sequence[tuple[str, str, str]] = (),
+    *,
+    force: bool = False,
+) -> list[str | Move]:
     """Decide each rewrite, then each branch to fast-forward: a report line, or a move to apply.
 
     A rewrite (branch, old, new) replaces a branch by its rebased tip only while it is still at
     old; rewrites come first, so a rebased branch is not reported as diverged from its target.
+    Force also resets branches that are diverged from or ahead of the host's, still never
+    over uncommitted changes or a Git operation in progress.
     """
     steps = [_rewrite(clone, *rewrite) for rewrite in rewrites]
-    return steps + [_fast_forward(clone, branch) for branch in branches]
+    return steps + [_fast_forward(clone, branch, force) for branch in branches]
 
 
-def _fast_forward(clone: GuestClone, name: str) -> str | Move:
+def _fast_forward(clone: GuestClone, name: str, force: bool) -> str | Move:
     branch = clone.branches.get(name, MISSING)
     if branch.host is None:
         return f"{name}: not delivered"
@@ -181,11 +189,13 @@ def _fast_forward(clone: GuestClone, name: str) -> str | Move:
         return f"{name}: delivered as host/{name} (no local branch)"
     if branch.local == branch.host:
         return f"{name}: up to date"
-    if branch.host_in_local:
-        return f"{name}: has commits beyond host/{name}; left alone"
     if branch.local_in_host:
         return _move(clone, name, branch.local, branch.host, "fast-forwarded")
-    return f"{name}: diverged from host/{name}; left alone"
+    if force:
+        return _move(clone, name, branch.local, branch.host, f"reset to host/{name}")
+    if branch.host_in_local:
+        return f"{name}: has commits beyond host/{name}; left alone (devbox sync --force replaces them)"
+    return f"{name}: diverged from host/{name}; left alone (devbox sync --force replaces it)"
 
 
 def _rewrite(clone: GuestClone, name: str, old: str, new: str) -> str | Move:
@@ -217,7 +227,8 @@ def _move(clone: GuestClone, name: str, old: str, new: str, done: str) -> str | 
 
 
 def report(steps: Sequence[str | Move], results: Sequence[str]) -> list[str]:
-    """One line per step, given APPLY's result for each move in order."""
+    """One line per step, given APPLY's result for each move in order; a moved branch's line
+    names its old tip, which stays in the clone's reflog."""
     outcomes = iter(results)
     lines = []
     for step in steps:
@@ -226,7 +237,7 @@ def report(steps: Sequence[str | Move], results: Sequence[str]) -> list[str]:
             continue
         outcome = next(outcomes, "failed")
         if outcome == "ok":
-            lines.append(f"{step.branch}: {step.done}")
+            lines.append(f"{step.branch}: {step.done} (was {step.old[:12]})")
         else:
             reason = "reset failed" if outcome == "failed" and step.reset else "changed meanwhile"
             lines.append(f"{step.branch}: left alone ({reason}); see host/{step.branch}")

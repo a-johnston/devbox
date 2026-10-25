@@ -293,10 +293,13 @@ def test_sync_dispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     container = Container("devbox-aabb", "running", "project", "pi", "now")
     engine.rows = [container]
     app = App(engine, Store(tmp_path))
-    sync = Mock(return_value=["host/main", "host/other"])
+    sync = Mock(return_value=["main: up to date"])
     monkeypatch.setattr(app, "sync", sync)
     dispatch(parser().parse_args(["sync", "aabb", "main", "other"]), app)
-    sync.assert_called_once_with(container, ["main", "other"])
+    sync.assert_called_once_with(container, ["main", "other"], force=False)
+    sync.reset_mock()
+    dispatch(parser().parse_args(["sync", "aabb", "main", "--force"]), app)
+    sync.assert_called_once_with(container, ["main"], force=True)
 
 
 def test_kill_all_yes_dispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

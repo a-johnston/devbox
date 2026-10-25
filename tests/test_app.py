@@ -178,6 +178,7 @@ def test_accent_is_stable_and_status_cannot_inject_tmux_commands() -> None:
     config = tmux_config("id", "#(touch /host/pwned)'", "pi")
     assert "#(touch" not in config
     assert "prefix C-a" in config
+    assert "set -g mouse on" in config
     assert "status-style" in config
     assert "' p | pi | id '" in tmux_config("id", "p", "pi")
 

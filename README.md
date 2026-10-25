@@ -96,8 +96,19 @@ across instances. The host auth is never used, so the first pi instance will nee
 Doesn't apply to instances created with `--no-config`. This is done with a small custom launcher;
 see [pi/README.md](src/devbox/assets/harnesses/pi/README.md).
 
-Host claude auth is never directly used. Use `/login` in the container, or create a separate token
-with `claude setup-token` and supply `CLAUDE_CODE_OAUTH_TOKEN` to devbox.
+Host Claude auth is never directly used. Use `/login` in the container, or create a separate token
+with `claude setup-token`. Supply it via `CLAUDE_CODE_OAUTH_TOKEN` in devbox's environment, or save it
+in `$XDG_CONFIG_HOME/devbox/config.toml` (default `~/.config/devbox/config.toml`):
+
+```toml
+[secrets]
+CLAUDE_CODE_OAUTH_TOKEN = "your-setup-token"
+```
+
+A nonempty environment value takes precedence over the config file. Only secrets declared by the
+selected harness are forwarded, and only to the harness process—not to images, container config or
+saved state. `--no-config` skips both sources. Keep this file private (e.g. `chmod 600`), outside your
+project; never put credentials in the project's `.devbox.toml` or an `[environment]` table.
 
 Git author identity, `COLORTERM` and, for `attach` and `shell`, `TERM` are inherited automatically.
 Other environment values must be declared by the project or harness. Harness profiles live in

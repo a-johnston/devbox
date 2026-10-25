@@ -32,7 +32,7 @@ runs on the host. Install only profiles you trust.
 | `prepared_dirs` | no | Directories, relative to `/home/agent`, prepared at build time under `/opt/devbox/prepared/` and linked into each home, e.g. installed packages. |
 | `[shared_dirs]` | no | Explicit read/write shared state: lowercase `name = "guest/relative/path"`. Each name mounts `$XDG_CONFIG_HOME/devbox/shared/<harness>/<name>/` and sets `DEVBOX_SHARED_<NAME>` to its guest path. Skipped with `--no-config`. |
 | `version_command` | no | Host command printing the installed version; it becomes the `HARNESS_VERSION` build argument so the guest matches the host. |
-| `secrets` | no | Host environment variable names forwarded only to the harness process, never to images, container config or saved state. |
+| `secrets` | no | Variable names read from the host environment or `[secrets]` in `$XDG_CONFIG_HOME/devbox/config.toml` (default `~/.config/devbox/config.toml`). Nonempty environment values take precedence. Forwarded only to the harness process, never to images, container config or saved state; skipped with `--no-config`. |
 | `[environment]` | no | Plain `NAME = "value"` variables for the container. Never put secrets here. |
 
 Load devbox's instructions so the agent knows its constraints (a private clone, `devbox fetch`

@@ -35,11 +35,11 @@ def text(value: Any, name: str) -> str:
     return value
 
 
-def environment(value: Any) -> dict[str, str]:
-    result = table(value, "environment")
+def environment(value: Any, name: str = "environment") -> dict[str, str]:
+    result = table(value, name)
     for key, val in result.items():
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) or not isinstance(val, str):
-            raise DevboxError("environment entries must be NAME = 'string'")
+            raise DevboxError(f"{name} entries must be NAME = 'string'")
     return dict(result)
 
 
@@ -269,6 +269,24 @@ class Harness:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return getattr(module, name, None)
+
+
+def configured_secrets(harness: Harness) -> dict[str, str]:
+    """Only profile-declared secrets from the user's host-only devbox configuration."""
+    if not harness.secrets:
+        return {}
+    base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config").expanduser()
+    path = base / "devbox/config.toml"
+    try:
+        with path.open("rb") as stream:
+            data = tomllib.load(stream)
+    except FileNotFoundError:
+        return {}
+    except (OSError, tomllib.TOMLDecodeError, UnicodeError):
+        # Parser diagnostics can include source text containing credentials.
+        raise DevboxError(f"Cannot read {path}: expected a readable TOML configuration") from None
+    values = environment(data.get("secrets", {}), f"{path}: secrets")
+    return {name: values[name] for name in harness.secrets if values.get(name)}
 
 
 def harnesses() -> dict[str, Harness]:

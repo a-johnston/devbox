@@ -13,7 +13,7 @@ import time
 from pathlib import Path, PurePosixPath
 
 from devbox import repository
-from devbox.config import ASSETS, Harness, Project, git, git_output, relative
+from devbox.config import ASSETS, Harness, Project, configured_secrets, git, git_output, relative
 from devbox.engine.engine import (
     IMAGE_KIND,
     IMAGE_SCHEMA,
@@ -69,8 +69,11 @@ def git_identity(directory: Path) -> dict[str, str]:
 
 
 def environment_secrets(harness: Harness) -> dict[str, str]:
-    """Declared secrets that are set on the host; nothing else crosses over."""
-    return {name: value for name in harness.secrets if (value := os.environ.get(name))}
+    """Declared host secrets, with nonempty environment values overriding devbox config."""
+    return {
+        **configured_secrets(harness),
+        **{name: value for name in harness.secrets if (value := os.environ.get(name))},
+    }
 
 
 def accent(id: str) -> int:
@@ -227,7 +230,7 @@ class App:
         # Only the harness process receives these: not the container config or saved state.
         secrets = {} if no_config else environment_secrets(harness)
         if secrets:
-            print("Forwarding credentials from environment: " + ", ".join(secrets), flush=True)
+            print("Forwarding harness credentials: " + ", ".join(secrets), flush=True)
         shared_mounts = []
         for name in harness.shared_dirs:
             # Reserved for mounted state, never inherited from a project/profile.

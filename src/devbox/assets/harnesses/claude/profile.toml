@@ -11,7 +11,7 @@ seed_dir = "~/.claude"
 # Never the host login (Keychain or .credentials.json): sharing it would rotate the host's tokens.
 seed_files = ["settings.json", "keybindings.json", "CLAUDE.md"]
 
-# A long-lived token from `claude setup-token`, forwarded from the host environment.
+# A long-lived token from `claude setup-token`, from the host environment or devbox config.
 secrets = ["CLAUDE_CODE_OAUTH_TOKEN"]
 
 [environment]

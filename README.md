@@ -57,6 +57,11 @@ checkout with `devbox sync`. Agents learn these constraints from devbox's [instr
 which every harness appends to its system prompt. Container images are reused when possible and only require rebuilding
 when the project dependencies or harness version change.
 
+The built-in Claude harness runs with `--dangerously-skip-permissions` (YOLO mode) for both new and
+resumed sessions, including with `--no-config`. Claude does not ask for tool permission approvals;
+the devbox container is the isolation boundary. Only run trusted tasks: Claude can still modify
+its clone, saved conversations and any explicitly shared harness state.
+
 ## Fetch and Review
 
 Containers create local branches and `devbox fetch` copies them into the host repo. Container

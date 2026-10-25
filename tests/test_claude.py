@@ -21,6 +21,20 @@ def claude(tmp_path: Path) -> Harness:
     )
 
 
+@pytest.mark.parametrize("no_config", [False, True])
+def test_new_skips_permission_prompts(
+    project: Project, claude: Harness, tmp_path: Path, no_config: bool
+) -> None:
+    engine = FakeEngine()
+    App(engine, Store(tmp_path / "state")).new(project, claude, no_config=no_config)
+    assert engine.execs[-1].args[-4:] == (
+        "claude",
+        "--dangerously-skip-permissions",
+        "--append-system-prompt-file",
+        "/home/agent/.devbox/environment.md",
+    )
+
+
 def test_seed_drops_host_specific_settings(tmp_path: Path, claude: Harness) -> None:
     claude.seed_dir.mkdir()
     (claude.seed_dir / "settings.json").write_text(
@@ -90,6 +104,7 @@ def test_resume_places_snapshot_by_id_and_forks(
     home = app.store.directory(id) / "home"
     key = "".join(c if c.isalnum() else "-" for c in str(project.cwd))
     assert (home / f".claude/projects/{key}/abc.jsonl").read_text() == source.read_text()
+    assert "--dangerously-skip-permissions" in engine.execs[-1].args
     assert engine.execs[-1].args[-3:] == ("--resume", "abc", "--fork-session")
 
 

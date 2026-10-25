@@ -87,6 +87,8 @@ Plain functions, all optional. Raise `ValueError` with a user-facing message to 
   never return credentials. Skipped with `--no-config`.
 - `adapt_seed(state_dir: Path) -> list[str]`: edit the copied config in place, e.g. remove
   settings that name host paths or run host commands. Return a note per change.
+- `trust_project(state_dir: Path, cwd: str) -> None`: pre-accept the harness's folder-trust or
+  permission-bypass prompts for the project path. Runs even with `--no-config`.
 - `resume_file(session_id: str, cwd: str) -> str`: where, relative to `/home/agent`, the
   harness expects a session snapshot to find it by ID. Without it, snapshots go to
   `.devbox/resume.jsonl`.

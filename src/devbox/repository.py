@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import os
+import shutil
 import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -47,9 +48,29 @@ def clone(source: Path, target: Path) -> tuple[str | None, str]:
     git(target.parent, "clone", "--quiet", "--no-local", "--no-checkout", str(source), str(target))
     # Origin would name the guest's own mount path; its refs stay as a snapshot of the source.
     git(target, "config", "--remove-section", "remote.origin")
+    _copy_lfs_objects(source, target)
     git(target, "reset", "--quiet", "--hard")
     branch = git_output(target, "symbolic-ref", "--quiet", "--short", "HEAD")
     return branch, git(target, "rev-parse", "HEAD").strip()
+
+
+def _copy_lfs_objects(source: Path, target: Path) -> None:
+    """Seed the clone's LFS store from the source's: with no remote, checkout cannot download."""
+    store = git_output(source, "rev-parse", "--path-format=absolute", "--git-path", "lfs/objects")
+    # Fails without git-lfs, which also means checkout has no LFS filter to satisfy.
+    listing = git_output(target, "lfs", "ls-files", "--long", "HEAD")
+    if store is None or not listing:
+        return
+    for line in listing.splitlines():
+        oid = line.split(" ", 1)[0]
+        if len(oid) != 64 or not oid.isalnum():
+            continue
+        relative = Path(oid[:2], oid[2:4], oid)
+        # Objects the source never downloaded stay missing, as they would be on the host.
+        if (Path(store) / relative).is_file() and not (Path(store) / relative).is_symlink():
+            destination = git_directory(target) / "lfs/objects" / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(Path(store) / relative, destination)
 
 
 def refs(repository: Path, namespace: str) -> dict[str, str]:

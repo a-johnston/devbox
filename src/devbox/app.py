@@ -253,6 +253,7 @@ class App:
             imported = seed_config(harness, home)
             if imported:
                 print("Seeded isolated config copy: " + ", ".join(imported), flush=True)
+        run_hook(harness, "trust_project", home / harness.state_dir, str(project.cwd))
         for prepared in harness.prepared_dirs:
             # Image-local and copy-on-write per container, never through the host mount.
             link = home / prepared

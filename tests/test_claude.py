@@ -110,3 +110,19 @@ def test_resume_places_snapshot_by_id_and_forks(
 
 def test_claude_never_copies_the_host_login() -> None:
     assert ".credentials.json" not in Harness.load(ASSETS / "harnesses/claude").seed_files
+
+
+@pytest.mark.parametrize("no_config", [False, True])
+def test_new_trusts_project_and_skips_bypass_warning(
+    project: Project, claude: Harness, tmp_path: Path, no_config: bool
+) -> None:
+    app = App(FakeEngine(), Store(tmp_path / "state"))
+    claude.seed_dir.mkdir()
+    (claude.seed_dir / "settings.json").write_text('{"model": "opus"}')
+    id = app.new(project, claude, no_config=no_config)
+    state = app.store.directory(id) / "home/.claude"
+    config = json.loads((state / ".claude.json").read_text())
+    assert config["projects"][str(project.cwd)]["hasTrustDialogAccepted"] is True
+    settings = json.loads((state / "settings.json").read_text())
+    assert settings["skipDangerousModePermissionPrompt"] is True
+    assert settings.get("model") == (None if no_config else "opus")

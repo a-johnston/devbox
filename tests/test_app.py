@@ -1,3 +1,4 @@
+import os
 import subprocess
 from dataclasses import replace
 from pathlib import Path
@@ -5,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from devbox import repository
 from devbox.app import COLORS, PALETTE, App, accent, tmux_config
 from devbox.config import Harness, Project
 from devbox.engine import Container, mount
@@ -229,3 +231,22 @@ def test_builds_and_describes_the_host_architecture(
     text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()
     assert f"devbox instance {id}, a Linux AMD64 container, as a non-root user." in text
     assert "Do not assume host tools" in text
+
+
+def test_clone_seeds_lfs_objects_from_the_source(
+    project: Project, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    oid = "ab" + "cd" * 31
+    # A stand-in for git-lfs: only the listing, as the clone has no remote to download from.
+    tool = tmp_path / "bin/git-lfs"
+    tool.parent.mkdir()
+    tool.write_text(f"#!/bin/sh\necho '{oid} * data/file.bin'\necho '{'f' * 64} * missing.bin'\n")
+    tool.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tool.parent}:{os.environ['PATH']}")
+    stored = project.root / ".git/lfs/objects/ab/cd" / oid
+    stored.parent.mkdir(parents=True)
+    stored.write_bytes(b"payload")
+    target = tmp_path / "clone"
+    repository.clone(project.root, target)
+    assert (target / ".git/lfs/objects/ab/cd" / oid).read_bytes() == b"payload"
+    assert not (target / ".git/lfs/objects/ff").exists()

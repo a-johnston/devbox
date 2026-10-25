@@ -44,6 +44,31 @@ def adapt_seed(state_dir: Path) -> list[str]:
     return notes
 
 
+def trust_project(state_dir: Path, cwd: str) -> None:
+    """Pre-accept the folder trust and bypass-permissions prompts: the container is the boundary."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    for name, update in (
+        (
+            ".claude.json",
+            lambda data: (
+                data.setdefault("projects", {})
+                .setdefault(cwd, {})
+                .update(hasTrustDialogAccepted=True)
+            ),
+        ),
+        ("settings.json", lambda data: data.update(skipDangerousModePermissionPrompt=True)),
+    ):
+        path = state_dir / name
+        try:
+            data = json.loads(path.read_text()) if path.is_file() else {}
+        except ValueError:
+            data = None
+        if not isinstance(data, dict):
+            raise ValueError(f"Claude {name} is invalid; fix it or use --no-config")
+        update(data)
+        path.write_text(json.dumps(data, indent=2) + "\n")
+
+
 def resume_file(session_id: str, cwd: str) -> str:
     """Claude looks up --resume IDs in the project directory keyed by the working directory."""
     return f".claude/projects/{re.sub(r'[^A-Za-z0-9]', '-', cwd)}/{session_id}.jsonl"

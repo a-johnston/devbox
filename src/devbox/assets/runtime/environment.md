@@ -15,7 +15,10 @@ user's working tree: they see your work only after fetching it.
   steps happen on the host.
 - `origin/*` refs are a snapshot from when the clone was made. For newer upstream work, ask
   the user to run `devbox sync {id} [branch ...]`; it updates `host/<branch>` refs here,
-  which you can then rebase onto.
+  which you can then rebase onto. Landing also syncs. Safe updates happen to your repository
+  without notice: local branches that are behind `host/<branch>` are fast-forwarded (the
+  checked-out one only if it has no uncommitted changes), and a branch the user landed is
+  moved to its rebased commits. Check `git status` and the log after the user lands work.
 - Uncommitted changes are lost when the user cleans up this instance.
 
 ## Environment

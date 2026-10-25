@@ -1,7 +1,8 @@
 """Git operations between host repositories and instance clones.
 
-Clones are agent-controlled: the host never runs Git inside one. Cloning or fetching from a
-clone only runs upload-pack there, which ignores repository settings that could run commands.
+The host never runs Git on a clone's files directly: cloning or fetching from one only runs
+upload-pack there, which ignores repository settings that could run commands. Keeping a clone
+in step with the host is done by a script the guest runs as the agent (see RECEIVE).
 """
 
 from __future__ import annotations
@@ -31,6 +32,14 @@ class Fetched:
     # No local branch is published when all its commits are already in the host HEAD.
     branch: str | None
     branch_current: bool
+
+
+@dataclass(frozen=True)
+class Landed:
+    target: str
+    # The landed branch's tip as fetched from the instance, and as rebased onto the target.
+    fetched: str
+    rebased: str
 
 
 def git_directory(clone: Path) -> Path:
@@ -148,7 +157,7 @@ def fetch(
     return fetched
 
 
-def land(repository: Path, fetched: Fetched) -> str:
+def land(repository: Path, fetched: Fetched) -> Landed:
     """Rebase and fast-forward merge a published branch, then delete the landed local branch.
 
     A failed rebase deliberately stays in progress in the host checkout. Never run Git
@@ -202,8 +211,9 @@ def land(repository: Path, fetched: Fetched) -> str:
         ) from exc
     git(repository, "checkout", "--quiet", target_name)
     git(repository, "merge", "--ff-only", "--no-autostash", source)
+    rebased = git(repository, "rev-parse", "--verify", source).strip()
     git(repository, "branch", "--delete", "--", branch)
-    return target_name
+    return Landed(target_name, tip, rebased)
 
 
 def show_diff(repository: Path, ref: str, *options: str) -> None:
@@ -232,8 +242,69 @@ def bundle(repository: Path, branches: Sequence[str], base: str) -> str:
     return base64.b64encode(result.stdout).decode()
 
 
-# Runs in the guest as the agent: unpack the bundle on stdin and update host/* refs.
-RECEIVE = (
-    'b=$(mktemp) && base64 -d > "$b" && git -C "$1" fetch --quiet --no-tags "$b"'
-    f' "+refs/heads/*:{SYNCED}*"; s=$?; rm -f "$b"; exit $s'
-)
+# Runs in the guest as the agent: unpack the bundle on stdin into host/* refs, then bring local
+# branches in step where that cannot lose work. Arguments: the checkout, then "ff:<branch>"
+# (fast-forward a local branch to host/<branch>) and "rewrite:<branch>:<old>:<new>" (replace
+# <branch> by its rebased <new> tip, only if it is still at <old>). A checked-out branch moves
+# only when the tree has no uncommitted changes to tracked files and no Git operation is under
+# way. One line is reported per spec; anything not moved is left alone, with the reason.
+RECEIVE = f"""
+c=$1; shift
+b=$(mktemp) && base64 -d > "$b" && git -C "$c" fetch --quiet --no-tags "$b" \
+    "+refs/heads/*:{SYNCED}*"
+s=$?; rm -f "$b"; [ $s -eq 0 ] || exit $s
+cd "$c" || exit 1
+
+move() {{ # branch old new description
+    ref=refs/heads/$1
+    if [ "$(git symbolic-ref -q HEAD)" = "$ref" ]; then
+        for op in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD sequencer; do
+            if [ -e "$(git rev-parse --git-path $op)" ]; then
+                echo "$1: left alone (a Git operation is in progress); see host/$1"; return
+            fi
+        done
+        if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+            echo "$1: left alone (uncommitted changes); see host/$1"; return
+        fi
+        git reset --keep --quiet "$3" && echo "$1: $4" \
+            || echo "$1: left alone (reset failed); see host/$1"
+    elif git worktree list --porcelain | grep -qx "branch $ref"; then
+        echo "$1: left alone (checked out in another worktree); see host/$1"
+    else
+        git update-ref "$ref" "$3" "$2" && echo "$1: $4" \
+            || echo "$1: left alone (changed meanwhile); see host/$1"
+    fi
+}}
+
+ff() {{ # branch
+    new=$(git rev-parse -q --verify "{SYNCED}$1^{{commit}}") || {{ echo "$1: not delivered"; return; }}
+    old=$(git rev-parse -q --verify "refs/heads/$1^{{commit}}") \
+        || {{ echo "$1: delivered as host/$1 (no local branch)"; return; }}
+    if [ "$old" = "$new" ]; then echo "$1: up to date"
+    elif git merge-base --is-ancestor "$new" "$old"; then
+        echo "$1: has commits beyond host/$1; left alone"
+    elif git merge-base --is-ancestor "$old" "$new"; then move "$1" "$old" "$new" "fast-forwarded"
+    else echo "$1: diverged from host/$1; left alone"
+    fi
+}}
+
+rewrite() {{ # branch expected-old new
+    cur=$(git rev-parse -q --verify "refs/heads/$1^{{commit}}") \
+        || {{ echo "$1: no longer exists; left alone"; return; }}
+    if [ "$cur" = "$3" ]; then echo "$1: matches the landed commits"
+    elif [ "$cur" != "$2" ]; then echo "$1: changed since it was fetched; left alone"
+    elif git cat-file -e "$3^{{commit}}" 2>/dev/null; then
+        move "$1" "$cur" "$3" "moved to the rebased commits"
+    else echo "$1: rebased commits not delivered; left alone"
+    fi
+}}
+
+for spec; do
+    case $spec in
+        ff:*) ff "${{spec#ff:}}" ;;
+        rewrite:*)
+            rest=${{spec#rewrite:}}; name=${{rest%%:*}}; rest=${{rest#*:}}
+            rewrite "$name" "${{rest%%:*}}" "${{rest#*:}}" ;;
+    esac
+done
+"""

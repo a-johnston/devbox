@@ -10,6 +10,7 @@ import re
 import shutil
 import tempfile
 import time
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
 
@@ -459,16 +460,55 @@ class App:
         metadata = self.store.metadata(id)
         repository.show_diff(Path(metadata["root"]), ref, *options)
 
-    def land(self, id: str, branch: repository.Fetched) -> str:
+    def land(self, id: str, branch: repository.Fetched) -> repository.Landed:
         """Land a fetched branch in the instance's host repository's primary checkout."""
         metadata = self.store.metadata(id)
         return repository.land(Path(metadata["root"]), branch)
 
-    def sync(self, container: Container, branches: list[str]) -> list[str]:
-        """Deliver host branches to a running instance as host/<branch>, for it to rebase onto.
+    def sync_landed(
+        self, id: str, fetched: repository.Fetched, landed: repository.Landed
+    ) -> list[tuple[str, list[str]]]:
+        """Sync the landed target to every instance of the project; never fails the landing.
 
-        The bundle is built in the host repository and unpacked by Git in the guest: the
-        host neither runs Git in the clone nor writes into agent-controlled directories.
+        The landing instance's own branch also moves to its rebased commits, so its history
+        matches what was landed. Returns a report per instance.
+        """
+        root = self.store.metadata(id)["root"]
+        branch = fetched.ref.removeprefix(f"refs/devbox/{id}/")
+        try:
+            self.engine.require_running()
+            containers = self.engine.containers()
+        except DevboxError as exc:
+            return [(id, [f"not synced: {exc}"])]
+        report = []
+        for container in containers:
+            try:
+                if self.store.metadata(container.id)["root"] != root:
+                    continue
+            except DevboxError:
+                continue  # Not one of ours, or its saved state is gone.
+            try:
+                if container.state != "running":
+                    report.append((container.id, ["stopped, not synced; run devbox sync later"]))
+                    continue
+                rewrites = [(branch, landed.fetched, landed.rebased)] if container.id == id else []
+                report.append((container.id, self.sync(container, [landed.target], rewrites)))
+            except DevboxError as exc:
+                report.append((container.id, [f"not synced: {exc}"]))
+        return report
+
+    def sync(
+        self,
+        container: Container,
+        branches: list[str],
+        rewrites: Sequence[tuple[str, str, str]] = (),
+    ) -> list[str]:
+        """Deliver host branches to a running instance as host/<branch>, then update its
+        local branches where that loses nothing; returns one report line per branch.
+
+        The bundle is built in the host repository and unpacked by Git in the guest, which
+        also decides what is safe to move (see repository.RECEIVE). Each rewrite is a
+        (branch, old, new) replacement that applies only while the branch is still at old.
         """
         if container.state != "running":
             raise DevboxError(f"{container.id} is stopped; sync needs a running container")
@@ -477,10 +517,20 @@ class App:
         if not branches:
             raise DevboxError(f"{container.id} started from a detached HEAD; name branches to sync")
         data = repository.bundle(Path(metadata["root"]), branches, metadata["base"])
-        self.engine.exec(
-            container.id, "sh", "-c", repository.RECEIVE, "sh", metadata["checkout"], input=data
+        # Rewrites first: a rebased branch must not be reported as diverged from its target.
+        specs = [f"rewrite:{name}:{old}:{new}" for name, old, new in rewrites]
+        specs += [f"ff:{branch}" for branch in branches]
+        result = self.engine.exec(
+            container.id,
+            "sh",
+            "-c",
+            repository.RECEIVE,
+            "sh",
+            metadata["checkout"],
+            *specs,
+            input=data,
         )
-        return [f"host/{branch}" for branch in branches]
+        return result.stdout.splitlines()
 
     def orphaned_instances(self) -> list[Instance]:
         self.engine.require_running()

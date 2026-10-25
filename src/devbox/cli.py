@@ -411,16 +411,19 @@ def _land(app: App, *, id: str | None, branch: str | None) -> None:
         return
     selected = _selected_branch(instance, fetched, branch)
     print(fetched_label(selected), flush=True)
-    target = app.land(instance, selected)
-    print(f"Landed {printable(selected.branch or selected.ref)} onto {printable(target)}.")
+    landed = app.land(instance, selected)
+    print(f"Landed {printable(selected.branch or selected.ref)} onto {printable(landed.target)}.")
+    for container, lines in app.sync_landed(instance, selected, landed):
+        for line in lines:
+            print(f"{container}: {printable(line)}")
 
 
 def _sync(app: App, *, id: str | None, branches: list[str]) -> None:
     container = match(
         _containers(app, running=True), id, "Containers", lambda c: c.id, container_label
     )
-    for ref in app.sync(container, branches):
-        print(f"Updated {ref} in {container.id}; the agent can rebase onto it.")
+    for line in app.sync(container, branches):
+        print(f"{container.id}: {printable(line)}")
 
 
 def _kill_all(app: App, *, yes: bool) -> None:

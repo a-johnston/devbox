@@ -25,7 +25,14 @@ Verify the installed tool's executable as well as `uv run` commands; they use se
 
 ## Development workflow
 
-Make project changes on a new branch in an in-repo worktree, created before the first edit:
+These instructions apply on the host. Inside a devbox container (`DEVBOX_INSTANCE` is set) the
+checkout is a private clone: make changes on a new branch there instead of a worktree, commit,
+and ask the user to review it with `devbox review <instance>`. Landing, `devbox` commands and
+worktree cleanup happen on the host. `devbox sync` and `devbox land` may update the clone's
+branches (fast-forwarding, or rewriting a landed branch to its rebased commits) when the tree
+is clean, so check `git status` and `host/*` before relying on branch state.
+
+On the host, make project changes on a new branch in an in-repo worktree, created before the first edit:
 
 ```sh
 git worktree add .worktrees/<name> -b <branch>

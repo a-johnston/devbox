@@ -32,7 +32,6 @@ def test_land_fetches_and_fast_forwards_without_a_picker(
     tip = commit(clone, "feature/x", {"new": "instance work"})
     monkeypatch.chdir(tmp_path)  # Selection, not cwd, determines the repository.
     monkeypatch.setattr(cli, "select", lambda *a: pytest.fail("no picker needed"))
-    monkeypatch.setattr(app.engine, "require_running", lambda: pytest.fail("no engine needed"))
     dispatch(parser().parse_args(["land", id.removeprefix("devbox-")]), app)
     assert git(project.root, "rev-parse", "main") == tip
     assert git(project.root, "branch", "--show-current") == "main"

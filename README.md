@@ -84,8 +84,18 @@ leave the local branch intact.
 ## Sync
 
 `devbox sync [id] [branch ...]` delivers host branches to a running instance as
-`host/<branch>` refs (default: the branch it started from), so the agent can rebase onto
-newer work.
+`host/<branch>` refs (default: the branch it started from), then keeps the clone's local
+branches in step where that loses nothing. Inside the guest, a local branch that is a strict
+ancestor of `host/<branch>` is fast-forwarded. The checked-out branch moves only when
+tracked files have no uncommitted changes and no rebase, merge or similar is in progress;
+a branch checked out in another worktree, with extra commits or diverged is left alone, and
+`host/<branch>` remains for the agent to use. Each branch gets one report line.
+
+`devbox land` runs the same sync after a successful merge, for the landed target branch in
+every running instance of the project (stopped ones are reported, not synced). The landing
+instance's own branch is also moved to its rebased commits when it is still at the fetched
+tip, so later fetches and branches stacked on it see the commits that were landed. A failed
+sync is reported and never undoes the landing.
 
 ## Config and credentials
 

@@ -565,7 +565,7 @@ def dispatch(args: argparse.Namespace, app: App | None = None) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    os.umask(0o077)
+    previous_umask = os.umask(0o077)
     try:
         command_parser = parser()
         argcomplete.autocomplete(command_parser)
@@ -576,6 +576,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     except KeyboardInterrupt:
         return 130
+    finally:
+        # In-process callers (tests) must not keep the restrictive umask.
+        os.umask(previous_umask)
     return 0
 
 

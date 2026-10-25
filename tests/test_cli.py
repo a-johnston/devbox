@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from functools import partial
@@ -664,3 +665,12 @@ def test_instance_id_completion_without_saved_state(
 ) -> None:
     found = complete(f"devbox --state-dir {tmp_path / 'nope'} attach ", tmp_path, monkeypatch)
     assert not [c for c in found if not c.startswith("-")]
+
+
+def test_main_restores_umask(tmp_path: Path) -> None:
+    before = os.umask(0o022)
+    try:
+        assert main(["--state-dir", str(tmp_path / "state"), "completion", "bash"]) == 0
+        assert os.umask(0o022) == 0o022
+    finally:
+        os.umask(before)

@@ -96,7 +96,7 @@ across instances. The host auth is never used, so the first pi instance will nee
 Doesn't apply to instances created with `--no-config`. This is done with a small custom launcher;
 see [pi/README.md](src/devbox/assets/harnesses/pi/README.md).
 
-Claude's host login is also not used: use `/login` in the guest, or create a separate token
+Host claude auth is never directly used. Use `/login` in the container, or create a separate token
 with `claude setup-token` and supply `CLAUDE_CODE_OAUTH_TOKEN` to devbox.
 
 Git author identity, `COLORTERM` and, for `attach` and `shell`, `TERM` are inherited automatically.
@@ -119,12 +119,10 @@ Targets python >= 3.12
 
 ```sh
 uv sync --locked
+uv run pytest
 uv run prek install
-uv run pytest                        # no running container engine needed
-uv run prek run --all-files           # lint, format and types
+uv run prek run --all-files
 ```
 
-Tests run explicitly, not in prek: the full suite exercises real Git clones, worktrees,
-fetches and rebases, whose subprocess overhead makes it unsuitable for a per-commit hook.
-
 - [adding a container engine](src/devbox/engine/README.md)
+- [adding a harness](src/devbox/assets/harnesses/README.md)

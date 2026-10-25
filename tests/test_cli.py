@@ -13,6 +13,7 @@ from devbox.app import App
 from devbox.cli import dispatch, get_harness, main, match, parser, query, select, session_label
 from devbox.config import Harness, Project
 from devbox.engine import Container
+from devbox.engine.engine import backend_name
 from devbox.errors import DevboxError
 from devbox.state import Session, Store
 from tests.fakes import FakeEngine
@@ -616,3 +617,50 @@ def test_missing_fzf_hint_is_platform_neutral(monkeypatch: pytest.MonkeyPatch) -
     with pytest.raises(DevboxError, match="requires fzf") as error:
         select(["first"], "Harnesses", str)
     assert "brew" not in str(error.value)
+
+
+@pytest.fixture
+def saved_instances(tmp_path: Path) -> Path:
+    state = tmp_path / "saved"
+    for id, clone in (("devbox-blue", True), ("devbox-1a2b3c4d", False)):
+        directory = state / backend_name() / "instances" / id
+        directory.mkdir(parents=True)
+        (directory / "metadata.json").write_text("{}")
+        if clone:
+            (directory / "repo/.git").mkdir(parents=True)
+    return state
+
+
+@pytest.mark.parametrize(
+    ("line", "expected", "absent"),
+    [
+        ("devbox attach ", {"blue", "1a2b3c4d"}, {"devbox-blue"}),
+        ("devbox attach b", {"blue"}, {"1a2b3c4d"}),
+        ("devbox attach devbox-b", {"devbox-blue"}, {"blue"}),
+        ("devbox rm blue ", {"1a2b3c4d"}, set()),
+        ("devbox fetch ", {"blue"}, {"1a2b3c4d"}),
+        ("devbox review ", {"blue"}, {"1a2b3c4d"}),
+    ],
+)
+def test_instance_id_completion(
+    line: str,
+    expected: set[str],
+    absent: set[str],
+    saved_instances: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    found = complete(
+        f"devbox --state-dir {saved_instances} {line.removeprefix('devbox ')}",
+        tmp_path,
+        monkeypatch,
+    )
+    assert expected <= set(found)
+    assert not absent & set(found)
+
+
+def test_instance_id_completion_without_saved_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    found = complete(f"devbox --state-dir {tmp_path / 'nope'} attach ", tmp_path, monkeypatch)
+    assert not [c for c in found if not c.startswith("-")]

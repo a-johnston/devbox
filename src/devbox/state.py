@@ -95,6 +95,14 @@ class Store:
             )
         ]
 
+    def saved(self) -> list[str]:
+        """Instances with saved state, whether or not their container still exists."""
+        return [
+            directory.name
+            for directory in self._instance_directories()
+            if (directory / "metadata.json").is_file()
+        ]
+
     def clones(self) -> list[str]:
         """Instances whose repository clone can be fetched, including removed containers."""
         return [

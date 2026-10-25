@@ -193,6 +193,33 @@ def match[T](
     return candidates[0]
 
 
+def complete_ids(*, clones: bool = False) -> Callable[..., list[str]]:
+    """Argcomplete completer for instance IDs, read from saved state without the engine.
+
+    Offers the short form ("blue"), and the full ID once something is typed, matching
+    what `match` accepts. Completion must never print or raise, so failures yield nothing.
+    """
+
+    def complete(prefix: str, parsed_args: argparse.Namespace, **_: object) -> list[str]:
+        try:
+            store = Store(parsed_args.state_dir)
+            ids = store.clones() if clones else store.saved()
+        except (DevboxError, OSError):
+            return []
+        short = [id.removeprefix("devbox-") for id in ids]
+        return short + ids if prefix else short
+
+    return complete
+
+
+def id_argument(
+    command: argparse.ArgumentParser, name: str, nargs: str, help: str, *, clones: bool = False
+) -> None:
+    # argcomplete reads `completer` off the action; argparse does not declare it.
+    action = command.add_argument(name, nargs=nargs, help=help)
+    action.completer = complete_ids(clones=clones)  # ty: ignore[unresolved-attribute]
+
+
 def container_label(container: Container) -> str:
     return f"{container.id}  {container.harness}  {container.state}  {container.project}  {container.created}"
 
@@ -442,11 +469,11 @@ def parser() -> argparse.ArgumentParser:
     for name, func in (("attach", _attach), ("shell", _shell)):
         command = commands.add_parser(name)
         command.set_defaults(func=func)
-        command.add_argument("id", nargs="?", help="Container ID")
+        id_argument(command, "id", "?", "Container ID")
     for name, func in (("stop", _stop), ("rm", _rm)):
         command = commands.add_parser(name)
         command.set_defaults(func=func)
-        command.add_argument("ids", nargs="*", help="Container IDs")
+        id_argument(command, "ids", "*", "Container IDs")
     for name, func in (("ls", _ls), ("sessions", _sessions)):
         command = commands.add_parser(name)
         command.set_defaults(func=func)
@@ -455,25 +482,25 @@ def parser() -> argparse.ArgumentParser:
         "fetch", help="Fetch new work as local <short-instance>/<branch> branches"
     )
     command.set_defaults(func=_fetch)
-    command.add_argument("id", nargs="?", help="Instance ID, including removed containers")
+    id_argument(command, "id", "?", "Instance ID, including removed containers", clones=True)
     command = commands.add_parser(
         "review", help="Fetch an instance's branches and show one's changes with git diff"
     )
     command.set_defaults(func=_review)
-    command.add_argument("id", nargs="?", help="Instance ID, including removed containers")
+    id_argument(command, "id", "?", "Instance ID, including removed containers", clones=True)
     command.add_argument("branch", nargs="?", help="Branch (omit for a picker)")
     command.add_argument("--stat", action="store_true", help="Summarize changed files")
     command = commands.add_parser(
         "land", help="Fetch, rebase onto the current host branch and fast-forward merge"
     )
     command.set_defaults(func=_land)
-    command.add_argument("id", nargs="?", help="Instance ID, including removed containers")
+    id_argument(command, "id", "?", "Instance ID, including removed containers", clones=True)
     command.add_argument("branch", nargs="?", help="Branch (omit for a picker)")
     command = commands.add_parser(
         "sync", help="Deliver host branches to a running instance as host/<branch>"
     )
     command.set_defaults(func=_sync)
-    command.add_argument("id", nargs="?", help="Container ID")
+    id_argument(command, "id", "?", "Container ID")
     command.add_argument(
         "branches", nargs="*", help="Host branches (default: the one the instance started from)"
     )

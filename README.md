@@ -107,13 +107,12 @@ in `$XDG_CONFIG_HOME/devbox/config.toml` (default `~/.config/devbox/config.toml`
 
 ```toml
 [secrets]
-CLAUDE_CODE_OAUTH_TOKEN = "your-setup-token"
+CLAUDE_CODE_OAUTH_TOKEN = "your-token"
 ```
 
 A nonempty environment value takes precedence over the config file. Only secrets declared by the
-selected harness are forwarded, and only to the harness process—not to images, container config or
-saved state. `--no-config` skips both sources. Keep this file private (e.g. `chmod 600`), outside your
-project; never put credentials in the project's `.devbox.toml` or an `[environment]` table.
+selected harness are forwarded, and only to the harness process - not to images, container config or
+saved state. `--no-config` skips both sources.
 
 Git author identity, `COLORTERM` and, for `attach` and `shell`, `TERM` are inherited automatically.
 Other environment values must be declared by the project or harness. Harness profiles live in
@@ -122,7 +121,7 @@ Other environment values must be declared by the project or harness. Harness pro
 ## Saved state
 
 Container state by default is saved to `$XDG_DATA_HOME/devbox/{apple,podman}/instances/<id>/`
-(eg `~/.local/share/devbox`) unless overridden with `--state-dir`. Removing a container does not remove
+(default `~/.local/share/devbox`) unless overridden with `--state-dir`. Removing a container does not remove
 the saved state.
 
 `devbox cleanup` previews orphaned saved instances and/or unused devbox images, optionally `--select`ing

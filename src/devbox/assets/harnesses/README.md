@@ -1,10 +1,9 @@
 # Harness profiles
 
 A harness profile tells devbox how to install, configure and launch one coding agent. Built-in
-profiles live here. To add your own, create
-`$XDG_CONFIG_HOME/devbox/harnesses/<name>/` (default `~/.config/devbox/harnesses/<name>/`).
-A user profile with the same `name` replaces a built-in one. Use [`pi`](pi) and
-[`claude`](claude) as worked examples.
+profiles live here. To add your own, create `$XDG_CONFIG_HOME/devbox/harnesses/<name>/` (default
+`~/.config/devbox/harnesses/<name>/`). A user profile with the same `name` replaces a built-in
+one. Use [`pi`](pi) and [`claude`](claude) as examples.
 
 ```
 <name>/

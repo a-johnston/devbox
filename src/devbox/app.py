@@ -10,11 +10,13 @@ import re
 import shutil
 import tempfile
 import time
+from dataclasses import replace
 from pathlib import Path, PurePosixPath
 
 from devbox import repository
 from devbox.config import ASSETS, Harness, Project, configured_secrets, git, git_output, relative
 from devbox.engine.engine import (
+    IMAGE_BASE,
     IMAGE_KIND,
     IMAGE_SCHEMA,
     IMAGE_STORE,
@@ -93,6 +95,35 @@ def tmux_config(id: str, project: str, harness: str) -> str:
     )
 
 
+def containerfile_base(file: Path) -> str:
+    """The external image a Containerfile's final stage builds on, or "" if unknown."""
+    defaults: dict[str, str] = {}
+    stages: dict[str, str] = {}
+    base = ""
+    try:
+        lines = file.read_text().splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        words = line.split()
+        if not words:
+            continue
+        if words[0].upper() == "ARG" and len(words) == 2 and "=" in words[1]:
+            name, _, value = words[1].partition("=")
+            defaults.setdefault(name, value.strip("\"'"))
+        elif words[0].upper() == "FROM":
+            args = [word for word in words[1:] if not word.startswith("--")]
+            if not args:
+                return ""
+            base = re.sub(
+                r"\$\{(\w+)\}|\$(\w+)", lambda m: defaults.get(m[1] or m[2], m[0]), args[0]
+            )
+            base = stages.get(base, base)
+            if len(args) == 3 and args[1].upper() == "AS":
+                stages[args[2]] = base
+    return "" if "$" in base or base == "scratch" else base
+
+
 class App:
     def __init__(self, engine: Engine | None = None, store: Store | None = None) -> None:
         self.engine = engine or select_engine()
@@ -165,14 +196,22 @@ class App:
             )
             for name, content in files.items():
                 (context / name).write_text(content)
-            for kind, tag, file, source, layer_args in (
-                ("project", base, project.containerfile, project.context, {}),
+            for kind, tag, file, source, layer_args, parent in (
+                (
+                    "project",
+                    base,
+                    project.containerfile,
+                    project.context,
+                    {},
+                    containerfile_base(project.containerfile),
+                ),
                 (
                     "runtime",
                     runtime,
                     ASSETS / "runtime/Containerfile",
                     ASSETS / "runtime",
                     {"PROJECT_IMAGE": base},
+                    base,
                 ),
                 (
                     "prepared",
@@ -184,6 +223,7 @@ class App:
                         "RUNTIME_IMAGE": runtime,
                         "PREPARE_REVISION": str(time.time_ns()),
                     },
+                    runtime,
                 ),
             ):
                 self.engine.build(
@@ -196,6 +236,7 @@ class App:
                     labels={
                         **self.image_owner,
                         IMAGE_KIND: kind,
+                        IMAGE_BASE: parent,
                         "dev.devbox.project": str(project.root),
                         "dev.devbox.harness": harness.name if kind == "prepared" else "",
                     },
@@ -474,10 +515,17 @@ class App:
         for image in images:
             if image.identities & protected:
                 protected.update(image.identities)
-        return sorted(
-            (image for image in owned if not image.identities & protected),
-            key=lambda image: image.reference,
-        )
+        by_identity = {identity: image for image in images for identity in image.identities}
+        unused = []
+        for image in owned:
+            if image.identities & protected:
+                continue
+            # Removing an image leaves its base in place, so only report what it adds.
+            base = by_identity.get(image_identity(image.labels.get(IMAGE_BASE, "")))
+            if image.size is not None and base and base.size is not None and base.id != image.id:
+                image = replace(image, size=max(image.size - base.size, 0))
+            unused.append(image)
+        return sorted(unused, key=lambda image: image.reference)
 
     def cleanup_images(self, images: list[Image]) -> tuple[int, dict[str, int | None]]:
         removed = 0

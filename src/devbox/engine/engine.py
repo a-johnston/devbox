@@ -18,6 +18,7 @@ MANAGED = "dev.devbox.managed"
 IMAGE_STORE = "dev.devbox.image.store"
 IMAGE_SCHEMA = "dev.devbox.image.schema"
 IMAGE_KIND = "dev.devbox.image.kind"
+IMAGE_BASE = "dev.devbox.image.base"
 PLATFORMS = {
     "arm64": "linux/arm64",
     "aarch64": "linux/arm64",
@@ -99,6 +100,7 @@ class Image:
     labels: dict[str, str]
     aliases: tuple[str, ...] = ()
     # Full image bytes, not exclusive disk usage: layers may be shared or cached.
+    # App.unused_images reports it minus the base image, which removal does not free.
     size: int | None = None
 
     @property

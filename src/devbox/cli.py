@@ -171,7 +171,7 @@ def cleanup(app: App, *, select: bool, only: str | None = None) -> None:
     print(f"Removed {removed_images} image references; {estimate}.")
     if removed_images:
         print(
-            "Image estimates use full image sizes; shared layers and build caches may reduce recovery."
+            "Image estimates exclude base images; shared layers and build caches may reduce recovery."
         )
 
 

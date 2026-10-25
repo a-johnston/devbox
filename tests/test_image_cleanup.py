@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from devbox.app import App
+from devbox.app import App, containerfile_base
 from devbox.cli import dispatch, format_size, parser
 from devbox.config import Harness, Project
 from devbox.engine import IMAGE_KIND, IMAGE_SCHEMA, IMAGE_STORE, MANAGED, Image, image_labels
 from devbox.engine.apple import AppleEngine
-from devbox.engine.engine import image_identity
+from devbox.engine.engine import IMAGE_BASE, image_identity
 from devbox.engine.podman import PodmanEngine
 from devbox.errors import DevboxError
 from devbox.state import Store, disk_usage
@@ -731,3 +731,35 @@ def test_cleanup_select_with_nothing_picked_removes_nothing(
     assert capsys.readouterr().out == "Nothing selected. Nothing removed.\n"
     assert engine.deleted == []
     assert (app.store.instances / id).exists()
+
+
+def test_image_sizes_exclude_base_image(app: App) -> None:
+    engine = app.engine
+    assert isinstance(engine, ImageEngine)
+    project = replace(
+        owned(app, "devbox-project-x:latest", "sha256:project"),
+        labels={**owned(app).labels, IMAGE_KIND: "project", IMAGE_BASE: "ubuntu:24.04"},
+        size=10000,
+    )
+    prepared = replace(
+        owned(app, "devbox-prepared-x:latest", "sha256:prepared"),
+        labels={**owned(app).labels, IMAGE_BASE: "devbox-project-x:latest"},
+        size=12000,
+    )
+    base = Image("docker.io/library/ubuntu:24.04", "sha256:ubuntu", {}, size=8000)
+    engine.inventory = [base, project, prepared]
+    assert {image.reference: image.size for image in app.unused_images()} == {
+        "devbox-prepared-x:latest": 2000,
+        "devbox-project-x:latest": 2000,
+    }
+    # An unresolved base leaves the full size.
+    engine.inventory = [prepared]
+    assert [image.size for image in app.unused_images()] == [12000]
+
+
+def test_containerfile_base_resolves_final_stage(tmp_path: Path) -> None:
+    file = tmp_path / "Containerfile"
+    file.write_text("ARG V=24.04\nFROM --platform=x ubuntu:${V} AS a\nFROM a\nRUN true\n")
+    assert containerfile_base(file) == "ubuntu:24.04"
+    file.write_text("ARG IMG\nFROM ${IMG}\n")
+    assert containerfile_base(file) == ""

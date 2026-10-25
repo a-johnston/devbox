@@ -24,7 +24,7 @@ devbox review [id] [branch]                       # fetch, pick a branch, and sh
 devbox land [id] [branch]                         # fetch, rebase onto the current host branch, ff-merge
 
 devbox fetch [id]                                 # fetch new work as local <instance id>/<branch>
-devbox sync [id] [branch ...]                     # deliver host branches to an instance as host/<branch>
+devbox sync [id ...] [-b branch ...] [--force]    # deliver host branches to instances as host/<branch>
 devbox put id path ...                            # copy host files into the instance's /devbox/inbox
 devbox get id [path ...]                          # copy files from its /devbox/outbox (or any path)
 devbox attach [id]                                # attach to an existing instance's harness, recreating it if killed
@@ -94,9 +94,9 @@ branch with new commits available from a given instance.
 
 ## Sync
 
-`devbox sync [id] [branch ...]` delivers host branches to a running instance as `host/<branch>`
-refs and fast-forwards branches when possible. If no branch is passed, the branch the instance
-was started with is synced. Each moved branch is reported with its old tip, and the report is
+`devbox sync [id ...] [-b branch ...]` delivers host branches to running instances (several
+IDs, or an fzf multi-picker without any) as `host/<branch>` refs and fast-forwards branches when
+possible. If no branch is passed, the branch each instance was started with is synced. Each moved branch is reported with its old tip, and the report is
 also left in the instance's `~/.devbox/sync.txt` for the agent. `--force` also replaces local
 branches that are diverged from or ahead of the host's (for example to undo a mistaken landing
 in the clones); uncommitted changes and in-progress Git operations are still never overridden,

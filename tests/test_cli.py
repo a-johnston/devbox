@@ -6,7 +6,7 @@ from dataclasses import replace
 from functools import partial
 from io import StringIO
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -290,16 +290,44 @@ def test_container_listing_dispatch(json_output: bool, tmp_path: Path, capsys: p
 
 def test_sync_dispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     engine = FakeEngine()
-    container = Container("devbox-aabb", "running", "project", "pi", "now")
-    engine.rows = [container]
+    first = Container("devbox-aabb", "running", "project", "pi", "now")
+    second = Container("devbox-ccdd", "running", "project", "pi", "now")
+    engine.rows = [first, second, replace(first, id="devbox-eeff", state="stopped")]
     app = App(engine, Store(tmp_path))
     sync = Mock(return_value=["main: up to date"])
     monkeypatch.setattr(app, "sync", sync)
-    dispatch(parser().parse_args(["sync", "aabb", "main", "other"]), app)
-    sync.assert_called_once_with(container, ["main", "other"], force=False)
+    dispatch(parser().parse_args(["sync", "aabb", "-b", "main", "--branch", "other"]), app)
+    sync.assert_called_once_with(first, ["main", "other"], force=False)
     sync.reset_mock()
-    dispatch(parser().parse_args(["sync", "aabb", "main", "--force"]), app)
-    sync.assert_called_once_with(container, ["main"], force=True)
+    dispatch(parser().parse_args(["sync", "aabb", "devbox-ccdd", "aabb", "--force"]), app)
+    assert sync.call_args_list == [call(first, [], force=True), call(second, [], force=True)]
+    sync.reset_mock()
+    monkeypatch.setattr(cli, "select_many", lambda items, *a: [items[1]])
+    dispatch(parser().parse_args(["sync"]), app)  # Only running containers are offered.
+    sync.assert_called_once_with(second, [], force=False)
+
+
+def test_sync_continues_past_a_failing_instance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    engine = FakeEngine()
+    first = Container("devbox-aabb", "running", "project", "pi", "now")
+    second = replace(first, id="devbox-ccdd")
+    engine.rows = [first, second]
+    app = App(engine, Store(tmp_path))
+
+    def sync(container: Container, branches: list[str], *, force: bool) -> list[str]:
+        if container is first:
+            raise DevboxError("detached")
+        return ["main: up to date"]
+
+    monkeypatch.setattr(app, "sync", sync)
+    with pytest.raises(DevboxError, match="1 of 2 instances not synced"):
+        dispatch(parser().parse_args(["sync", "aabb", "ccdd"]), app)
+    assert capsys.readouterr().out.splitlines() == [
+        "devbox-aabb: not synced: detached",
+        "devbox-ccdd: main: up to date",
+    ]
 
 
 def test_kill_all_yes_dispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

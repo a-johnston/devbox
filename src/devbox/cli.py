@@ -451,10 +451,25 @@ def _land(app: App, *, id: str | None, branch: str | None, sync: bool, no_sync: 
             print(f"{container}: {printable(line)}")
 
 
-def _sync(app: App, *, id: str | None, branches: list[str], force: bool) -> None:
-    container = match(_containers(app, running=True), id, "Containers", lambda c: c.id, container_label)
-    for line in app.sync(container, branches, force=force):
-        print(f"{container.id}: {printable(line)}")
+def _sync(app: App, *, id: list[str], branch: list[str], force: bool) -> None:
+    running = _containers(app, running=True)
+    if id:
+        containers = list(
+            dict.fromkeys(match(running, value, "Containers", lambda c: c.id, container_label) for value in id)
+        )
+    else:
+        containers = select_many(running, "Containers", container_label)
+    failed = 0
+    for container in containers:
+        try:
+            lines = app.sync(container, branch, force=force)
+        except DevboxError as exc:
+            failed += 1
+            lines = [f"not synced: {exc}"]
+        for line in lines:
+            print(f"{container.id}: {printable(line)}")
+    if failed:
+        raise DevboxError(f"{failed} of {len(containers)} instances not synced")
 
 
 def _put(app: App, *, id: str, paths: list[str], directory: str | None, force: bool) -> None:
@@ -558,8 +573,14 @@ def parser() -> argparse.ArgumentParser:
     choice.add_argument("--no-sync", action="store_true", help="Do not sync instances after landing")
     command = commands.add_parser("sync", help="Deliver host branches to a running instance as host/<branch>")
     command.set_defaults(func=_sync)
-    id_argument(command, "id", "?", "Container ID")
-    command.add_argument("branches", nargs="*", help="Host branches (default: the one the instance started from)")
+    id_argument(command, "id", "*", "Container IDs (omit for a picker)")
+    command.add_argument(
+        "-b",
+        "--branch",
+        action="append",
+        default=[],
+        help="Host branch to deliver, repeatable (default: the one each instance started from)",
+    )
     command.add_argument(
         "--force",
         action="store_true",

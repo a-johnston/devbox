@@ -14,7 +14,7 @@ user's working tree: they see your work only after fetching it.
   main branch, merging from the primary checkout or removing worktrees afterwards: those
   steps happen on the host.
 - `origin/*` refs are a snapshot from when the clone was made. For newer upstream work, ask
-  the user to run `devbox sync {id} [branch ...]`; it updates `host/<branch>` refs here,
+  the user to run `devbox sync {id} [-b branch ...]`; it updates `host/<branch>` refs here,
   which you can then rebase onto. Landing also syncs. Safe updates happen to your repository
   without notice: local branches that are behind `host/<branch>` are fast-forwarded (the
   checked-out one only if it has no uncommitted changes), and a branch the user landed is

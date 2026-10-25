@@ -275,7 +275,7 @@ def test_instance_learns_its_identity_and_constraints(project: Project, harness:
     assert engine.runs[0].env["DEVBOX_INSTANCE"] == id
     text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()
     assert f"{project.workspace} is a private clone of the user's repository, started from main" in text
-    assert f"`devbox review {id}`" in text and f"`devbox sync {id} [branch ...]`" in text
+    assert f"`devbox review {id}`" in text and f"`devbox sync {id} [-b branch ...]`" in text
 
 
 def test_fork_continues_from_the_instance_clones_checked_out_branch(

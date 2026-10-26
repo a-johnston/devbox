@@ -132,9 +132,7 @@ class AppleEngine(Engine):
                 if not labels:
                     raise ValueError("Expected runnable image variant")
                 common = {
-                    key: value
-                    for key, value in labels[0].items()
-                    if all(label.get(key) == value for label in labels)
+                    key: value for key, value in labels[0].items() if all(label.get(key) == value for label in labels)
                 }
                 sizes = [image_size(variant.get("size")) for variant in variants]
                 size = None if None in sizes else sum(value for value in sizes if value is not None)
@@ -179,15 +177,12 @@ class AppleEngine(Engine):
         try:
             rows = json.loads(result.stdout)
             if not isinstance(rows, list) or any(
-                not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"]
-                for row in rows
+                not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"] for row in rows
             ):
                 raise ValueError("Expected container IDs")
             return {row["id"] for row in rows}
         except (ValueError, TypeError) as exc:
-            raise DevboxError(
-                "Cannot safely determine existing containers; refusing cleanup"
-            ) from exc
+            raise DevboxError("Cannot safely determine existing containers; refusing cleanup") from exc
 
     def containers(self) -> list[Container]:
         result = self.call("list", "--all", "--format", "json")

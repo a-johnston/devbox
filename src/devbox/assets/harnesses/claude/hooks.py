@@ -50,11 +50,7 @@ def trust_project(state_dir: Path, cwd: str) -> None:
     for name, update in (
         (
             ".claude.json",
-            lambda data: (
-                data.setdefault("projects", {})
-                .setdefault(cwd, {})
-                .update(hasTrustDialogAccepted=True)
-            ),
+            lambda data: data.setdefault("projects", {}).setdefault(cwd, {}).update(hasTrustDialogAccepted=True),
         ),
         ("settings.json", lambda data: data.update(skipDangerousModePermissionPrompt=True)),
     ):

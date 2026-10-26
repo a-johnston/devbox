@@ -147,10 +147,7 @@ def downloads(matches: Sequence[tuple[str, str]]) -> tuple[dict[str, str], dict[
     """Name guest matches like uploads: host name -> resolved guest path, and the archive
     name (the resolved basename, as tar stores it) -> host name."""
     named = unique(
-        [
-            (PurePosixPath(match).name or PurePosixPath(resolved).name, resolved)
-            for match, resolved in matches
-        ]
+        [(PurePosixPath(match).name or PurePosixPath(resolved).name, resolved) for match, resolved in matches]
     )
     archived = unique([(PurePosixPath(resolved).name, name) for name, resolved in named.items()])
     return named, archived

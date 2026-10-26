@@ -30,13 +30,9 @@ def isolated_devbox_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
 
 @pytest.fixture(scope="session")
-def repository_template(
-    tmp_path_factory: pytest.TempPathFactory, isolated_git_environment: None
-) -> Path:
+def repository_template(tmp_path_factory: pytest.TempPathFactory, isolated_git_environment: None) -> Path:
     root = tmp_path_factory.mktemp("repository-template")
-    subprocess.run(
-        ["git", "init", "--template=", "-b", "main", str(root)], check=True, capture_output=True
-    )
+    subprocess.run(["git", "init", "--template=", "-b", "main", str(root)], check=True, capture_output=True)
     # Empty template omits sample hooks; retain the directories used by tests.
     (root / ".git/info").mkdir()
     (root / ".git/hooks").mkdir()

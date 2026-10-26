@@ -111,9 +111,7 @@ def test_catalog_survives_without_a_container(tmp_path: Path) -> None:
     )
     sessions = directory / "home/.pi/agent/sessions"
     sessions.mkdir(parents=True)
-    (sessions / "valid.jsonl").write_text(
-        '{"type":"session","id":"conversation"}\n{"text":"secret"}\n'
-    )
+    (sessions / "valid.jsonl").write_text('{"type":"session","id":"conversation"}\n{"text":"secret"}\n')
     (sessions / "broken.jsonl").write_text("not json")
     rows = store.sessions()
     assert len(rows) == 1
@@ -121,9 +119,7 @@ def test_catalog_survives_without_a_container(tmp_path: Path) -> None:
     assert "secret" not in str(rows)
 
 
-def test_catalog_reads_only_headers_without_loading_profiles(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_catalog_reads_only_headers_without_loading_profiles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def unexpected(*args: object, **kwargs: object) -> None:
         pytest.fail("Session listing must not load profiles or hooks")
 
@@ -136,9 +132,7 @@ def test_catalog_reads_only_headers_without_loading_profiles(
     )
     sessions = directory / "home/sessions"
     sessions.mkdir()
-    (sessions / "valid.jsonl").write_bytes(
-        b'{"type":"session","id":"conversation"}\n' + b"\xff" * 100_000
-    )
+    (sessions / "valid.jsonl").write_bytes(b'{"type":"session","id":"conversation"}\n' + b"\xff" * 100_000)
     (row,) = store.sessions()
     assert row.id == f"{id}/conversation"
     assert row.harness == "unknown"

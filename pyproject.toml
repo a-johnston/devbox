@@ -22,7 +22,7 @@ packages = ["src/devbox"]
 dev = ["prek>=0.3.8", "pytest>=8", "ruff>=0.15.5", "ty>=0.0.21"]
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]

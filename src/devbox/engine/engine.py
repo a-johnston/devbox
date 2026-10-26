@@ -60,11 +60,7 @@ class Container:
 
 def image_identity(reference: str) -> str:
     """Match local build tags across the engines' default-registry qualification."""
-    return (
-        reference.removeprefix("docker.io/library/")
-        .removeprefix("localhost/")
-        .removeprefix("sha256:")
-    )
+    return reference.removeprefix("docker.io/library/").removeprefix("localhost/").removeprefix("sha256:")
 
 
 def image_strings(values: object) -> tuple[str, ...]:
@@ -235,9 +231,7 @@ class Engine(ABC):
         flags = [flag for name in env or {} for flag in ("--env", name)]
         if input is not None:
             flags.append("--interactive")
-        return self.call(
-            "exec", "--user", "agent", *flags, id, *args, check=check, env=env, input=input
-        )
+        return self.call("exec", "--user", "agent", *flags, id, *args, check=check, env=env, input=input)
 
     def pipe(
         self,
@@ -304,8 +298,7 @@ class Engine(ABC):
         flags += ["--workdir", cwd] if cwd else []
         os.execvpe(
             executable,
-            [executable, "exec", "-it", "--user", "agent", *flags, id, "sh", "-c", TERMINAL, "sh"]
-            + list(args),
+            [executable, "exec", "-it", "--user", "agent", *flags, id, "sh", "-c", TERMINAL, "sh"] + list(args),
             env,
         )
 

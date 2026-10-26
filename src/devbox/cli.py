@@ -170,9 +170,7 @@ def cleanup(app: App, *, select: bool, only: str | None = None) -> None:
             estimate += ", plus images of unknown size"
     print(f"Removed {removed_images} image references; {estimate}.")
     if removed_images:
-        print(
-            "Image estimates exclude base images; shared layers and build caches may reduce recovery."
-        )
+        print("Image estimates exclude base images; shared layers and build caches may reduce recovery.")
 
 
 def match[T](
@@ -185,9 +183,7 @@ def match[T](
     if value is None:
         return select(items, prompt, label)
     exact = [item for item in items if key(item) == value]
-    candidates = exact or [
-        item for item in items if key(item).removeprefix("devbox-").startswith(value)
-    ]
+    candidates = exact or [item for item in items if key(item).removeprefix("devbox-").startswith(value)]
     if len(candidates) != 1:
         raise DevboxError(f"{value!r} matches {len(candidates)} {prompt.lower()}; use a full ID")
     return candidates[0]
@@ -273,25 +269,17 @@ def _containers(app: App, *, running: bool = False) -> list[Container]:
 
 def _attach(app: App, *, id: str | None) -> None:
     containers = _containers(app, running=id is None)
-    if id and not any(
-        c.id == id or c.id.removeprefix("devbox-").startswith(id) for c in containers
-    ):
-        saved = [
-            s for s in app.store.saved() if s == id or s.removeprefix("devbox-").startswith(id)
-        ]
+    if id and not any(c.id == id or c.id.removeprefix("devbox-").startswith(id) for c in containers):
+        saved = [s for s in app.store.saved() if s == id or s.removeprefix("devbox-").startswith(id)]
         if len(saved) == 1:
-            raise DevboxError(
-                f"{saved[0]} has been removed; use devbox fork to continue its saved conversation"
-            )
+            raise DevboxError(f"{saved[0]} has been removed; use devbox fork to continue its saved conversation")
     container = match(containers, id, "Containers", lambda c: c.id, container_label)
     require_terminal()
     app.attach(container)
 
 
 def _shell(app: App, *, id: str | None) -> None:
-    container = match(
-        _containers(app, running=True), id, "Containers", lambda c: c.id, container_label
-    )
+    container = match(_containers(app, running=True), id, "Containers", lambda c: c.id, container_label)
     require_terminal()
     app.shell(container)
 
@@ -343,9 +331,7 @@ def _fork(
         raise DevboxError(f"{selected.instance} has no repository clone; use --from host")
     from_instance = source != "host" and has_clone
     print(
-        f"Cloning {selected.instance}'s repository."
-        if from_instance
-        else "Cloning the host checkout.",
+        f"Cloning {selected.instance}'s repository." if from_instance else "Cloning the host checkout.",
         flush=True,
     )
     if not detach:
@@ -445,23 +431,18 @@ def _land(app: App, *, id: str | None, branch: str | None) -> None:
 
 
 def _sync(app: App, *, id: str | None, branches: list[str]) -> None:
-    container = match(
-        _containers(app, running=True), id, "Containers", lambda c: c.id, container_label
-    )
+    container = match(_containers(app, running=True), id, "Containers", lambda c: c.id, container_label)
     for line in app.sync(container, branches):
         print(f"{container.id}: {printable(line)}")
 
 
 def _put(app: App, *, id: str, paths: list[str], directory: str | None, force: bool) -> None:
-    container = match(
-        _containers(app, running=True), id, "Containers", lambda c: c.id, container_label
-    )
+    container = match(_containers(app, running=True), id, "Containers", lambda c: c.id, container_label)
     named = transfer.uploads(transfer.expand(paths))
     target = transfer.INBOX / relative(directory) if directory else transfer.INBOX
     files, size = transfer.measure(list(named.values()))
     print(
-        f"Sending {files} file{'' if files == 1 else 's'} ({format_size(size)}) "
-        f"to {container.id}:{target}",
+        f"Sending {files} file{'' if files == 1 else 's'} ({format_size(size)}) to {container.id}:{target}",
         flush=True,
     )
     app.put(container, named, target, force=force)
@@ -469,9 +450,7 @@ def _put(app: App, *, id: str, paths: list[str], directory: str | None, force: b
 
 
 def _get(app: App, *, id: str, paths: list[str], to: Path, force: bool) -> None:
-    container = match(
-        _containers(app, running=True), id, "Containers", lambda c: c.id, container_label
-    )
+    container = match(_containers(app, running=True), id, "Containers", lambda c: c.id, container_label)
     if not paths:
         entries = app.guest_entries(container.id, str(transfer.OUTBOX))
         if not entries:
@@ -485,7 +464,7 @@ def _get(app: App, *, id: str, paths: list[str], to: Path, force: bool) -> None:
     print(f"Got {', '.join(printable(name) for name in named)} in {to}")
 
 
-def _kill_all(app: App, *, yes: bool) -> None:
+def _rm_all(app: App, *, yes: bool) -> None:
     containers = _containers(app)
     if not containers:
         print("No managed containers.")
@@ -532,50 +511,36 @@ def parser() -> argparse.ArgumentParser:
         command = commands.add_parser(name)
         command.set_defaults(func=func)
         id_argument(command, "id", "?", "Container ID")
-    command = commands.add_parser(
-        "rm", help="Remove containers, retaining saved history and clones"
-    )
+    command = commands.add_parser("rm", help="Remove containers, retaining saved history and clones")
     command.set_defaults(func=_rm)
     id_argument(command, "ids", "*", "Container IDs")
     for name, func in (("ls", _ls), ("sessions", _sessions)):
         command = commands.add_parser(name)
         command.set_defaults(func=func)
         command.add_argument("--json", dest="json_output", action="store_true")
-    command = commands.add_parser(
-        "fetch", help="Fetch new work as local <short-instance>/<branch> branches"
-    )
+
+    command = commands.add_parser("fetch", help="Fetch new work as local <short-instance>/<branch> branches")
     command.set_defaults(func=_fetch)
     id_argument(command, "id", "?", "Instance ID, including removed containers", clones=True)
-    command = commands.add_parser(
-        "review", help="Fetch an instance's branches and show one's changes with git diff"
-    )
+
+    command = commands.add_parser("review", help="Fetch an instance's branches and show one's changes with git diff")
     command.set_defaults(func=_review)
     id_argument(command, "id", "?", "Instance ID, including removed containers", clones=True)
     command.add_argument("branch", nargs="?", help="Branch (omit for a picker)")
     command.add_argument("--stat", action="store_true", help="Summarize changed files")
-    command = commands.add_parser(
-        "land", help="Fetch, rebase onto the current host branch and fast-forward merge"
-    )
+    command = commands.add_parser("land", help="Fetch, rebase onto the current host branch and fast-forward merge")
     command.set_defaults(func=_land)
     id_argument(command, "id", "?", "Instance ID, including removed containers", clones=True)
     command.add_argument("branch", nargs="?", help="Branch (omit for a picker)")
-    command = commands.add_parser(
-        "sync", help="Deliver host branches to a running instance as host/<branch>"
-    )
+    command = commands.add_parser("sync", help="Deliver host branches to a running instance as host/<branch>")
     command.set_defaults(func=_sync)
     id_argument(command, "id", "?", "Container ID")
-    command.add_argument(
-        "branches", nargs="*", help="Host branches (default: the one the instance started from)"
-    )
-    command = commands.add_parser(
-        "put", help=f"Copy host files into a running instance's {transfer.INBOX}"
-    )
+    command.add_argument("branches", nargs="*", help="Host branches (default: the one the instance started from)")
+    command = commands.add_parser("put", help=f"Copy host files into a running instance's {transfer.INBOX}")
     command.set_defaults(func=_put)
     id_argument(command, "id", None, "Container ID")
     command.add_argument("paths", nargs="+", help="Host files or directories; quote ** globs")
-    command.add_argument(
-        "--dir", dest="directory", help=f"Directory within {transfer.INBOX} to put them in"
-    )
+    command.add_argument("--dir", dest="directory", help=f"Directory within {transfer.INBOX} to put them in")
     command.add_argument("--force", action="store_true", help="Replace existing names")
     command = commands.add_parser(
         "get", help=f"Copy files out of a running instance, such as from its {transfer.OUTBOX}"
@@ -588,16 +553,12 @@ def parser() -> argparse.ArgumentParser:
         help=f"Guest paths or quoted globs, relative to {transfer.OUTBOX} (omit for a picker)",
     )
     action.completer = complete_guest_paths  # ty: ignore[unresolved-attribute]
-    command.add_argument(
-        "--to", type=Path, default=Path("."), help="Host directory (default: current)"
-    )
+    command.add_argument("--to", type=Path, default=Path("."), help="Host directory (default: current)")
     command.add_argument("--force", action="store_true", help="Replace existing names")
     command = commands.add_parser("fork", help="Fork a saved conversation into a new container")
     command.set_defaults(func=_fork)
     command.add_argument("session", nargs="?")
-    command.add_argument(
-        "--project", type=Path, help="Override the saved project's working directory"
-    )
+    command.add_argument("--project", type=Path, help="Override the saved project's working directory")
     command.add_argument(
         "--from",
         dest="source",
@@ -606,14 +567,11 @@ def parser() -> argparse.ArgumentParser:
     )
     command.add_argument("--detach", action="store_true")
     command.add_argument("--no-config", action="store_true")
-    command = commands.add_parser(
-        "kill-all", help="Stop/remove only managed containers; retain saved history"
-    )
-    command.set_defaults(func=_kill_all)
+
+    command = commands.add_parser("rm-all", help="Stop/remove only managed containers; retain saved history")
+    command.set_defaults(func=_rm_all)
     command.add_argument("--yes", action="store_true", help="Skip confirmation")
-    command = commands.add_parser(
-        "cleanup", help="Delete orphaned saved instances and unused Devbox images"
-    )
+    command = commands.add_parser("cleanup", help="Delete orphaned saved instances and unused Devbox images")
     command.set_defaults(func=cleanup)
     command.add_argument(
         "--select",
@@ -625,9 +583,7 @@ def parser() -> argparse.ArgumentParser:
         choices=("instances", "images"),
         help="Clean up only orphaned instances or only unused images",
     )
-    command = commands.add_parser(
-        "init", help="Create a template .devbox.toml and .devbox/Containerfile if missing"
-    )
+    command = commands.add_parser("init", help="Create a template .devbox.toml and .devbox/Containerfile if missing")
     command.set_defaults(func=_init)
     command.add_argument("--project", type=Path, default=Path("."))
     command = commands.add_parser("completion", help="Print shell completion setup")

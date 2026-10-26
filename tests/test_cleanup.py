@@ -91,9 +91,7 @@ def test_cleanup_rechecks_inventory_and_only_removes_confirmed_instances(app: Ap
     assert {instance.id for instance in app.orphaned_instances()} == {new}
 
 
-def test_cleanup_inventory_failure_preserves_state(
-    app: App, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cleanup_inventory_failure_preserves_state(app: App, monkeypatch: pytest.MonkeyPatch) -> None:
     _, directory = saved_instance(app.store)
 
     def fail() -> set[str]:
@@ -211,18 +209,14 @@ def test_cleanup_confirmation_and_summary(
 
     monkeypatch.setattr("builtins.input", confirm)
     dispatch(parser().parse_args(["cleanup"]), app)
-    assert prompts == [
-        f"Delete 1 instances (~{format_size(expected)}) and 0 images (~0.0 B)? [y/N] "
-    ]
+    assert prompts == [f"Delete 1 instances (~{format_size(expected)}) and 0 images (~0.0 B)? [y/N] "]
     text = capsys.readouterr().out
     assert f"Removed 1 instances; approximately {format_size(expected)} recovered." in text
     assert "image references" not in text
     assert not directory.exists()
 
 
-def test_cleanup_eof_preserves_state(
-    app: App, terminal: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cleanup_eof_preserves_state(app: App, terminal: None, monkeypatch: pytest.MonkeyPatch) -> None:
     _, directory = saved_instance(app.store)
 
     def eof(prompt: str) -> str:
@@ -233,14 +227,10 @@ def test_cleanup_eof_preserves_state(
     assert directory.exists()
 
 
-def test_cleanup_requires_interactive_confirmation(
-    app: App, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cleanup_requires_interactive_confirmation(app: App, monkeypatch: pytest.MonkeyPatch) -> None:
     _, directory = saved_instance(app.store)
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-    monkeypatch.setattr(
-        "builtins.input", lambda _: pytest.fail("must not prompt without a terminal")
-    )
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("must not prompt without a terminal"))
     with pytest.raises(DevboxError, match="terminal for confirmation"):
         dispatch(parser().parse_args(["cleanup"]), app)
     assert directory.exists()
@@ -308,9 +298,7 @@ def test_cleanup_picker_cancel_and_errors_never_delete(
     assert directory.exists()
 
 
-def test_cleanup_picker_requires_fzf(
-    app: App, terminal: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cleanup_picker_requires_fzf(app: App, terminal: None, monkeypatch: pytest.MonkeyPatch) -> None:
     _, directory = saved_instance(app.store)
     monkeypatch.setattr("devbox.cli.shutil.which", lambda _: None)
     with pytest.raises(DevboxError, match="requires fzf"):
@@ -318,8 +306,6 @@ def test_cleanup_picker_requires_fzf(
     assert directory.exists()
 
 
-@pytest.mark.parametrize(
-    "size, expected", [(0, "0.0 B"), (1024, "1.0 KiB"), (1536, "1.5 KiB"), (1024**3, "1.0 GiB")]
-)
+@pytest.mark.parametrize("size, expected", [(0, "0.0 B"), (1024, "1.0 KiB"), (1536, "1.5 KiB"), (1024**3, "1.0 GiB")])
 def test_format_size(size: int, expected: str) -> None:
     assert format_size(size) == expected

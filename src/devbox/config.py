@@ -228,9 +228,7 @@ class Harness:
         for key, args in (("resume_args", resume), ("continue_args", continuation)):
             if args and not any("{session}" in arg or "{session_id}" in arg for arg in args):
                 raise DevboxError(f"Harness needs {{session}} or {{session_id}} in {key}")
-        prepared = tuple(
-            relative(v) for v in strings(data.get("prepared_dirs", []), "prepared_dirs")
-        )
+        prepared = tuple(relative(v) for v in strings(data.get("prepared_dirs", []), "prepared_dirs"))
         state_dir = relative(text(data.get("state_dir"), "state_dir"))
         session_dir = relative(text(data.get("session_dir"), "session_dir"))
         if overlapping((*prepared, session_dir)):
@@ -307,9 +305,7 @@ def configured_secrets(names: Sequence[str]) -> dict[str, str]:
 def harnesses() -> dict[str, Harness]:
     """Built-in and user profiles."""
     result = {}
-    user = (
-        Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "devbox/harnesses"
-    )
+    user = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "devbox/harnesses"
     for base in (ASSETS / "harnesses", user):
         if base.is_dir():
             for directory in sorted(base.iterdir()):

@@ -22,9 +22,7 @@ def claude(tmp_path: Path) -> Harness:
 
 
 @pytest.mark.parametrize("no_config", [False, True])
-def test_new_skips_permission_prompts(
-    project: Project, claude: Harness, tmp_path: Path, no_config: bool
-) -> None:
+def test_new_skips_permission_prompts(project: Project, claude: Harness, tmp_path: Path, no_config: bool) -> None:
     engine = FakeEngine()
     App(engine, Store(tmp_path / "state")).new(project, claude, no_config=no_config)
     assert engine.execs[-1].args[-4:] == (
@@ -58,9 +56,7 @@ def test_seed_drops_host_specific_settings(tmp_path: Path, claude: Harness) -> N
     assert settings == {"model": "opus", "permissions": {"allow": ["Bash(ls)"]}}
     assert (home / ".claude/CLAUDE.md").read_text() == "instructions"
     # The host's global config (projects, MCP servers) is never copied.
-    assert json.loads((home / ".claude/.claude.json").read_text()) == {
-        "hasCompletedOnboarding": True
-    }
+    assert json.loads((home / ".claude/.claude.json").read_text()) == {"hasCompletedOnboarding": True}
 
 
 def test_invalid_settings_fail(tmp_path: Path, claude: Harness) -> None:
@@ -90,9 +86,7 @@ def test_sessions_exclude_subagent_transcripts(tmp_path: Path, claude: Harness) 
     assert [session.id for session in store.sessions()] == [f"{id}/abc"]
 
 
-def test_resume_places_snapshot_by_id_and_forks(
-    project: Project, claude: Harness, tmp_path: Path
-) -> None:
+def test_resume_places_snapshot_by_id_and_forks(project: Project, claude: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
     original_id, original = app.store.create()
@@ -112,9 +106,7 @@ def test_claude_never_copies_the_host_login() -> None:
     assert ".credentials.json" not in Harness.load(ASSETS / "harnesses/claude").seed_files
 
 
-def test_instances_share_a_devbox_only_login(
-    project: Project, claude: Harness, tmp_path: Path
-) -> None:
+def test_instances_share_a_devbox_only_login(project: Project, claude: Harness, tmp_path: Path) -> None:
     claude.seed_dir.mkdir()
     (claude.seed_dir / ".credentials.json").write_text('"host refresh token"')
     engine = FakeEngine()

@@ -27,9 +27,7 @@ def test_built_in_harnesses_share_vim_runtime(name: str, project: Project, tmp_p
     assert "FROM ${RUNTIME_IMAGE}" in (harness.directory / "Containerfile").read_text()
 
 
-def test_second_new_never_enters_build_scope(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_second_new_never_enters_build_scope(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
     app.new(project, harness, no_config=True)
@@ -83,9 +81,7 @@ def test_explicit_build_rebuilds(project: Project, harness: Harness, tmp_path: P
     assert not engine.building_active
 
 
-def test_package_variant_ignores_private_config_and_filters(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_package_variant_ignores_private_config_and_filters(project: Project, harness: Harness, tmp_path: Path) -> None:
     harness.seed_dir.mkdir()
     settings = harness.seed_dir / "settings.json"
     settings.write_text(
@@ -101,9 +97,7 @@ def test_package_variant_ignores_private_config_and_filters(
     assert build_files(harness, no_config=True) == {}
     app = App(FakeEngine(), Store(tmp_path / "state"))
     image = app._prepared_image(project, harness, files, {})
-    settings.write_text(
-        json.dumps({"packages": ["npm:other", "npm:example@1"], "apiKey": "different"})
-    )
+    settings.write_text(json.dumps({"packages": ["npm:other", "npm:example@1"], "apiKey": "different"}))
     assert app._prepared_image(project, harness, build_files(harness), {}) == image
     assert app._prepared_image(project, harness, {}, {}) != image
 
@@ -116,9 +110,7 @@ def test_package_variant_ignores_private_config_and_filters(
         "npm:pkg\nsecret",
     ],
 )
-def test_package_declarations_reject_obvious_secrets_and_invalid_specs(
-    harness: Harness, source: str
-) -> None:
+def test_package_declarations_reject_obvious_secrets_and_invalid_specs(harness: Harness, source: str) -> None:
     harness.seed_dir.mkdir()
     (harness.seed_dir / "settings.json").write_text(json.dumps({"packages": [source]}))
     with pytest.raises(DevboxError):
@@ -129,9 +121,7 @@ def test_build_context_never_contains_private_settings(
     project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     harness.seed_dir.mkdir()
-    (harness.seed_dir / "settings.json").write_text(
-        '{"packages":["npm:example@1"],"apiKey":"secret"}'
-    )
+    (harness.seed_dir / "settings.json").write_text('{"packages":["npm:example@1"],"apiKey":"secret"}')
     (harness.seed_dir / "auth.json").write_text('"secret"')
     engine = FakeEngine()
     build = engine.build
@@ -165,9 +155,7 @@ def test_host_version(harness: Harness, command: tuple[str, ...], expected: str 
     assert host_version(replace(harness, version_command=command)) == expected
 
 
-def test_host_version_is_a_build_arg_and_image_variant(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_host_version_is_a_build_arg_and_image_variant(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
     first = app.build(project, replace(harness, version_command=version_command("1.3.0")))

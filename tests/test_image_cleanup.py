@@ -67,18 +67,14 @@ def test_new_builds_label_every_stage_and_scope_to_state_directory(
         assert labels["dev.devbox.harness"] == (harness.name if kind == "prepared" else "")
     other = App(engine, Store(tmp_path / "other-state"))
     assert app.image_owner[IMAGE_STORE] != other.image_owner[IMAGE_STORE]
-    assert app._prepared_image(project, harness, {}, {}) != other._prepared_image(
-        project, harness, {}, {}
-    )
+    assert app._prepared_image(project, harness, {}, {}) != other._prepared_image(project, harness, {}, {})
 
 
 def test_cleanup_only_owns_labeled_images_in_this_store(app: App) -> None:
     engine = app.engine
     assert isinstance(engine, ImageEngine)
     image = owned(app)
-    foreign_store = replace(
-        image, reference="other-store", labels={**image.labels, IMAGE_STORE: "other"}
-    )
+    foreign_store = replace(image, reference="other-store", labels={**image.labels, IMAGE_STORE: "other"})
     legacy = replace(image, reference="devbox-old:latest", labels={})
     future = replace(image, reference="future", labels={**image.labels, IMAGE_SCHEMA: "2"})
     unknown = replace(image, reference="unknown", labels={**image.labels, IMAGE_KIND: "unknown"})
@@ -215,8 +211,7 @@ def test_image_cleanup_lists_sizes_before_confirmation_and_cancellation_deletes_
         (None, "size unavailable"),
     ]
     engine.inventory = [
-        replace(owned(app, f"image{n}:latest", f"sha256:image{n}"), size=size)
-        for n, (size, _) in enumerate(sizes)
+        replace(owned(app, f"image{n}:latest", f"sha256:image{n}"), size=size) for n, (size, _) in enumerate(sizes)
     ]
     patch_require_terminal(monkeypatch)
 
@@ -249,9 +244,7 @@ def apple_image(labels: dict[str, str] | None = None) -> dict:
     }
 
 
-def reply(
-    monkeypatch: pytest.MonkeyPatch, engine: AppleEngine | PodmanEngine, payload: object
-) -> list:
+def reply(monkeypatch: pytest.MonkeyPatch, engine: AppleEngine | PodmanEngine, payload: object) -> list:
     calls = []
 
     def call(*args: str, **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -287,11 +280,7 @@ def test_apple_mixed_platform_ownership_is_not_assumed(monkeypatch: pytest.Monke
 
 def test_apple_container_images_include_immutable_digest(monkeypatch: pytest.MonkeyPatch) -> None:
     engine = AppleEngine()
-    row = {
-        "configuration": {
-            "image": {"reference": "ours:latest", "descriptor": {"digest": "sha256:index"}}
-        }
-    }
+    row = {"configuration": {"image": {"reference": "ours:latest", "descriptor": {"digest": "sha256:index"}}}}
     calls = reply(monkeypatch, engine, [row])
     assert engine.container_images() == {"ours:latest", "sha256:index"}
     assert calls == [("list", "--all", "--format", "json")]
@@ -299,9 +288,7 @@ def test_apple_container_images_include_immutable_digest(monkeypatch: pytest.Mon
 
 @pytest.mark.parametrize("payload", [None, {}, [None], [{}], [{"configuration": {}}]])
 @pytest.mark.parametrize("method", ["images", "container_images"])
-def test_apple_cleanup_rejects_unknown_inventory(
-    monkeypatch: pytest.MonkeyPatch, payload: object, method: str
-) -> None:
+def test_apple_cleanup_rejects_unknown_inventory(monkeypatch: pytest.MonkeyPatch, payload: object, method: str) -> None:
     engine = AppleEngine()
     reply(monkeypatch, engine, payload)
     with pytest.raises(DevboxError, match="refusing cleanup"):
@@ -319,11 +306,7 @@ def test_podman_images_include_dangling_and_all_tags(monkeypatch: pytest.MonkeyP
             rows = [{"Id": "sha256:tagged"}, {"Id": "sha256:dangling"}]
         else:
             id = args[2]
-            tags = (
-                ["localhost/ours:latest", "localhost/alias:latest"]
-                if id.endswith("tagged")
-                else None
-            )
+            tags = ["localhost/ours:latest", "localhost/alias:latest"] if id.endswith("tagged") else None
             rows = [
                 {
                     "Id": id,
@@ -393,17 +376,13 @@ def test_optional_oci_config_is_not_ownership(config: object) -> None:
     assert image_labels(config) == {}
 
 
-@pytest.mark.parametrize(
-    "config", [[], "bad", {"Labels": []}, {"Labels": False}, {"Labels": {MANAGED: 1}}]
-)
+@pytest.mark.parametrize("config", [[], "bad", {"Labels": []}, {"Labels": False}, {"Labels": {MANAGED: 1}}])
 def test_malformed_oci_labels_fail_closed(config: object) -> None:
     with pytest.raises(ValueError):
         image_labels(config)
 
 
-def test_references_are_rechecked_between_deletions(
-    app: App, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_references_are_rechecked_between_deletions(app: App, monkeypatch: pytest.MonkeyPatch) -> None:
     engine = app.engine
     assert isinstance(engine, ImageEngine)
     first = owned(app, "first:latest", "sha256:first")
@@ -468,10 +447,7 @@ def test_image_recovery_reports_known_sizes_beside_unknown_ones(
     patch_input(monkeypatch)
     dispatch(parser().parse_args(["cleanup"]), app)
     text = capsys.readouterr().out
-    assert (
-        "Removed 2 image references; approximately 4.0 KiB recovered, plus images of unknown size."
-        in text
-    )
+    assert "Removed 2 image references; approximately 4.0 KiB recovered, plus images of unknown size." in text
 
 
 def test_apple_image_size_includes_all_variants(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -503,9 +479,7 @@ def test_optional_image_size_metadata_can_be_unavailable(
     assert engine.images()[0].size is None
 
 
-def test_inventory_failure_does_not_delete_instance_homes(
-    app: App, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_inventory_failure_does_not_delete_instance_homes(app: App, monkeypatch: pytest.MonkeyPatch) -> None:
     engine = app.engine
     assert isinstance(engine, ImageEngine)
     id = retain(app, "missing:latest")
@@ -515,18 +489,14 @@ def test_inventory_failure_does_not_delete_instance_homes(
 
     patch_require_terminal(monkeypatch)
     monkeypatch.setattr(engine, "images", fail)
-    monkeypatch.setattr(
-        "builtins.input", lambda _: pytest.fail("must not confirm incomplete inventory")
-    )
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("must not confirm incomplete inventory"))
     with pytest.raises(DevboxError, match="refusing cleanup"):
         dispatch(parser().parse_args(["cleanup"]), app)
     assert app.store.directory(id).exists()
     assert engine.deleted == []
 
 
-def test_container_inventory_failure_never_deletes_images(
-    app: App, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_container_inventory_failure_never_deletes_images(app: App, monkeypatch: pytest.MonkeyPatch) -> None:
     engine = app.engine
     assert isinstance(engine, ImageEngine)
     image = owned(app)
@@ -577,10 +547,7 @@ def test_cleanup_confirmation_totals_image_sizes(
 ) -> None:
     engine = app.engine
     assert isinstance(engine, ImageEngine)
-    images = [
-        replace(owned(app, f"image{n}:latest", f"sha256:image{n}"), size=size)
-        for n, size in enumerate(sizes)
-    ]
+    images = [replace(owned(app, f"image{n}:latest", f"sha256:image{n}"), size=size) for n, size in enumerate(sizes)]
     # Another tag of the first image must not count its bytes twice.
     engine.inventory = [
         *images,
@@ -593,9 +560,7 @@ def test_cleanup_confirmation_totals_image_sizes(
     monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or "n")
     dispatch(parser().parse_args(["cleanup"]), app)
     count = len(engine.inventory)
-    assert prompts == [
-        f"Delete 1 instances (~{instance_size}) and {count} images ({estimate})? [y/N] "
-    ]
+    assert prompts == [f"Delete 1 instances (~{instance_size}) and {count} images ({estimate})? [y/N] "]
     assert engine.deleted == []
 
 
@@ -703,9 +668,7 @@ def test_cleanup_select_offers_images_after_instances(
     monkeypatch.setattr("devbox.cli.select_many", pick)
     monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or "y")
     dispatch(parser().parse_args(["cleanup", "--select", *(["--only", only] if only else [])]), app)
-    assert [prompt for prompt, _ in pickers] == (
-        ["Unused images"] if only else ["Orphaned instances", "Unused images"]
-    )
+    assert [prompt for prompt, _ in pickers] == (["Unused images"] if only else ["Orphaned instances", "Unused images"])
     assert pickers[-1][1][-1] == "free:latest  ~4.0 KiB"
     assert engine.deleted == ["free:latest"]
     assert (app.store.instances / kept_id).exists()

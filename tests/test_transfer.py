@@ -161,9 +161,7 @@ def test_put_explains_an_image_without_an_inbox(app: App, guest: Guest, tmp_path
         run(app, "put", "aabb", str(tmp_path / "a"))
 
 
-def test_instances_learn_about_the_inbox_and_outbox(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_instances_learn_about_the_inbox_and_outbox(project: Project, harness: Harness, tmp_path: Path) -> None:
     app = App(FakeEngine(), Store(tmp_path / "state"))
     id = app.new(project, harness, no_config=True)
     text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()
@@ -200,9 +198,7 @@ def test_get_copies_outbox_and_absolute_paths_flat(
         run(app, "get", "aabb", "missing*")
 
 
-def test_get_replaces_existing_names_only_with_force(
-    app: App, guest: Guest, tmp_path: Path
-) -> None:
+def test_get_replaces_existing_names_only_with_force(app: App, guest: Guest, tmp_path: Path) -> None:
     (guest.root / "devbox/outbox/docs").mkdir()
     (guest.root / "devbox/outbox/docs/new.md").write_text("new")
     (tmp_path / "docs").mkdir()
@@ -270,9 +266,7 @@ def test_pipe_reports_the_guest_error(guest: Guest) -> None:
         )
 
 
-def test_get_completes_guest_paths(
-    app: App, guest: Guest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_get_completes_guest_paths(app: App, guest: Guest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     outbox = guest.root / "devbox/outbox"
     (outbox / "shots").mkdir()
     (outbox / "shots/1.png").write_text("")
@@ -284,7 +278,4 @@ def test_get_completes_guest_paths(
     assert cli.complete_guest_paths("shots/", args) == ["shots/1.png"]
     absolute = cli.complete_guest_paths("/devbox/", args)
     assert sorted(absolute) == ["/devbox/inbox/", "/devbox/outbox/"]
-    assert (
-        cli.complete_guest_paths("", argparse.Namespace(state_dir=app.store.root.parent, id="zz"))
-        == []
-    )
+    assert cli.complete_guest_paths("", argparse.Namespace(state_dir=app.store.root.parent, id="zz")) == []

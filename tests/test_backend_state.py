@@ -19,9 +19,7 @@ def test_default_store_follows_injected_engine(
 
 
 @pytest.mark.parametrize("engine_type,backend", [(AppleEngine, "podman"), (PodmanEngine, "apple")])
-def test_app_rejects_mismatched_state_backend(
-    tmp_path: Path, engine_type: type, backend: str
-) -> None:
+def test_app_rejects_mismatched_state_backend(tmp_path: Path, engine_type: type, backend: str) -> None:
     with pytest.raises(DevboxError, match="saved-state backend must match"):
         App(engine_type(), Store(tmp_path, backend=backend))
 

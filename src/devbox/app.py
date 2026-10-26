@@ -84,9 +84,7 @@ def environment_secrets(names: Sequence[str]) -> dict[str, str]:
 
 def session_args(args: Sequence[str], path: str, id: str) -> list[str]:
     """Fill a profile's {session} (guest path under /home/agent) and {session_id}."""
-    return [
-        arg.replace("{session}", f"/home/agent/{path}").replace("{session_id}", id) for arg in args
-    ]
+    return [arg.replace("{session}", f"/home/agent/{path}").replace("{session_id}", id) for arg in args]
 
 
 def accent(id: str) -> int:
@@ -126,9 +124,7 @@ def containerfile_base(file: Path) -> str:
             args = [word for word in words[1:] if not word.startswith("--")]
             if not args:
                 return ""
-            base = re.sub(
-                r"\$\{(\w+)\}|\$(\w+)", lambda m: defaults.get(m[1] or m[2], m[0]), args[0]
-            )
+            base = re.sub(r"\$\{(\w+)\}|\$(\w+)", lambda m: defaults.get(m[1] or m[2], m[0]), args[0])
             base = stages.get(base, base)
             if len(args) == 3 and args[1].upper() == "AS":
                 stages[args[2]] = base
@@ -153,9 +149,7 @@ class App:
     def _image_key(self, project: Project) -> str:
         return hashlib.sha256(f"{self.store.root}:{project.root}".encode()).hexdigest()[:12]
 
-    def _prepared_image(
-        self, project: Project, harness: Harness, files: dict[str, str], args: dict[str, str]
-    ) -> str:
+    def _prepared_image(self, project: Project, harness: Harness, files: dict[str, str], args: dict[str, str]) -> str:
         # A separate namespace prevents old, unprepared images from taking the fast path.
         inputs = json.dumps(
             {
@@ -179,9 +173,7 @@ class App:
         files = build_files(harness, no_config=no_config)
         return self._build(project, harness, files, self._build_args(harness))
 
-    def _build(
-        self, project: Project, harness: Harness, files: dict[str, str], args: dict[str, str]
-    ) -> str:
+    def _build(self, project: Project, harness: Harness, files: dict[str, str], args: dict[str, str]) -> str:
         key = self._image_key(project)
         base = f"devbox-project-{key}:latest"
         runtime = f"devbox-runtime-{key}:latest"
@@ -202,9 +194,7 @@ class App:
         ):
             # Only harness assets and hook-selected public declarations enter this context.
             context = Path(temp) / "harness"
-            shutil.copytree(
-                harness.directory, context, ignore=shutil.ignore_patterns("__pycache__")
-            )
+            shutil.copytree(harness.directory, context, ignore=shutil.ignore_patterns("__pycache__"))
             for name, content in files.items():
                 (context / name).write_text(content)
             for kind, tag, file, source, layer_args, parent in (
@@ -293,9 +283,7 @@ class App:
                 shared_mounts.append((str(source), target))
                 env[f"DEVBOX_SHARED_{name.upper()}"] = target
                 print(f"Sharing {harness.name} {name}: {source}", flush=True)
-        id, directory = self.store.create(
-            f"devbox-{color}" for color in random.sample(list(COLORS), len(COLORS))
-        )
+        id, directory = self.store.create(f"devbox-{color}" for color in random.sample(list(COLORS), len(COLORS)))
         cloned = directory / "repo"
         previous = session.instance if session and from_instance else None
         branch, base, start = self._clone(project, cloned, previous)
@@ -317,12 +305,9 @@ class App:
             session_id = session.id.split("/", 1)[1]
             # Harnesses that resume by ID choose where their snapshot must live.
             target = relative(
-                run_hook(harness, "resume_file", session_id, str(project.workdir))
-                or ".devbox/resume.jsonl"
+                run_hook(harness, "resume_file", session_id, str(project.workdir)) or ".devbox/resume.jsonl"
             )
-            snapshot_session(
-                session.path, home / target, root=self.store.directory(session.instance) / "home"
-            )
+            snapshot_session(session.path, home / target, root=self.store.directory(session.instance) / "home")
             initial_session = {"path": target, "id": session_id}
             command.extend(session_args(harness.resume_args, target, session_id))
         (home / ".devbox").mkdir(exist_ok=True)
@@ -396,17 +381,14 @@ class App:
             self.engine.remove(id)
             raise
         print(
-            f"Created {id} · {harness.name} · {project.cwd} "
-            f"({time.monotonic() - started:.1f}s to start)",
+            f"Created {id} · {harness.name} · {project.cwd} ({time.monotonic() - started:.1f}s to start)",
             flush=True,
         )
         return id
 
     def attach(self, container: Container) -> None:
         if container.state != "running":
-            raise DevboxError(
-                f"{container.id} is stopped; start it with the container runtime, then attach"
-            )
+            raise DevboxError(f"{container.id} is stopped; start it with the container runtime, then attach")
         directory = self.store.directory(container.id)
         # Serialize the check/restart, but not the interactive connection. Every
         # host devbox process for this instance uses the same saved-state lock.
@@ -417,9 +399,7 @@ class App:
             if launch is None:
                 # Older instances have no saved launch policy. Do not guess one
                 # from today's profile, which may have changed since creation.
-                if self.engine.exec(
-                    container.id, "tmux", "has-session", "-t", "agent", check=False
-                ).returncode:
+                if self.engine.exec(container.id, "tmux", "has-session", "-t", "agent", check=False).returncode:
                     raise DevboxError(
                         "Harness exited; this older instance has no saved launch policy. "
                         "Use shell to inspect, or devbox fork to continue saved history."
@@ -450,12 +430,7 @@ class App:
         )
 
     def _harness_alive(self, id: str) -> bool:
-        return (
-            self.engine.exec(
-                id, "bash", "/home/agent/.devbox/harness.sh", "alive", check=False
-            ).returncode
-            == 0
-        )
+        return self.engine.exec(id, "bash", "/home/agent/.devbox/harness.sh", "alive", check=False).returncode == 0
 
     def _recover_harness(self, id: str, metadata: dict[str, Any]) -> None:
         launch = metadata["launch"]
@@ -472,9 +447,7 @@ class App:
             try:
                 json.loads(read_session(home / relative(session["path"]), home, header=True))
             except (DevboxError, OSError, ValueError) as exc:
-                raise DevboxError(
-                    "Cannot read the saved conversation; use shell to inspect"
-                ) from exc
+                raise DevboxError("Cannot read the saved conversation; use shell to inspect") from exc
             if not launch["continue_args"]:
                 raise DevboxError(
                     f"{metadata['harness']} cannot continue a conversation in place; "
@@ -495,13 +468,9 @@ class App:
         if container.state != "running":
             raise DevboxError(f"{container.id} is stopped")
         metadata = self.store.metadata(container.id)
-        self.engine.connect(
-            container.id, "/bin/bash", cwd=metadata.get("workdir", metadata["project"])
-        )
+        self.engine.connect(container.id, "/bin/bash", cwd=metadata.get("workdir", metadata["project"]))
 
-    def _clone(
-        self, project: Project, target: Path, previous: str | None
-    ) -> tuple[str | None, str, str]:
+    def _clone(self, project: Project, target: Path, previous: str | None) -> tuple[str | None, str, str]:
         """Return the host branch and commit the work started from, and what is checked out."""
         if previous:
             source = repository.git_directory(self.store.directory(previous) / "repo")
@@ -652,16 +621,12 @@ class App:
         fields = output.stdout.split("\0")[:-1]
         return transfer.downloads(list(zip(fields[::2], fields[1::2], strict=True)))[0]
 
-    def get(
-        self, container: Container, named: dict[str, str], destination: Path, *, force: bool
-    ) -> None:
+    def get(self, container: Container, named: dict[str, str], destination: Path, *, force: bool) -> None:
         """Download guest paths into destination, refusing to replace names without force."""
         _, archived = transfer.downloads([(name, path) for name, path in named.items()])
         destination.mkdir(parents=True, exist_ok=True)
         if not force and (clashes := transfer.existing(destination, list(named))):
-            raise DevboxError(
-                f"{', '.join(map(str, clashes))} already exists; use --force to replace it"
-            )
+            raise DevboxError(f"{', '.join(map(str, clashes))} already exists; use --force to replace it")
         self.engine.pipe(
             container.id,
             *transfer.tar_arguments(named),

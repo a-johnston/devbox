@@ -20,9 +20,7 @@ def test_ownership_filter(monkeypatch: pytest.MonkeyPatch) -> None:
         row("other-tool", {"dev.other.managed": "1"}),
         row("ours", {MANAGED: "1"}),
     ]
-    monkeypatch.setattr(
-        subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 0, json.dumps(data), "")
-    )
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 0, json.dumps(data), ""))
     assert [c.id for c in AppleEngine().containers()] == ["ours"]
 
 
@@ -63,9 +61,7 @@ def test_stopped_service_message(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize("term", ["xterm-ghostty", None])
-def test_connect_replaces_process_and_strips_outer_tmux(
-    monkeypatch: pytest.MonkeyPatch, term: str | None
-) -> None:
+def test_connect_replaces_process_and_strips_outer_tmux(monkeypatch: pytest.MonkeyPatch, term: str | None) -> None:
     calls = []
     monkeypatch.setenv("TMUX", "/host/socket,1,0")
     if term:

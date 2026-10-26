@@ -103,10 +103,7 @@ def local_branch(repository: Path, name: str, new: str, old: str | None) -> bool
         return False
     # Compare-and-swap: do not clobber a branch created or moved since we checked it.
     # Ref collisions (e.g. an existing <instance> branch) also leave host refs intact.
-    return (
-        git_output(repository, "update-ref", "--no-deref", ref, new, current or "0" * len(new))
-        is not None
-    )
+    return git_output(repository, "update-ref", "--no-deref", ref, new, current or "0" * len(new)) is not None
 
 
 def fetch(
@@ -177,9 +174,7 @@ def land(repository: Path, fetched: Fetched) -> Landed:
     ):
         path = Path(git(repository, "rev-parse", "--git-path", state).strip())
         if (path if path.is_absolute() else repository / path).exists():
-            raise DevboxError(
-                f"Cannot land in {repository}: a Git operation is already in progress"
-            )
+            raise DevboxError(f"Cannot land in {repository}: a Git operation is already in progress")
     target = git_output(repository, "symbolic-ref", "--quiet", "HEAD")
     if target is None or not target.startswith("refs/heads/"):
         raise DevboxError(f"Cannot land in {repository}: check out a target branch first")
@@ -231,8 +226,7 @@ def bundle(repository: Path, branches: Sequence[str], base: str) -> str:
     # Git refuses an empty bundle, so exclude base only when something lies beyond it.
     new = int(git(repository, "rev-list", "--count", *names, f"^{base}"))
     result = subprocess.run(
-        ["git", "-C", str(repository), "bundle", "create", "--quiet", "-", *names]
-        + ([f"^{base}"] if new else []),
+        ["git", "-C", str(repository), "bundle", "create", "--quiet", "-", *names] + ([f"^{base}"] if new else []),
         capture_output=True,
         check=False,
         env=git_environment(),

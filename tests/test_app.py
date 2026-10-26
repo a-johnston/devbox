@@ -16,9 +16,7 @@ from devbox.state import Session, Store
 from tests.fakes import FakeEngine
 
 
-def test_new_composes_images_and_mounts_only_selected_paths(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_new_composes_images_and_mounts_only_selected_paths(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
     id = app.new(project, harness, no_config=True)
@@ -76,9 +74,7 @@ def test_clone_copies_committed_branch_without_host_links(
     assert (metadata["branch"], metadata["base"]) == ("main", git(clone, "rev-parse", "HEAD"))
 
 
-def test_clone_follows_a_detached_worktree(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_clone_follows_a_detached_worktree(project: Project, harness: Harness, tmp_path: Path) -> None:
     tree = project.root / ".worktrees/loose"
     git(project.root, "worktree", "add", "--detach", str(tree))
     git(tree, "commit", "--allow-empty", "-m", "unreachable from branches")
@@ -92,9 +88,7 @@ def test_clone_follows_a_detached_worktree(
     assert engine.runs[0].binds[0] == (str(clone), "/workspace/project with spaces")
 
 
-def test_non_repository_projects_are_rejected(
-    tmp_path: Path, harness: Harness, project: Project
-) -> None:
+def test_non_repository_projects_are_rejected(tmp_path: Path, harness: Harness, project: Project) -> None:
     plain = tmp_path / "plain"
     plain.mkdir()
     with pytest.raises(DevboxError, match="Git repository"):
@@ -103,9 +97,7 @@ def test_non_repository_projects_are_rejected(
         )
 
 
-def test_git_identity_is_passed_as_environment(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_git_identity_is_passed_as_environment(project: Project, harness: Harness, tmp_path: Path) -> None:
     for key, value in (("user.name", "Ada"), ("user.email", "ada@example.invalid")):
         subprocess.run(["git", "-C", str(project.root), "config", key, value], check=True)
     engine = FakeEngine()
@@ -170,9 +162,7 @@ def test_attach_connects_directly_to_tmux(tmp_path: Path) -> None:
         ({"project": "/host/project"}, "/host/project"),
     ],
 )
-def test_shell_starts_in_the_guest_workdir(
-    tmp_path: Path, metadata: dict[str, str], cwd: str
-) -> None:
+def test_shell_starts_in_the_guest_workdir(tmp_path: Path, metadata: dict[str, str], cwd: str) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path))
     id, directory = app.store.create()

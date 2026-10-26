@@ -30,9 +30,7 @@ def service(monkeypatch: pytest.MonkeyPatch) -> list[tuple[list[str], dict]]:
 
 
 @pytest.mark.parametrize("answer", ["y", "yes", " Y ", " YES "])
-def test_confirmed_start_rechecks_service(
-    monkeypatch: pytest.MonkeyPatch, service: list, answer: str
-) -> None:
+def test_confirmed_start_rechecks_service(monkeypatch: pytest.MonkeyPatch, service: list, answer: str) -> None:
     prompts = []
     monkeypatch.setattr("builtins.input", lambda prompt: prompts.append(prompt) or answer)
     AppleEngine().require_running()
@@ -55,9 +53,7 @@ def test_start_defaults_to_no(monkeypatch: pytest.MonkeyPatch, service: list, an
 
 
 @pytest.mark.parametrize("stream", ["stdin", "stdout"])
-def test_noninteractive_start_never_prompts(
-    monkeypatch: pytest.MonkeyPatch, service: list, stream: str
-) -> None:
+def test_noninteractive_start_never_prompts(monkeypatch: pytest.MonkeyPatch, service: list, stream: str) -> None:
     monkeypatch.setattr(f"sys.{stream}.isatty", lambda: False)
     monkeypatch.setattr("builtins.input", lambda _: pytest.fail("must not prompt"))
     with pytest.raises(DevboxError, match="container system start"):
@@ -66,9 +62,7 @@ def test_noninteractive_start_never_prompts(
 
 
 @pytest.mark.parametrize("error", [EOFError, KeyboardInterrupt])
-def test_start_cancellation(
-    monkeypatch: pytest.MonkeyPatch, service: list, error: type[BaseException]
-) -> None:
+def test_start_cancellation(monkeypatch: pytest.MonkeyPatch, service: list, error: type[BaseException]) -> None:
     def cancel(_: str) -> str:
         raise error
 

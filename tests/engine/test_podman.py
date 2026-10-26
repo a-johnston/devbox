@@ -29,9 +29,7 @@ class Recorder:
         return subprocess.CompletedProcess(args, 0, "", "")
 
 
-def engine_with(
-    monkeypatch: pytest.MonkeyPatch, replies: dict | None = None
-) -> tuple[PodmanEngine, Recorder]:
+def engine_with(monkeypatch: pytest.MonkeyPatch, replies: dict | None = None) -> tuple[PodmanEngine, Recorder]:
     engine = PodmanEngine()
     recorder = Recorder(replies)
     monkeypatch.setattr(engine, "call", recorder)
@@ -59,9 +57,7 @@ def test_podman_require_running_reports_info_failure(monkeypatch: pytest.MonkeyP
         '{"host": {"security": {"rootless": true}, "cgroupManager": "systemd", "cgroupVersion": null}}',
     ],
 )
-def test_podman_preflight_rejects_unrecognized_info(
-    monkeypatch: pytest.MonkeyPatch, info: str
-) -> None:
+def test_podman_preflight_rejects_unrecognized_info(monkeypatch: pytest.MonkeyPatch, info: str) -> None:
     engine, _ = engine_with(monkeypatch, {("info",): (0, info, "")})
     with pytest.raises(DevboxError, match="Cannot validate rootless setup"):
         engine.require_running()
@@ -247,9 +243,7 @@ def test_podman_containers_filters_by_label_and_maps_rows(
 
 
 @pytest.mark.parametrize("payload", ["not json", "{}", '[{"Names": []}]', '[{"State": "x"}]'])
-def test_podman_containers_rejects_unexpected_json(
-    monkeypatch: pytest.MonkeyPatch, payload: str
-) -> None:
+def test_podman_containers_rejects_unexpected_json(monkeypatch: pytest.MonkeyPatch, payload: str) -> None:
     engine, _ = engine_with(monkeypatch, {("ps",): (0, payload, "")})
     with pytest.raises(DevboxError, match="Unexpected podman JSON"):
         engine.containers()
@@ -263,9 +257,7 @@ def test_podman_container_ids_include_unlabelled(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.parametrize("payload", ["not json", "{}", '[{"Names": []}]', '[{"Names": [""]}]'])
-def test_podman_container_ids_refuse_unexpected_json(
-    monkeypatch: pytest.MonkeyPatch, payload: str
-) -> None:
+def test_podman_container_ids_refuse_unexpected_json(monkeypatch: pytest.MonkeyPatch, payload: str) -> None:
     engine, _ = engine_with(monkeypatch, {("ps",): (0, payload, "")})
     with pytest.raises(DevboxError, match="refusing cleanup"):
         engine.container_ids()
@@ -274,9 +266,7 @@ def test_podman_container_ids_refuse_unexpected_json(
 def test_podman_exec_passes_secret_names_only(monkeypatch: pytest.MonkeyPatch) -> None:
     engine, recorder = engine_with(monkeypatch)
     engine.exec("devbox-a", "tmux", "new-session", env={"TOKEN": "s3cret"})
-    assert recorder.calls == [
-        ("exec", "--user", "agent", "--env", "TOKEN", "devbox-a", "tmux", "new-session")
-    ]
+    assert recorder.calls == [("exec", "--user", "agent", "--env", "TOKEN", "devbox-a", "tmux", "new-session")]
     assert recorder.kwargs[0]["env"] == {"TOKEN": "s3cret"}
 
 
@@ -320,19 +310,13 @@ def test_podman_remove_ignores_a_container_that_never_started(
 
 def test_podman_run_explains_unreachable_systemd(monkeypatch: pytest.MonkeyPatch) -> None:
     error = "crun: sd-bus call: Process org.freedesktop.systemd1 exited with status 1"
-    monkeypatch.setattr(
-        subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 126, "", error)
-    )
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 126, "", error))
     spec = RunSpec("devbox-1", "img", 1, "1G", {}, (), {})
-    with pytest.raises(
-        DevboxError, match=r"(?s)sd-bus call.*DBUS_SESSION_BUS_ADDRESS.*\[engine\] cgroup_manager"
-    ):
+    with pytest.raises(DevboxError, match=r"(?s)sd-bus call.*DBUS_SESSION_BUS_ADDRESS.*\[engine\] cgroup_manager"):
         PodmanEngine().run(spec)
 
 
-@pytest.mark.parametrize(
-    "manager,rootless,warned", [("cgroupfs", True, True), ("systemd", True, False)]
-)
+@pytest.mark.parametrize("manager,rootless,warned", [("cgroupfs", True, True), ("systemd", True, False)])
 def test_podman_warns_when_rootless_cgroupfs_ignores_limits(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

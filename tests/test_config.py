@@ -68,9 +68,7 @@ def test_worktree_uses_primary_mount_and_falls_back_to_config(repository: Path) 
     assert project.config == repository / ".devbox.toml"
 
 
-def test_discovery_ignores_inherited_git_hook_scope(
-    repository: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_discovery_ignores_inherited_git_hook_scope(repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     tree = repository / ".worktrees/feature"
     subprocess.run(
         ["git", "-C", str(repository), "worktree", "add", "-b", "feature", str(tree)],
@@ -157,9 +155,7 @@ def test_prepared_dirs_cannot_cover_sessions(tmp_path: Path, harness: Harness, p
     (tmp_path / "profile.toml").write_text(
         (harness.directory / "profile.toml")
         .read_text()
-        .replace(
-            'prepared_dirs = [".pi/agent/npm", ".pi/agent/git"]', f'prepared_dirs = ["{path}"]'
-        )
+        .replace('prepared_dirs = [".pi/agent/npm", ".pi/agent/git"]', f'prepared_dirs = ["{path}"]')
     )
     with pytest.raises(DevboxError, match="overlap"):
         Harness.load(tmp_path)
@@ -170,15 +166,11 @@ def test_missing_config(tmp_path: Path) -> None:
         Project.discover(tmp_path)
 
 
-def test_custom_profile_overrides_builtin(
-    tmp_path: Path, harness: Harness, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_custom_profile_overrides_builtin(tmp_path: Path, harness: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
     target = tmp_path / "devbox/harnesses/pi"
     target.mkdir(parents=True)
     (target / "profile.toml").write_text(
-        (harness.directory / "profile.toml")
-        .read_text()
-        .replace('command = ["devbox-pi",', 'command = ["custom-pi",')
+        (harness.directory / "profile.toml").read_text().replace('command = ["devbox-pi",', 'command = ["custom-pi",')
     )
     (target / "Containerfile").write_text("ARG RUNTIME_IMAGE\nFROM ${RUNTIME_IMAGE}\n")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))

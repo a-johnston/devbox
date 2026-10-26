@@ -12,9 +12,7 @@ from devbox.state import Session, Store, shared_config
 from tests.fakes import FakeEngine
 
 
-def test_shared_auth_is_empty_private_and_not_imported_from_host(
-    harness: Harness, tmp_path: Path
-) -> None:
+def test_shared_auth_is_empty_private_and_not_imported_from_host(harness: Harness, tmp_path: Path) -> None:
     harness.seed_dir.mkdir()
     (harness.seed_dir / "auth.json").write_text('"host refresh token"')
     paths = shared_config(harness)
@@ -25,9 +23,7 @@ def test_shared_auth_is_empty_private_and_not_imported_from_host(
     assert "auth.json" not in harness.seed_files
 
 
-def test_instances_share_only_the_dedicated_auth_directory(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_instances_share_only_the_dedicated_auth_directory(project: Project, harness: Harness, tmp_path: Path) -> None:
     harness.seed_dir.mkdir()
     (harness.seed_dir / "auth.json").write_text('"host refresh token"')
     engine = FakeEngine()
@@ -52,9 +48,7 @@ def test_instances_share_only_the_dedicated_auth_directory(
     assert "host refresh token" in (harness.seed_dir / "auth.json").read_text()
 
 
-def test_resumed_instances_keep_the_shared_auth_mount(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_resumed_instances_keep_the_shared_auth_mount(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
     original = app.new(project, harness)
@@ -65,9 +59,7 @@ def test_resumed_instances_keep_the_shared_auth_mount(
     assert engine.runs[0].binds[-1] == engine.runs[1].binds[-1]
     assert engine.runs[1].env["DEVBOX_SHARED_AUTH"] == "/home/agent/.devbox/pi-auth"
     assert engine.execs[-1].args[-2:] == ("--fork", "/home/agent/.devbox/resume.jsonl")
-    assert (
-        app.store.directory(resumed) / "home/.devbox/resume.jsonl"
-    ).read_text() == source.read_text()
+    assert (app.store.directory(resumed) / "home/.devbox/resume.jsonl").read_text() == source.read_text()
 
 
 def test_no_config_has_no_shared_mount_environment_or_host_auth(
@@ -75,18 +67,14 @@ def test_no_config_has_no_shared_mount_environment_or_host_auth(
 ) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
-    id = app.new(
-        replace(project, env={"DEVBOX_SHARED_AUTH": "/unexpected"}), harness, no_config=True
-    )
+    id = app.new(replace(project, env={"DEVBOX_SHARED_AUTH": "/unexpected"}), harness, no_config=True)
     assert len(engine.runs[0].binds) == 2
     assert "DEVBOX_SHARED_AUTH" not in engine.runs[0].env
     assert not (tmp_path / "config/devbox/shared").exists()
     assert not (app.store.directory(id) / "home" / harness.state_dir / "auth.json").exists()
 
 
-def test_build_does_not_prepare_or_mount_shared_credentials(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_build_does_not_prepare_or_mount_shared_credentials(project: Project, harness: Harness, tmp_path: Path) -> None:
     App(FakeEngine(), Store(tmp_path / "state")).build(project, harness)
     assert not (tmp_path / "config/devbox/shared").exists()
 
@@ -97,9 +85,7 @@ def test_profiles_without_shared_dirs_do_not_create_them(harness: Harness, tmp_p
 
 
 @pytest.mark.parametrize("component", ["shared", "pi", "auth"])
-def test_shared_directory_symlinks_are_rejected(
-    harness: Harness, tmp_path: Path, component: str
-) -> None:
+def test_shared_directory_symlinks_are_rejected(harness: Harness, tmp_path: Path, component: str) -> None:
     path = tmp_path / "config/devbox/shared"
     if component != "shared":
         path /= "pi"
@@ -124,9 +110,7 @@ def test_existing_file_at_shared_directory_is_reported(harness: Harness, tmp_pat
         shared_config(harness)
 
 
-def test_shared_auth_contents_are_not_followed_or_modified(
-    harness: Harness, tmp_path: Path
-) -> None:
+def test_shared_auth_contents_are_not_followed_or_modified(harness: Harness, tmp_path: Path) -> None:
     path = shared_config(harness)["auth"]
     outside = tmp_path / "host-file"
     outside.write_text("host data")

@@ -29,33 +29,24 @@ class Guest(FakeEngine):
         checkout = self.store.metadata(id)["workspace"]
         clone = str(self.store.directory(id) / "repo")
         command = [clone if arg == checkout else arg for arg in args]
-        return subprocess.run(
-            command, input=kwargs["input"], text=True, check=True, capture_output=True
-        )
+        return subprocess.run(command, input=kwargs["input"], text=True, check=True, capture_output=True)
 
 
 def running(id: str) -> Container:
     return Container(id, "running", "project", "pi", "now")
 
 
-def test_instance_learns_its_identity_and_constraints(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_instance_learns_its_identity_and_constraints(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
     id = app.new(project, harness, no_config=True)
     assert engine.runs[0].env["DEVBOX_INSTANCE"] == id
     text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()
-    assert (
-        f"{project.workspace} is a private clone of the user's repository, started from main"
-        in text
-    )
+    assert f"{project.workspace} is a private clone of the user's repository, started from main" in text
     assert f"`devbox review {id}`" in text and f"`devbox sync {id} [branch ...]`" in text
 
 
-def test_resume_can_continue_from_the_instance_clone(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_resume_can_continue_from_the_instance_clone(project: Project, harness: Harness, tmp_path: Path) -> None:
     app = App(FakeEngine(), Store(tmp_path / "state"))
     first = app.new(project, harness, no_config=True)
     work = commit(app.store.directory(first) / "repo", "work", {"a": "1"})
@@ -78,9 +69,7 @@ def test_resume_can_continue_from_the_instance_clone(
     assert git(app.store.directory(fresh) / "repo", "rev-parse", "HEAD") == original["base"]
 
 
-def test_sync_delivers_host_branches_as_host_refs(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_sync_delivers_host_branches_as_host_refs(project: Project, harness: Harness, tmp_path: Path) -> None:
     store = Store(tmp_path / "state")
     app = App(Guest(store), store)
     id = app.new(project, harness, no_config=True)
@@ -134,9 +123,7 @@ def advance(project: Project) -> str:
     return git(project.root, "rev-parse", "main")
 
 
-def test_sync_fast_forwards_an_idle_local_branch(
-    project: Project, guest: tuple[App, str, Path]
-) -> None:
+def test_sync_fast_forwards_an_idle_local_branch(project: Project, guest: tuple[App, str, Path]) -> None:
     app, id, clone = guest
     git(clone, "switch", "-qc", "feature")
     tip = advance(project)
@@ -145,9 +132,7 @@ def test_sync_fast_forwards_an_idle_local_branch(
     assert git(clone, "symbolic-ref", "--short", "HEAD") == "feature"
 
 
-def test_sync_fast_forwards_the_clean_checked_out_branch(
-    project: Project, guest: tuple[App, str, Path]
-) -> None:
+def test_sync_fast_forwards_the_clean_checked_out_branch(project: Project, guest: tuple[App, str, Path]) -> None:
     app, id, clone = guest
     (clone / "untracked").write_text("kept")
     tip = advance(project)
@@ -171,9 +156,7 @@ def test_sync_leaves_a_checked_out_branch_with_uncommitted_changes(
     assert (clone / name).read_text() == "edited"
 
 
-def test_sync_leaves_a_branch_during_a_git_operation(
-    project: Project, guest: tuple[App, str, Path]
-) -> None:
+def test_sync_leaves_a_branch_during_a_git_operation(project: Project, guest: tuple[App, str, Path]) -> None:
     app, id, clone = guest
     base = git(clone, "rev-parse", "HEAD")
     (clone / ".git/rebase-merge").mkdir()
@@ -183,9 +166,7 @@ def test_sync_leaves_a_branch_during_a_git_operation(
     assert git(clone, "rev-parse", "HEAD") == base
 
 
-def test_sync_leaves_diverged_and_ahead_branches(
-    project: Project, guest: tuple[App, str, Path]
-) -> None:
+def test_sync_leaves_diverged_and_ahead_branches(project: Project, guest: tuple[App, str, Path]) -> None:
     app, id, clone = guest
     ahead = commit(clone, "ahead", {"a": "1"})
     side = git(project.root, "commit-tree", "-m", "host side", "-p", "main", "main^{tree}")
@@ -196,9 +177,7 @@ def test_sync_leaves_diverged_and_ahead_branches(
     assert git(clone, "rev-parse", "ahead") == ahead
 
 
-def test_sync_rewrites_a_branch_only_while_it_is_unchanged(
-    project: Project, guest: tuple[App, str, Path]
-) -> None:
+def test_sync_rewrites_a_branch_only_while_it_is_unchanged(project: Project, guest: tuple[App, str, Path]) -> None:
     app, id, clone = guest
     old = commit(clone, "feature", {"a": "1"})
     new = advance(project)  # Stands in for the rebased commits, which main contains.
@@ -218,9 +197,7 @@ def test_sync_rewrites_a_branch_only_while_it_is_unchanged(
     assert git(clone, "rev-parse", "feature") == extra
 
 
-def test_sync_rewrite_keeps_uncommitted_changes_in_place(
-    project: Project, guest: tuple[App, str, Path]
-) -> None:
+def test_sync_rewrite_keeps_uncommitted_changes_in_place(project: Project, guest: tuple[App, str, Path]) -> None:
     app, id, clone = guest
     old = commit(clone, "feature", {"a": "1"})
     (clone / "a").write_text("edited")

@@ -12,18 +12,14 @@ from devbox.config import ASSETS
 @pytest.mark.skipif(shutil.which("node") is None, reason="Pi launcher tests require Node.js")
 def test_pi_launcher() -> None:
     tests = Path(__file__).parent / "pi/launcher.test.mjs"
-    result = subprocess.run(
-        ["node", "--test", str(tests)], capture_output=True, text=True, timeout=90
-    )
+    result = subprocess.run(["node", "--test", str(tests)], capture_output=True, text=True, timeout=90)
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Pi launcher tests require Node.js")
 def test_pi_launcher_help_does_not_need_an_installed_sdk() -> None:
     launcher = ASSETS / "harnesses/pi/launcher.mjs"
-    result = subprocess.run(
-        ["node", str(launcher), "--help"], capture_output=True, text=True, timeout=10
-    )
+    result = subprocess.run(["node", str(launcher), "--help"], capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
     assert "DEVBOX_SHARED_AUTH" in result.stdout
 

@@ -61,9 +61,7 @@ def test_live_harness_is_only_attached(project: Project, harness: Harness, tmp_p
     app.attach(container)
     assert engine.starts == 1
     assert len(engine.execs) == 1 and engine.execs[0].args[-1] == "alive"
-    assert engine.connections == [
-        (container.id, ("tmux", "-u", "attach-session", "-t", "agent"), None)
-    ]
+    assert engine.connections == [(container.id, ("tmux", "-u", "attach-session", "-t", "agent"), None)]
 
 
 @pytest.mark.parametrize("kind", ["pi", "claude"])
@@ -74,9 +72,7 @@ def test_recovery_continues_latest_local_session_without_forking(
     kind: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    profile = replace(
-        Harness.load(ASSETS / "harnesses" / kind), version_command=(), seed_dir=harness.seed_dir
-    )
+    profile = replace(Harness.load(ASSETS / "harnesses" / kind), version_command=(), seed_dir=harness.seed_dir)
     app, engine, container = instance(project, profile, tmp_path)
     transcript(app, container, "project/older.jsonl", 10)
     latest = transcript(app, container, "project/latest.jsonl", 20)
@@ -93,11 +89,7 @@ def test_recovery_continues_latest_local_session_without_forking(
     # There are two starts in execs: the other instance's initial launch, then recovery.
     start = [r for r in engine.execs if r.id == container.id and r.args[2:3] == ("start",)][0]
     home = app.store.directory(container.id) / "home"
-    expected = (
-        ("--session", f"/home/agent/{latest.relative_to(home)}")
-        if kind == "pi"
-        else ("--resume", "latest")
-    )
+    expected = ("--session", f"/home/agent/{latest.relative_to(home)}") if kind == "pi" else ("--resume", "latest")
     assert start.args[-2:] == expected
     assert "--fork" not in start.args and "--fork-session" not in start.args
     assert dirty.read_text() == "uncommitted work" and latest.read_bytes() == before
@@ -215,15 +207,11 @@ def test_fork_snapshot_is_recoverable_before_harness_writes_a_transcript(
     assert start.args[-2:] == ("--session", "/home/agent/.devbox/resume.jsonl")
 
 
-def test_legacy_instance_has_actionable_recovery_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_legacy_instance_has_actionable_recovery_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = App(FakeEngine(), Store(tmp_path))
     id, directory = app.store.create()
     (directory / "metadata.json").write_text("{}")
-    monkeypatch.setattr(
-        app.engine, "exec", lambda *args, **kwargs: subprocess.CompletedProcess(args, 1, "", "")
-    )
+    monkeypatch.setattr(app.engine, "exec", lambda *args, **kwargs: subprocess.CompletedProcess(args, 1, "", ""))
     with pytest.raises(DevboxError, match="older instance.*saved launch policy"):
         app.attach(Container(id, "running", "project", "pi", "now"))
 
@@ -258,17 +246,13 @@ def test_continue_args_require_an_explicit_session_placeholder(
     profile = (harness.directory / "profile.toml").read_text()
     (tmp_path / "Containerfile").touch()
     (tmp_path / "profile.toml").write_text(
-        profile.replace(
-            'continue_args = ["--session", "{session}"]', 'continue_args = ["--continue"]'
-        )
+        profile.replace('continue_args = ["--session", "{session}"]', 'continue_args = ["--continue"]')
     )
     with pytest.raises(DevboxError, match="continue_args"):
         Harness.load(tmp_path)
 
 
-@pytest.mark.skipif(
-    not Path("/proc/self/cmdline").exists() or not shutil.which("tmux"), reason="Linux tmux check"
-)
+@pytest.mark.skipif(not Path("/proc/self/cmdline").exists() or not shutil.which("tmux"), reason="Linux tmux check")
 def test_guest_launcher_detects_dead_panes_and_refreshes_tmux_environment(tmp_path: Path) -> None:
     # A private tmux server exercises guest shell code without any container service.
     script = ASSETS / "runtime/harness.sh"
@@ -305,14 +289,7 @@ def test_guest_launcher_detects_dead_panes_and_refreshes_tmux_environment(tmp_pa
         wait_for(lambda: not alive())  # A live replacement shell/process is not the harness.
         run("tmux", "set-option", "-t", "agent", "remain-on-exit", "on")
         run("tmux", "respawn-pane", "-k", "-t", "agent:0.0", "false")
-        wait_for(
-            lambda: (
-                run(
-                    "tmux", "display-message", "-p", "-t", "agent:0.0", "#{pane_dead}"
-                ).stdout.strip()
-                == "1"
-            )
-        )
+        wait_for(lambda: run("tmux", "display-message", "-p", "-t", "agent:0.0", "#{pane_dead}").stdout.strip() == "1")
         assert not alive()
         run("tmux", "kill-session", "-t", "agent")
         # Unsetting a declared secret also masks the stale server environment.

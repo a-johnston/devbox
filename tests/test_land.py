@@ -42,9 +42,7 @@ def test_land_fetches_and_fast_forwards_without_a_picker(
     assert f"Landed {id.removeprefix('devbox-')}/feature/x onto main." in capsys.readouterr().out
 
 
-def test_land_rebases_before_fast_forwarding(
-    project: Project, instance: tuple[App, str, Path]
-) -> None:
+def test_land_rebases_before_fast_forwarding(project: Project, instance: tuple[App, str, Path]) -> None:
     app, id, clone = instance
     original = commit(clone, "feature", {"guest": "new"})
     host = commit(project.root, "main", {"host": "new"})
@@ -58,9 +56,7 @@ def test_land_rebases_before_fast_forwarding(
     assert git(project.root, "rev-parse", "main^") == host
     assert git(project.root, "rev-list", "--count", f"{host}..main") == "1"
     assert git(project.root, "rev-parse", "keep") == original
-    assert f"refs/heads/{id.removeprefix('devbox-')}/feature" not in repository.refs(
-        project.root, "refs/heads/"
-    )
+    assert f"refs/heads/{id.removeprefix('devbox-')}/feature" not in repository.refs(project.root, "refs/heads/")
     assert git(project.root, "rev-parse", f"refs/devbox/{id}/feature") == original
     assert (project.root / "guest").read_text() == "new"
     assert (project.root / "host").read_text() == "new"
@@ -85,9 +81,7 @@ def test_land_targets_current_host_branch_not_starting_branch(
     assert (project.root / "prior").read_text() == "landed"
 
 
-def test_land_leaves_conflicting_rebase_for_the_user(
-    project: Project, instance: tuple[App, str, Path]
-) -> None:
+def test_land_leaves_conflicting_rebase_for_the_user(project: Project, instance: tuple[App, str, Path]) -> None:
     app, id, clone = instance
     original = commit(clone, "feature", {"conflict": "guest"})
     host = commit(project.root, "main", {"conflict": "host"})
@@ -170,9 +164,7 @@ def test_land_preserves_unavailable_local_branches(
         assert git(project.root, "rev-parse", branch) == base
 
 
-def test_land_rechecks_branch_after_selection(
-    project: Project, instance: tuple[App, str, Path]
-) -> None:
+def test_land_rechecks_branch_after_selection(project: Project, instance: tuple[App, str, Path]) -> None:
     app, id, clone = instance
     commit(clone, "feature", {"guest": "new"})
     (fetched,) = [b for b in app.fetch(id) if b.commits]
@@ -204,9 +196,7 @@ def test_land_uses_instance_and_branch_pickers(
     assert f"refs/heads/{id.removeprefix('devbox-')}/two" not in branches
 
 
-def test_land_unknown_branch_does_not_merge(
-    project: Project, instance: tuple[App, str, Path]
-) -> None:
+def test_land_unknown_branch_does_not_merge(project: Project, instance: tuple[App, str, Path]) -> None:
     app, id, clone = instance
     base = git(project.root, "rev-parse", "main")
     commit(clone, "feature", {"guest": "new"})
@@ -223,9 +213,7 @@ def test_land_without_new_work_fails(instance: tuple[App, str, Path]) -> None:
         dispatch(parser().parse_args(["land", id]), app)
 
 
-def test_land_from_a_worktree_targets_primary_checkout(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_land_from_a_worktree_targets_primary_checkout(project: Project, harness: Harness, tmp_path: Path) -> None:
     (project.root / ".git/info/exclude").write_text(".worktrees/\n")
     tree = project.root / ".worktrees/feature"
     git(project.root, "worktree", "add", "-q", "-b", "feature", str(tree))
@@ -240,9 +228,7 @@ def test_land_from_a_worktree_targets_primary_checkout(
     assert not (tree / "guest").exists()
 
 
-def test_land_never_runs_clone_hooks(
-    project: Project, instance: tuple[App, str, Path], tmp_path: Path
-) -> None:
+def test_land_never_runs_clone_hooks(project: Project, instance: tuple[App, str, Path], tmp_path: Path) -> None:
     app, id, clone = instance
     commit(clone, "feature", {"guest": "new"})
     marker = tmp_path / "hook-ran"

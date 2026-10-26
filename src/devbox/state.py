@@ -37,10 +37,7 @@ class Instance:
 class Store:
     def __init__(self, root: Path | None = None, *, backend: str | None = None) -> None:
         self.backend = backend or backend_name()
-        base = (
-            root
-            or Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "devbox"
-        )
+        base = root or Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "devbox"
         self.root = (base / self.backend).expanduser().resolve()
 
     @property
@@ -77,9 +74,7 @@ class Store:
 
     def _instance_directories(self) -> list[Path]:
         if self.instances.is_symlink():
-            raise DevboxError(
-                f"Refusing to clean a symlinked instances directory: {self.instances}"
-            )
+            raise DevboxError(f"Refusing to clean a symlinked instances directory: {self.instances}")
         if not self.instances.exists():
             return []
         return [
@@ -97,11 +92,7 @@ class Store:
 
     def saved(self) -> list[str]:
         """Instances with saved state, whether or not their container still exists."""
-        return [
-            directory.name
-            for directory in self._instance_directories()
-            if (directory / "metadata.json").is_file()
-        ]
+        return [directory.name for directory in self._instance_directories() if (directory / "metadata.json").is_file()]
 
     def clones(self) -> list[str]:
         """Instances whose repository clone can be fetched, including removed containers."""
@@ -129,9 +120,7 @@ class Store:
             metadata = self.metadata(directory.name)
             reference = metadata.get("image") if isinstance(metadata, dict) else None
             if not isinstance(reference, str) or not reference or reference.startswith("-"):
-                raise DevboxError(
-                    f"Cannot determine saved image for {directory.name}; refusing image cleanup"
-                )
+                raise DevboxError(f"Cannot determine saved image for {directory.name}; refusing image cleanup")
             references.add(reference)
         return references
 
@@ -213,9 +202,7 @@ def host_version(harness: Harness) -> str | None:
     if not harness.version_command:
         return None
     try:
-        result = subprocess.run(
-            harness.version_command, capture_output=True, text=True, timeout=10, check=False
-        )
+        result = subprocess.run(harness.version_command, capture_output=True, text=True, timeout=10, check=False)
     except (OSError, subprocess.TimeoutExpired):
         return None
     # Only a plain semantic version may reach a build argument and package spec.

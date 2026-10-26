@@ -38,9 +38,7 @@ def instance(project: Project, harness: Harness, tmp_path: Path) -> tuple[App, s
     return app, id, app.store.directory(id) / "repo"
 
 
-def test_fetch_namespaces_branches_and_flags_trusted_paths(
-    project: Project, instance: tuple[App, str, Path]
-) -> None:
+def test_fetch_namespaces_branches_and_flags_trusted_paths(project: Project, instance: tuple[App, str, Path]) -> None:
     app, id, clone = instance
     # Watched paths come from the host manifest; the clone's copy cannot remove them.
     with (project.root / ".devbox.toml").open("a") as stream:
@@ -114,9 +112,7 @@ def test_fetch_does_not_reset_a_published_branch_when_guest_drops_all_new_work(
     assert git(project.root, "rev-parse", f"refs/heads/{published.branch}") == tip
 
 
-def test_fetch_publishes_main_when_it_has_new_work(
-    project: Project, instance: tuple[App, str, Path]
-) -> None:
+def test_fetch_publishes_main_when_it_has_new_work(project: Project, instance: tuple[App, str, Path]) -> None:
     app, id, clone = instance
     base = git(project.root, "rev-parse", "main")
     tip = commit(clone, "main", {"a": "1"})
@@ -143,9 +139,7 @@ def test_fetch_keeps_different_instances_branches_separate(
         assert git(project.root, "rev-parse", f"refs/heads/{branch.branch}") == tip
 
 
-def test_fetch_leaves_legacy_local_branches_untouched(
-    project: Project, instance: tuple[App, str, Path]
-) -> None:
+def test_fetch_leaves_legacy_local_branches_untouched(project: Project, instance: tuple[App, str, Path]) -> None:
     app, id, clone = instance
     first = commit(clone, "feature", {"a": "1"})
     app.fetch(id)
@@ -172,14 +166,10 @@ def test_fetch_from_a_worktree_watches_repository_relative_paths(
     (branch,) = [b for b in app.fetch(id) if b.ref.endswith("/next")]
     assert branch.watched == (".devbox/Containerfile",)
     assert branch.branch_current
-    assert git(project.root, "rev-parse", f"refs/heads/{branch.branch}") == git(
-        clone, "rev-parse", "HEAD"
-    )
+    assert git(project.root, "rev-parse", f"refs/heads/{branch.branch}") == git(clone, "rev-parse", "HEAD")
 
 
-def test_fetch_reports_rewritten_and_pruned_branches(
-    project: Project, instance: tuple[App, str, Path]
-) -> None:
+def test_fetch_reports_rewritten_and_pruned_branches(project: Project, instance: tuple[App, str, Path]) -> None:
     app, id, clone = instance
     commit(clone, "feature", {"a": "1"})
     gone = commit(clone, "gone", {"b": "1"})
@@ -191,17 +181,12 @@ def test_fetch_reports_rewritten_and_pruned_branches(
     assert set(fetched) == {"main", "feature"}
     assert fetched["feature"].rewritten
     assert fetched["feature"].branch_current
-    assert (
-        git(project.root, "rev-parse", f"refs/heads/{id.removeprefix('devbox-')}/feature")
-        == rewritten
-    )
+    assert git(project.root, "rev-parse", f"refs/heads/{id.removeprefix('devbox-')}/feature") == rewritten
     # Prune tracking refs, never local branches that may hold reviewed or host work.
     assert git(project.root, "rev-parse", f"refs/heads/{id.removeprefix('devbox-')}/gone") == gone
 
 
-def test_fetch_refreshes_untouched_local_branches(
-    project: Project, instance: tuple[App, str, Path]
-) -> None:
+def test_fetch_refreshes_untouched_local_branches(project: Project, instance: tuple[App, str, Path]) -> None:
     app, id, clone = instance
     commit(clone, "feature/nested", {"a": "1"})
     app.fetch(id)
@@ -304,9 +289,7 @@ def test_fetch_does_not_overwrite_a_concurrently_created_or_moved_branch(
     assert git(project.root, "rev-parse", branch.ref) == tip
 
 
-def test_fetch_never_runs_clone_configured_commands(
-    instance: tuple[App, str, Path], tmp_path: Path
-) -> None:
+def test_fetch_never_runs_clone_configured_commands(instance: tuple[App, str, Path], tmp_path: Path) -> None:
     app, id, clone = instance
     marker = tmp_path / "ran"
     commit(clone, "feature", {"a": "1"})
@@ -318,9 +301,7 @@ def test_fetch_never_runs_clone_configured_commands(
     assert marker.exists()
 
 
-def test_fetch_refuses_a_redirected_git_directory(
-    project: Project, instance: tuple[App, str, Path]
-) -> None:
+def test_fetch_refuses_a_redirected_git_directory(project: Project, instance: tuple[App, str, Path]) -> None:
     app, id, clone = instance
     subprocess.run(["rm", "-rf", str(clone / ".git")], check=True)
     (clone / ".git").symlink_to(project.root / ".git")

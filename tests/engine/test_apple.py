@@ -99,16 +99,10 @@ def test_image_lookup_does_not_misclassify_service_failure(monkeypatch: pytest.M
         engine.image_exists("image")
 
 
-@pytest.mark.parametrize(
-    "payload", ["not json", "{}", "null", "[{}]", '[{"id": null}]', '[{"id": ""}]']
-)
-def test_container_ids_refuse_unrecognizable_inventory(
-    monkeypatch: pytest.MonkeyPatch, payload: str
-) -> None:
+@pytest.mark.parametrize("payload", ["not json", "{}", "null", "[{}]", '[{"id": null}]', '[{"id": ""}]'])
+def test_container_ids_refuse_unrecognizable_inventory(monkeypatch: pytest.MonkeyPatch, payload: str) -> None:
     engine = AppleEngine()
-    monkeypatch.setattr(
-        engine, "call", lambda *a, **kw: subprocess.CompletedProcess(a, 0, payload, "")
-    )
+    monkeypatch.setattr(engine, "call", lambda *a, **kw: subprocess.CompletedProcess(a, 0, payload, ""))
     with pytest.raises(DevboxError, match="refusing cleanup"):
         engine.container_ids()
 
@@ -118,7 +112,5 @@ def test_container_ids_include_unlabelled_and_stopped_containers(
 ) -> None:
     engine = AppleEngine()
     rows = [{"id": "running"}, {"id": "stopped", "status": {"state": "stopped"}}]
-    monkeypatch.setattr(
-        engine, "call", lambda *a, **kw: subprocess.CompletedProcess(a, 0, json.dumps(rows), "")
-    )
+    monkeypatch.setattr(engine, "call", lambda *a, **kw: subprocess.CompletedProcess(a, 0, json.dumps(rows), ""))
     assert engine.container_ids() == {"running", "stopped"}

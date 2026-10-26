@@ -1,5 +1,4 @@
 import json
-import subprocess
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -13,7 +12,7 @@ from devbox.cli import dispatch, parser
 from devbox.config import Harness, Project
 from devbox.engine import Container
 from devbox.errors import DevboxError
-from devbox.repository import Fetched, Landed, land, refs
+from devbox.repository import Fetched, HostCheckout, Landed, LocalBranches, land, landing_target, refs
 from devbox.state import Store
 from tests.fakes import FakeEngine, FakeGit
 from tests.repos import commit, git
@@ -75,70 +74,70 @@ def test_land_leaves_conflicting_rebase_for_the_user(repository: Path) -> None:
     assert git(repository, "rev-parse", "HEAD") == original
 
 
-@pytest.mark.parametrize("dirty", ["staged", "unstaged", "untracked"])
-def test_land_refuses_dirty_host_without_stashing(repository: Path, dirty: str) -> None:
-    feature = publish(repository, "feature", {"guest": "new"})
-    base = git(repository, "rev-parse", "HEAD")
-    git(repository, "config", "rebase.autoStash", "true")
-    git(repository, "config", "merge.autoStash", "true")
-    path = repository / ("untracked" if dirty == "untracked" else ".devbox/Containerfile")
-    path.write_text("local edits")
-    if dirty == "staged":
-        git(repository, "add", str(path))
-    status = git(repository, "status", "--porcelain")
-    with pytest.raises(DevboxError, match="must be clean"):
-        land(repository, feature)
-    assert git(repository, "rev-parse", "HEAD") == base
-    assert git(repository, "branch", "--show-current") == "main"
-    assert git(repository, "status", "--porcelain") == status
-    assert path.read_text() == "local edits"
-    assert git(repository, "stash", "list") == ""
+# landing_target: whether the host checkout's state allows a landing, and onto which branch.
+
+TIP = "1" * 40
+SOURCE = "refs/heads/x/feature"
+FEATURE = Fetched("refs/devbox/x/feature", 1, False, (), "x/feature", True)
 
 
-def test_land_refuses_detached_target(repository: Path) -> None:
-    feature = publish(repository, "feature", {"guest": "new"})
-    git(repository, "checkout", "--quiet", "--detach")
-    with pytest.raises(DevboxError, match="check out a target branch"):
-        land(repository, feature)
+def checkout(**changes: Any) -> HostCheckout:
+    clean = HostCheckout(
+        Path("/host"),
+        busy=False,
+        head="refs/heads/main",
+        dirty=False,
+        branches=LocalBranches({SOURCE: TIP, "refs/heads/main": "0" * 40}, set(), {"refs/heads/main"}),
+        tip=TIP,
+    )
+    return replace(clean, **changes)
 
 
-def test_land_refuses_a_branch_fetch_could_not_publish(repository: Path) -> None:
-    feature = publish(repository, "feature", {"guest": "new"})
-    for unavailable in (replace(feature, branch_current=False), replace(feature, branch=None)):
-        with pytest.raises(DevboxError, match="unavailable or changed locally"):
-            land(repository, unavailable)
+def test_landing_target_is_the_checked_out_branch() -> None:
+    assert landing_target(checkout(), FEATURE) == "main"
+    assert landing_target(checkout(head="refs/heads/release"), FEATURE) == "release"
 
 
 @pytest.mark.parametrize(
-    ("changed", "reason"),
+    ("state", "fetched", "reason"),
     [
-        ("local", "no longer matches"),
-        ("symbolic", "no longer matches"),
-        ("collision", "no longer matches"),
-        ("linked", "checked out in a worktree"),
-        ("self", "onto itself"),
+        (checkout(), replace(FEATURE, branch_current=False), "unavailable or changed locally"),
+        (checkout(), replace(FEATURE, branch=None), "unavailable or changed locally"),
+        (checkout(busy=True), FEATURE, "already in progress"),
+        (checkout(head=None), FEATURE, "check out a target branch"),
+        (checkout(head=SOURCE), FEATURE, "onto itself"),
+        (checkout(dirty=True), FEATURE, "must be clean"),
+        (checkout(branches=LocalBranches({SOURCE: "2" * 40}, set(), set())), FEATURE, "no longer matches"),
+        (checkout(branches=LocalBranches({}, {SOURCE}, set())), FEATURE, "no longer matches"),
+        (checkout(branches=LocalBranches({}, set(), set())), FEATURE, "no longer matches"),
+        (checkout(tip=None), FEATURE, "no longer matches"),
+        (checkout(branches=LocalBranches({SOURCE: TIP}, set(), {SOURCE})), FEATURE, "checked out in a worktree"),
     ],
 )
-def test_land_rechecks_the_branch_after_selection(repository: Path, tmp_path: Path, changed: str, reason: str) -> None:
+def test_landing_target_refuses_anything_that_could_lose_work(
+    state: HostCheckout, fetched: Fetched, reason: str
+) -> None:
+    with pytest.raises(DevboxError, match=f"Cannot land.*{reason}"):
+        landing_target(state, fetched)
+
+
+def test_host_checkout_reads_a_clean_checkout(repository: Path) -> None:
     feature = publish(repository, "feature", {"guest": "new"})
     tip = git(repository, "rev-parse", feature.ref)
-    base = git(repository, "rev-parse", "main")
-    if changed == "local":
-        git(repository, "branch", "-f", "x/feature", base)
-    elif changed == "linked":
-        git(repository, "worktree", "add", "--quiet", str(tmp_path / "linked"), "x/feature")
-    elif changed == "self":
-        git(repository, "checkout", "--quiet", "x/feature")
-    else:
-        git(repository, "branch", "-D", "x/feature")
-        if changed == "symbolic":
-            git(repository, "symbolic-ref", "refs/heads/x/feature", "refs/heads/main")
-        else:
-            git(repository, "branch", "x")
-    with pytest.raises(DevboxError, match=f"Cannot land.*{reason}"):
-        land(repository, feature)
-    assert git(repository, "rev-parse", "main") == base
-    assert git(repository, "rev-parse", feature.ref) == tip
+    state = HostCheckout.read(repository, feature.ref)
+    assert (state.busy, state.head, state.dirty, state.tip) == (False, "refs/heads/main", False, tip)
+    assert state.branches.commits["refs/heads/x/feature"] == tip
+
+
+def test_host_checkout_reads_work_in_progress(repository: Path, tmp_path: Path) -> None:
+    publish(repository, "feature", {"guest": "new"})
+    git(repository, "worktree", "add", "--quiet", str(tmp_path / "linked"), "x/feature")
+    git(repository, "checkout", "--quiet", "--detach")
+    (repository / "untracked").write_text("local work")
+    (repository / ".git/rebase-merge").mkdir()
+    state = HostCheckout.read(repository, "refs/devbox/x/missing")
+    assert (state.busy, state.head, state.dirty, state.tip) == (True, None, True, None)
+    assert "refs/heads/x/feature" in state.branches.checked_out
 
 
 def test_land_requires_ff_merge(repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -334,68 +333,3 @@ def test_app_land_failure_syncs_nothing(
     with pytest.raises(DevboxError, match="Rebase failed"):
         app.land(first, fetched(first, "feature"))
     assert synced == []
-
-
-# End to end with real Git: one compound landing that rebases, then syncs two running instances.
-
-
-class Guest(FakeEngine):
-    """Runs piped exec scripts locally, with the guest checkout path mapped to the clone."""
-
-    def __init__(self, store: Store) -> None:
-        super().__init__()
-        self.store = store
-
-    def exec(self, id: str, *args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        result = super().exec(id, *args, **kwargs)
-        if kwargs.get("input") is None:
-            return result
-        checkout = self.store.metadata(id)["workspace"]
-        clone = str(self.store.directory(id) / "repo")
-        command = [clone if arg == checkout else arg for arg in args]
-        return subprocess.run(command, input=kwargs["input"], text=True, check=True, capture_output=True)
-
-
-def test_land_rebases_and_syncs_running_instances(
-    project: Project,
-    harness: Harness,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    git(project.root, "config", "user.name", "Test")
-    git(project.root, "config", "user.email", "test@example.invalid")
-    store = Store(tmp_path / "state")
-    engine = Guest(store)
-    app = App(engine, store)
-    first, second = (app.new(project, harness, no_config=True) for _ in range(2))
-    engine.rows = [running(first), running(second)]
-    clone, other = (store.directory(id) / "repo" for id in (first, second))
-    git(other, "switch", "-qc", "scratch")
-    # Landing never runs Git in the clone, so its hooks never run on the host.
-    marker = tmp_path / "hook-ran"
-    hook = clone / ".git/hooks/pre-rebase"
-    hook.write_text(f'#!/bin/sh\ntouch "{marker}"\n')
-    hook.chmod(0o755)
-
-    # Another change lands first, so the instance's branch is rebased by the landing.
-    git(project.root, "commit", "--allow-empty", "-qm", "upstream")
-    upstream = git(project.root, "rev-parse", "main")
-    tip = commit(clone, "feature", {"a": "1"})
-    monkeypatch.chdir(tmp_path)  # Selection, not cwd, determines the repository.
-    dispatch(parser().parse_args(["land", first.removeprefix("devbox-")]), app)
-
-    main = git(project.root, "rev-parse", "main")
-    assert main != tip and git(project.root, "rev-parse", "main~1") == upstream
-    assert (git(project.root, "branch", "--show-current"), git(project.root, "status", "--porcelain")) == ("main", "")
-    assert refs(project.root, "refs/heads/") == {"refs/heads/main": main}
-    assert git(project.root, "rev-parse", f"refs/devbox/{first}/feature") == tip
-    assert git(clone, "rev-parse", "feature", "main").split() == [main, main]  # Rewritten, then fast-forwarded.
-    assert git(other, "rev-parse", "main") == main
-    assert git(other, "symbolic-ref", "--short", "HEAD") == "scratch"
-    assert not marker.exists()
-    out = capsys.readouterr().out
-    assert f"Landed {first.removeprefix('devbox-')}/feature onto main." in out
-    assert f"{first}: feature: moved to the rebased commits" in out
-    assert f"{first}: main: fast-forwarded" in out
-    assert f"{second}: main: fast-forwarded" in out

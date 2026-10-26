@@ -44,97 +44,82 @@ def advance(repository: Path) -> str:
     return git(repository, "rev-parse", "main")
 
 
-def test_receive_delivers_host_branches_as_host_refs(repository: Path, clone: Path) -> None:
-    assert receive(repository, clone, ["main"]) == ["main: up to date"]  # nothing new since the clone
+def branches(repository: Path, **targets: str) -> None:
+    """Create branches at the given commits in one Git process."""
+    lines = "".join(f"create refs/heads/{name} {commit}\n" for name, commit in targets.items())
+    subprocess.run(["git", "-C", str(repository), "update-ref", "--stdin"], input=lines, text=True, check=True)
+
+
+def test_receive_reports_each_branch_independently(repository: Path, clone: Path) -> None:
+    # Nothing here is checked out in the clone, so every outcome depends only on the refs.
+    base = git(clone, "rev-parse", "HEAD")
+    git(clone, "switch", "-qc", "work")
+    guest = git(clone, "commit-tree", "-m", "guest work", "-p", base, f"{base}^{{tree}}")
+    branches(clone, ahead=guest, diverged=guest, moved=guest, undelivered=guest, matches=base, changed=base)
+    git(repository, "branch", "ahead")
+    assert receive(repository, clone, ["main", "ahead"]) == [
+        "main: up to date",
+        "ahead: has commits beyond host/ahead; left alone",
+    ]
     tip = advance(repository)
-    git(repository, "branch", "other")
-    assert receive(repository, clone, ["main", "other"]) == [
+    host = git(repository, "commit-tree", "-m", "host work", "-p", base, f"{base}^{{tree}}")
+    branches(repository, other=tip, diverged=host)
+    missing = "f" * 40
+    rewrites = [
+        ("moved", guest, tip),
+        ("matches", guest, base),
+        ("changed", guest, tip),
+        ("gone", guest, tip),
+        ("undelivered", guest, missing),
+    ]
+    assert receive(repository, clone, ["main", "other", "diverged"], rewrites) == [
+        "moved: moved to the rebased commits",
+        "matches: matches the landed commits",
+        "changed: changed since it was fetched; left alone",
+        "gone: no longer exists; left alone",
+        "undelivered: rebased commits not delivered; left alone",
         "main: fast-forwarded",
         "other: delivered as host/other (no local branch)",
+        "diverged: diverged from host/diverged; left alone",
     ]
-    assert git(clone, "rev-parse", "host/main", "host/other").split() == [tip, tip]
-    assert git(clone, "symbolic-ref", "--short", "HEAD") == "main"
-    assert git(clone, "rev-parse", "main") == tip
+    names = ("main", "moved", "changed", "undelivered", "ahead", "diverged", "host/other", "host/diverged")
+    assert git(clone, "rev-parse", *names).split() == [tip, tip, base, guest, guest, guest, tip, host]
+    assert git(clone, "symbolic-ref", "--short", "HEAD") == "work"
 
 
-def test_bundle_refuses_missing_branches(repository: Path) -> None:
-    with pytest.raises(DevboxError, match="No branch missing"):
-        bundle(repository, ["missing"], git(repository, "rev-parse", "main"))
-
-
-def test_receive_fast_forwards_an_idle_local_branch(repository: Path, clone: Path) -> None:
-    git(clone, "switch", "-qc", "feature")
-    tip = advance(repository)
-    assert receive(repository, clone, ["main"]) == ["main: fast-forwarded"]
-    assert git(clone, "rev-parse", "main") == tip
-    assert git(clone, "symbolic-ref", "--short", "HEAD") == "feature"
-
-
-def test_receive_fast_forwards_the_clean_checked_out_branch(repository: Path, clone: Path) -> None:
-    (clone / "untracked").write_text("kept")
-    tip = advance(repository)
-    assert receive(repository, clone, ["main"]) == ["main: fast-forwarded"]
-    assert git(clone, "rev-parse", "HEAD") == tip
-    assert (clone / "untracked").read_text() == "kept"
-
-
-def test_receive_leaves_a_checked_out_branch_with_uncommitted_changes(repository: Path, clone: Path) -> None:
-    base = git(clone, "rev-parse", "HEAD")
-    (clone / ".devbox.toml").write_text("edited")
-    tip = advance(repository)
-    (line,) = receive(repository, clone, ["main"])
-    assert line.startswith("main: left alone (uncommitted changes)")
-    assert git(clone, "rev-parse", "HEAD") == base
-    assert git(clone, "rev-parse", "host/main") == tip
-    assert (clone / ".devbox.toml").read_text() == "edited"
-
-
-def test_receive_leaves_a_branch_during_a_git_operation(repository: Path, clone: Path) -> None:
-    base = git(clone, "rev-parse", "HEAD")
-    (clone / ".git/rebase-merge").mkdir()
-    advance(repository)
-    (line,) = receive(repository, clone, ["main"])
-    assert "a Git operation is in progress" in line
-    assert git(clone, "rev-parse", "HEAD") == base
-
-
-def test_receive_leaves_diverged_and_ahead_branches(repository: Path, clone: Path) -> None:
-    ahead = commit(clone, "ahead", {"a": "1"})
-    side = git(repository, "commit-tree", "-m", "host side", "-p", "main", "main^{tree}")
-    git(repository, "update-ref", "refs/heads/ahead", side)
-    assert receive(repository, clone, ["ahead"]) == ["ahead: diverged from host/ahead; left alone"]
-    git(repository, "update-ref", "refs/heads/ahead", "main")
-    assert receive(repository, clone, ["ahead"]) == ["ahead: has commits beyond host/ahead; left alone"]
-    assert git(clone, "rev-parse", "ahead") == ahead
-
-
-def test_receive_rewrites_a_branch_only_while_it_is_unchanged(repository: Path, clone: Path) -> None:
+def test_receive_moves_a_clean_checked_out_branch(repository: Path, clone: Path) -> None:
+    # The landing instance's own branch is usually checked out when it is rewritten.
     old = commit(clone, "feature", {"a": "1"})
+    (clone / "untracked").write_text("kept")
     new = advance(repository)  # Stands in for the rebased commits, which main contains.
     assert receive(repository, clone, ["main"], [("feature", old, new)]) == [
         "feature: moved to the rebased commits",
         "main: fast-forwarded",
     ]
-    assert git(clone, "rev-parse", "feature") == new
+    assert git(clone, "rev-parse", "HEAD", "feature").split() == [new, new]
     assert git(clone, "symbolic-ref", "--short", "HEAD") == "feature"
-    assert git(clone, "status", "--porcelain") == ""
-
-    (line, _) = receive(repository, clone, ["main"], [("feature", old, new)])
-    assert line == "feature: matches the landed commits"
-    extra = commit(clone, "feature", {"b": "2"})
-    (line, _) = receive(repository, clone, ["main"], [("feature", old, new)])
-    assert line == "feature: changed since it was fetched; left alone"
-    assert git(clone, "rev-parse", "feature") == extra
+    assert git(clone, "status", "--porcelain") == "?? untracked"
+    assert (clone / "untracked").read_text() == "kept"
 
 
-def test_receive_rewrite_keeps_uncommitted_changes_in_place(repository: Path, clone: Path) -> None:
-    old = commit(clone, "feature", {"a": "1"})
-    (clone / "a").write_text("edited")
-    new = advance(repository)
-    (line, _) = receive(repository, clone, ["main"], [("feature", old, new)])
-    assert line.startswith("feature: left alone (uncommitted changes)")
-    assert git(clone, "rev-parse", "feature") == old
-    assert (clone / "a").read_text() == "edited"
+@pytest.mark.parametrize(("busy", "reason"), [("edit", "uncommitted changes"), ("rebase", "a Git operation")])
+def test_receive_leaves_a_busy_checked_out_branch(repository: Path, clone: Path, busy: str, reason: str) -> None:
+    base = git(clone, "rev-parse", "HEAD")
+    if busy == "edit":
+        (clone / ".devbox.toml").write_text("edited")
+    else:
+        (clone / ".git/rebase-merge").mkdir()
+    tip = advance(repository)
+    (line,) = receive(repository, clone, ["main"])
+    assert line == f"main: left alone ({reason}{' is in progress' if busy == 'rebase' else ''}); see host/main"
+    assert git(clone, "rev-parse", "HEAD", "host/main").split() == [base, tip]
+    if busy == "edit":
+        assert (clone / ".devbox.toml").read_text() == "edited"
+
+
+def test_bundle_refuses_missing_branches(repository: Path) -> None:
+    with pytest.raises(DevboxError, match="No branch missing"):
+        bundle(repository, ["missing"], git(repository, "rev-parse", "main"))
 
 
 # Instances: what they are told, where forks start, and which branches App.sync delivers.

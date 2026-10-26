@@ -11,7 +11,9 @@ Test each unit through its inputs and outputs: `repository` functions against re
 guest scripts by running them directly, `App` methods with `FakeEngine`/`FakeGit` and stubs for the
 units they call, and CLI handlers with stubbed `App` results. A test of a composition checks that it
 calls its collaborators with the right arguments and handles their results and failures; it does
-not re-exercise behavior their own tests cover. Prefer fast small unit tests over slower end-to-end tests.
+not re-exercise behavior their own tests cover. Where a unit reads Git state and decides what to do
+with it, read a snapshot and decide in a pure function, so decisions are tested on plain data and real
+repositories only test the reads and writes. Prefer fast small unit tests over slower end-to-end tests.
 
 ## Tooling
 

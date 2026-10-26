@@ -8,7 +8,7 @@ from devbox.app import App
 from devbox.cli import printable
 from devbox.config import Harness, Project
 from devbox.errors import DevboxError
-from devbox.repository import Fetched, fetch, refs
+from devbox.repository import Fetched, LocalBranches, Tip, fetch, publish, refs
 from devbox.state import Store
 from tests.fakes import FakeEngine, FakeGit
 from tests.repos import commit, git
@@ -53,35 +53,52 @@ def test_fetch_compares_with_the_current_host_head(repository: Path, clone: Path
     assert (feature.commits, feature.watched) == (1, ())
 
 
-def test_fetch_already_landed_work_only_updates_tracking_refs(repository: Path, clone: Path) -> None:
-    landed = commit(clone, "landed", {"a": "done"})
-    fetched(repository, clone)
-    git(repository, "merge", "--ff-only", landed)
-    git(repository, "branch", "-d", "x/landed")
-    for _ in range(2):
-        result = fetched(repository, clone)
-        assert set(result) == {"main", "landed"}
-        assert all(b.commits == 0 and b.branch is None and not b.branch_current for b in result.values())
-        assert refs(repository, "refs/heads/") == {"refs/heads/main": landed}
+# publish: whether fetch moves, leaves or already has each fetched tip's local branch.
+
+OLD, NEW, ELSE = "1" * 40, "2" * 40, "3" * 40
+REF = "refs/heads/x/feature"
 
 
-def test_fetch_does_not_reset_a_published_branch_when_guest_drops_all_new_work(repository: Path, clone: Path) -> None:
-    tip = commit(clone, "feature", {"a": "1"})
-    fetched(repository, clone)
-    git(clone, "reset", "--hard", "main")
-    branch = fetched(repository, clone)["feature"]
-    assert (branch.commits, branch.branch, branch.branch_current, branch.rewritten) == (0, None, False, True)
-    assert git(repository, "rev-parse", branch.ref) == git(clone, "rev-parse", "main")
-    assert git(repository, "rev-parse", "x/feature") == tip
+def local(
+    commits: dict[str, str] | None = None, symbolic: set[str] | None = None, checked_out: set[str] | None = None
+) -> LocalBranches:
+    return LocalBranches(commits or {}, symbolic or set(), checked_out or set())
 
 
-def test_fetch_publishes_main_when_it_has_new_work(repository: Path, clone: Path) -> None:
-    base = git(repository, "rev-parse", "main")
-    tip = commit(clone, "main", {"a": "1"})
-    (branch,) = fetched(repository, clone).values()
-    assert (branch.commits, branch.branch, branch.branch_current) == (1, "x/main", True)
-    assert git(repository, "rev-parse", "x/main") == tip
-    assert git(repository, "rev-parse", "main") == base
+@pytest.mark.parametrize(
+    ("case", "old", "branches", "current", "expected"),
+    [
+        ("first fetch creates it", None, local(), True, "0" * 40),
+        ("refreshed while untouched", OLD, local({REF: OLD}), True, OLD),
+        ("already at the tip", OLD, local({REF: NEW}, checked_out={REF}), True, None),
+        ("changed locally", OLD, local({REF: ELSE}), False, None),
+        ("existing host branch on first fetch", None, local({REF: ELSE}), False, None),
+        ("checked out in a worktree", OLD, local({REF: OLD}, checked_out={REF}), False, None),
+        ("symbolic", OLD, local({"refs/heads/main": OLD}, symbolic={REF}), False, None),
+    ],
+)
+def test_publish_moves_only_untouched_local_branches(
+    case: str, old: str | None, branches: LocalBranches, current: bool, expected: str | None
+) -> None:
+    tip = Tip(f"{NAMESPACE}feature", NEW, old, 2, True, (".devbox.toml",))
+    assert publish(tip, NAMESPACE, "x", branches) == (
+        Fetched(tip.ref, 2, False, (".devbox.toml",), "x/feature", current),
+        expected,
+    )
+
+
+@pytest.mark.parametrize("descends", [True, False])
+def test_publish_leaves_branches_without_new_work_alone(descends: bool) -> None:
+    # Already landed, or the guest dropped all new work: an existing local branch keeps it.
+    tip = Tip(f"{NAMESPACE}feature/nested", NEW, OLD, 0, descends, ())
+    branches = local({"refs/heads/x/feature/nested": OLD})
+    assert publish(tip, NAMESPACE, "x", branches) == (Fetched(tip.ref, 0, not descends, (), None, False), None)
+
+
+def test_publish_names_branches_under_the_prefix() -> None:
+    for name in ("main", "feature/nested"):
+        fetched, _ = publish(Tip(NAMESPACE + name, NEW, None, 1, True, ()), NAMESPACE, "x", local())
+        assert fetched.branch == f"x/{name}"
 
 
 def test_fetch_keeps_different_instances_branches_separate(
@@ -95,17 +112,6 @@ def test_fetch_keeps_different_instances_branches_separate(
     # Pruning one instance's namespace leaves the other's refs alone.
     assert git(repository, "rev-parse", "refs/devbox/one/feature", "one/feature").split() == [first] * 2
     assert git(repository, "rev-parse", "refs/devbox/two/feature", "two/feature").split() == [second] * 2
-
-
-def test_fetch_leaves_unrelated_local_branches_untouched(repository: Path, clone: Path) -> None:
-    first = commit(clone, "feature", {"a": "1"})
-    fetched(repository, clone)
-    legacy = "devbox/devbox-x/feature"
-    git(repository, "branch", legacy, first)
-    second = commit(clone, "feature", {"a": "2"})
-    assert fetched(repository, clone)["feature"].branch_current
-    assert git(repository, "rev-parse", "x/feature") == second
-    assert git(repository, "rev-parse", f"refs/heads/{legacy}") == first
 
 
 def test_fetch_reports_rewritten_and_pruned_branches(repository: Path, clone: Path) -> None:
@@ -124,63 +130,26 @@ def test_fetch_reports_rewritten_and_pruned_branches(repository: Path, clone: Pa
     assert git(repository, "rev-parse", "x/gone") == gone
 
 
-def test_fetch_refreshes_untouched_local_branches(repository: Path, clone: Path) -> None:
-    commit(clone, "feature/nested", {"a": "1"})
-    fetched(repository, clone)
-    git(clone, "commit", "--quiet", "--allow-empty", "-m", "next")
-    tip = git(clone, "rev-parse", "HEAD")
-    for _ in range(2):  # An unchanged fetch is also harmless.
-        assert fetched(repository, clone)["feature/nested"].branch_current
-        assert git(repository, "rev-parse", "x/feature/nested") == tip
+def test_local_branches_reads_symbolic_and_checked_out_branches(repository: Path, tmp_path: Path) -> None:
+    main = git(repository, "rev-parse", "main")
+    git(repository, "branch", "linked")
+    git(repository, "worktree", "add", "--quiet", str(tmp_path / "linked"), "linked")
+    git(repository, "symbolic-ref", "refs/heads/alias", "refs/heads/main")
+    assert LocalBranches.read(repository) == LocalBranches(
+        {"refs/heads/main": main, "refs/heads/linked": main},
+        {"refs/heads/alias"},
+        {"refs/heads/main", "refs/heads/linked"},
+    )
 
 
-@pytest.mark.parametrize("linked", [False, True])
-def test_fetch_does_not_move_checked_out_local_branches(
-    repository: Path, clone: Path, tmp_path: Path, linked: bool
-) -> None:
-    first = commit(clone, "feature", {"a": "1"})
-    fetched(repository, clone)
-    checkout = tmp_path / "review" if linked else repository
-    if linked:
-        git(repository, "worktree", "add", "--quiet", str(checkout), "x/feature")
-    else:
-        git(repository, "checkout", "--quiet", "x/feature")
-    (checkout / "a").write_text("uncommitted host edits")
-    second = commit(clone, "feature", {"a": "2"})
-    branch = fetched(repository, clone)["feature"]
-    assert not branch.branch_current
-    assert git(checkout, "rev-parse", "HEAD") == first
-    assert (checkout / "a").read_text() == "uncommitted host edits"
-    assert git(repository, "rev-parse", branch.ref) == second
-
-
-def test_fetch_preserves_locally_changed_branches(repository: Path, clone: Path) -> None:
-    commit(clone, "feature", {"a": "1"})
-    fetched(repository, clone)
+def test_fetch_leaves_a_colliding_host_branch_intact(repository: Path, clone: Path) -> None:
+    # An existing x branch blocks creating x/feature; the update fails without moving anything.
     host_main = git(repository, "rev-parse", "main")
-    git(repository, "branch", "--force", "x/feature", host_main)
-    tip = commit(clone, "feature", {"a": "2"})
-    assert not fetched(repository, clone)["feature"].branch_current
-    assert git(repository, "rev-parse", "x/feature") == host_main
-    assert git(repository, "rev-parse", f"{NAMESPACE}feature") == tip
-
-
-@pytest.mark.parametrize("collision", ["existing", "prefix", "symbolic"])
-def test_fetch_preserves_existing_host_refs_on_first_fetch(repository: Path, clone: Path, collision: str) -> None:
+    git(repository, "branch", "x")
     tip = commit(clone, "feature", {"a": "1"})
-    name = "x" if collision == "prefix" else "x/feature"
-    host_main = git(repository, "rev-parse", "main")
-    if collision == "symbolic":
-        git(repository, "symbolic-ref", f"refs/heads/{name}", "refs/heads/main")
-    else:
-        git(repository, "branch", name, host_main)
     branch = fetched(repository, clone)["feature"]
-    assert not branch.branch_current
-    assert git(repository, "rev-parse", f"refs/heads/{name}") == host_main
-    assert git(repository, "rev-parse", "main") == host_main
-    assert git(repository, "rev-parse", branch.ref) == tip
-    if collision == "symbolic":
-        assert git(repository, "symbolic-ref", f"refs/heads/{name}") == "refs/heads/main"
+    assert (branch.branch, branch.branch_current) == ("x/feature", False)
+    assert git(repository, "rev-parse", "x", branch.ref).split() == [host_main, tip]
 
 
 @pytest.mark.parametrize("existing", [False, True])

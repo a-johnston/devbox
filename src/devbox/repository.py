@@ -12,7 +12,7 @@ import os
 import shutil
 import subprocess
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from devbox.config import git, git_environment, git_output
@@ -32,6 +32,18 @@ class Fetched:
     # No local branch is published when all its commits are already in the host HEAD.
     branch: str | None
     branch_current: bool
+
+
+@dataclass(frozen=True)
+class Tip:
+    """A ref fetch copied from a clone, compared with the host by Git."""
+
+    ref: str
+    new: str
+    old: str | None  # Before this fetch.
+    commits: int  # Beyond the host HEAD.
+    descends: bool  # From old, so an earlier review still applies.
+    watched: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -169,20 +181,36 @@ class LocalBranches:
         return cls(commits, symbolic, checked_out(repository))
 
 
-def local_branch(repository: Path, name: str, new: str, old: str | None, local: LocalBranches) -> bool:
-    """Publish a fetched tip without moving checked-out or locally changed branches."""
-    ref = f"refs/heads/{name}"
+def publish(tip: Tip, namespace: str, prefix: str, local: LocalBranches) -> tuple[Fetched, str | None]:
+    """Decide a fetched tip's local branch without moving checked-out or locally changed branches.
+
+    Returns the Fetched to report if any move succeeds, and the commit the local branch must
+    still be at for fetch to move it (zeros: it must not exist), or None to leave it as it is.
+    """
+    # No local branch is published when all its commits are already in the host HEAD.
+    branch = f"{prefix}/{tip.ref.removeprefix(namespace)}" if tip.commits else None
+    current, expected = _branch_update(f"refs/heads/{branch}", tip, local) if branch else (False, None)
+    # Rewritten since the last fetch: an earlier review no longer applies.
+    return Fetched(tip.ref, tip.commits, not tip.descends, tip.watched, branch, current), expected
+
+
+def _branch_update(ref: str, tip: Tip, local: LocalBranches) -> tuple[bool, str | None]:
+    have = local.commits.get(ref)
     # Never follow a symbolic branch reference to some other host branch.
     if ref in local.symbolic:
-        return False
-    current = local.commits.get(ref)
-    if current == new:
-        return True
-    if (current is not None and current != old) or ref in local.checked_out:
-        return False
-    # Compare-and-swap: do not clobber a branch created or moved since we checked it.
-    # Ref collisions (e.g. an existing <instance> branch) also leave host refs intact.
-    return git_output(repository, "update-ref", "--no-deref", ref, new, current or "0" * len(new)) is not None
+        return False, None
+    if have == tip.new:
+        return True, None
+    if (have is not None and have != tip.old) or ref in local.checked_out:
+        return False, None
+    return True, have or "0" * len(tip.new)
+
+
+def _compare(repository: Path, head: str, ref: str, new: str, old: str | None, watched: Sequence[str]) -> Tip:
+    changed = git(repository, "diff", "--name-only", "-z", f"{head}...{new}", "--", *watched)
+    commits = int(git(repository, "rev-list", "--count", f"{head}..{new}"))
+    descends = old is None or old == new or git_output(repository, "merge-base", "--is-ancestor", old, new) is not None
+    return Tip(ref, new, old, commits, descends, tuple(changed.split("\0")[:-1]))
 
 
 def fetch(
@@ -212,26 +240,73 @@ def fetch(
     # Triple-dot diffs use each branch's merge base and exclude host-only changes.
     head = git(repository, "rev-parse", "--verify", "HEAD").strip()
     local = LocalBranches.read(repository)
-    fetched = []
+    result = []
     for ref, new in refs(repository, namespace).items():
-        old = before.get(ref)
-        changed = git(repository, "diff", "--name-only", "-z", f"{head}...{new}", "--", *watched)
-        commits = int(git(repository, "rev-list", "--count", f"{head}..{new}"))
-        branch = f"{branch_prefix}/{ref.removeprefix(namespace)}" if commits else None
-        fetched.append(
-            Fetched(
-                ref,
-                commits,
-                # Rewritten since the last fetch: an earlier review no longer applies.
-                old is not None
-                and old != new
-                and git_output(repository, "merge-base", "--is-ancestor", old, new) is None,
-                tuple(changed.split("\0")[:-1]),
-                branch,
-                branch is not None and local_branch(repository, branch, new, old, local),
-            )
+        fetched, expected = publish(
+            _compare(repository, head, ref, new, before.get(ref), watched), namespace, branch_prefix, local
         )
-    return fetched
+        # Compare-and-swap: do not clobber a branch created or moved since it was read.
+        # Ref collisions (e.g. an existing <instance> branch) also leave host refs intact.
+        if (
+            expected is not None
+            and git_output(repository, "update-ref", "--no-deref", f"refs/heads/{fetched.branch}", new, expected)
+            is None
+        ):
+            fetched = replace(fetched, branch_current=False)
+        result.append(fetched)
+    return result
+
+
+IN_PROGRESS = ("rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer")
+
+
+@dataclass(frozen=True)
+class HostCheckout:
+    """The primary checkout's state that decides whether a fetched branch can land."""
+
+    path: Path
+    busy: bool  # A Git operation such as a rebase is in progress.
+    head: str | None  # The checked-out ref, or None when detached.
+    dirty: bool
+    branches: LocalBranches
+    tip: str | None  # The fetched ref's commit.
+
+    @classmethod
+    def read(cls, repository: Path, ref: str) -> HostCheckout:
+        paths = git(
+            repository, "rev-parse", "--path-format=absolute", *(a for s in IN_PROGRESS for a in ("--git-path", s))
+        )
+        return cls(
+            repository,
+            any(Path(path).exists() for path in paths.splitlines()),
+            git_output(repository, "symbolic-ref", "--quiet", "HEAD"),
+            bool(git(repository, "status", "--porcelain", "--untracked-files=all").strip()),
+            LocalBranches.read(repository),
+            git_output(repository, "rev-parse", "--verify", "--quiet", ref),
+        )
+
+
+def landing_target(checkout: HostCheckout, fetched: Fetched) -> str:
+    """The branch a fetched branch lands on; refuses anything that could lose or stash work."""
+    branch = fetched.branch
+    if branch is None or not fetched.branch_current:
+        raise DevboxError("Cannot land: the fetched local branch is unavailable or changed locally")
+    source = f"refs/heads/{branch}"
+    if checkout.busy:
+        raise DevboxError(f"Cannot land in {checkout.path}: a Git operation is already in progress")
+    if checkout.head is None or not checkout.head.startswith("refs/heads/"):
+        raise DevboxError(f"Cannot land in {checkout.path}: check out a target branch first")
+    if checkout.head == source:
+        raise DevboxError("Cannot land a branch onto itself; check out the target branch first")
+    if checkout.dirty:
+        raise DevboxError(f"Cannot land in {checkout.path}: the host checkout must be clean")
+    # Recheck after selection: fetch must not have left a stale or locally edited branch.
+    if source in checkout.branches.symbolic or checkout.branches.commits.get(source) != checkout.tip:
+        raise DevboxError(f"Cannot land: {branch!r} no longer matches the fetched branch")
+    # Even an unchanged branch cannot be rebased while checked out in another worktree.
+    if source in checkout.branches.checked_out:
+        raise DevboxError(f"Cannot land: {branch!r} is checked out in a worktree")
+    return checkout.head.removeprefix("refs/heads/")
 
 
 def land(repository: Path, fetched: Fetched) -> Landed:
@@ -240,47 +315,24 @@ def land(repository: Path, fetched: Fetched) -> Landed:
     A failed rebase deliberately stays in progress in the host checkout. Never run Git
     in the instance clone, reset a locally modified branch, or stash the user's work.
     """
-    branch = fetched.branch
-    if branch is None or not fetched.branch_current:
-        raise DevboxError("Cannot land: the fetched local branch is unavailable or changed locally")
-    source = f"refs/heads/{branch}"
-    states = ("rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer")
-    paths = git(repository, "rev-parse", "--path-format=absolute", *(a for s in states for a in ("--git-path", s)))
-    if any(Path(path).exists() for path in paths.splitlines()):
-        raise DevboxError(f"Cannot land in {repository}: a Git operation is already in progress")
-    target = git_output(repository, "symbolic-ref", "--quiet", "HEAD")
-    if target is None or not target.startswith("refs/heads/"):
-        raise DevboxError(f"Cannot land in {repository}: check out a target branch first")
-    if target == source:
-        raise DevboxError("Cannot land a branch onto itself; check out the target branch first")
-    if git(repository, "status", "--porcelain", "--untracked-files=all").strip():
-        raise DevboxError(f"Cannot land in {repository}: the host checkout must be clean")
-    # Recheck after selection: fetch must not have left a stale or locally edited branch.
-    tip = git(repository, "rev-parse", "--verify", fetched.ref).strip()
-    if (
-        git_output(repository, "symbolic-ref", "--quiet", source) is not None
-        or git_output(repository, "show-ref", "--verify", "--hash", source) != tip
-    ):
-        raise DevboxError(f"Cannot land: {branch!r} no longer matches the fetched branch")
-    # Even an unchanged branch cannot be rebased while checked out in another worktree.
-    if source in checked_out(repository):
-        raise DevboxError(f"Cannot land: {branch!r} is checked out in a worktree")
-    target_name = target.removeprefix("refs/heads/")
+    checkout = HostCheckout.read(repository, fetched.ref)
+    target = landing_target(checkout, fetched)
+    branch = str(fetched.branch)
     try:
-        git(repository, "rebase", "--no-autostash", "--no-update-refs", target, branch)
+        git(repository, "rebase", "--no-autostash", "--no-update-refs", f"refs/heads/{target}", branch)
     except DevboxError as exc:
         raise DevboxError(
             f"{exc}\nRebase failed in {repository}; any rebase state has been left intact. "
-            f"Target branch: {target_name!r}; local branch: {branch!r}. "
+            f"Target branch: {target!r}; local branch: {branch!r}. "
             "Resolve and run git rebase --continue, then check out the target branch "
             "and git merge --ff-only the rebased local branch; or git rebase --abort, "
             "check out the target branch and devbox sync it to fix it in the instance."
         ) from exc
-    git(repository, "checkout", "--quiet", target_name)
-    git(repository, "merge", "--ff-only", "--no-autostash", source)
-    rebased = git(repository, "rev-parse", "--verify", source).strip()
+    git(repository, "checkout", "--quiet", target)
+    git(repository, "merge", "--ff-only", "--no-autostash", f"refs/heads/{branch}")
+    rebased = git(repository, "rev-parse", "--verify", f"refs/heads/{branch}").strip()
     git(repository, "branch", "--delete", "--", branch)
-    return Landed(target_name, tip, rebased)
+    return Landed(target, str(checkout.tip), rebased)
 
 
 def show_diff(repository: Path, ref: str, *options: str) -> None:

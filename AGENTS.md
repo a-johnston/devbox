@@ -2,23 +2,16 @@
 
 This project is designed to layer project-specific container setup with devbox-managed coding harnesses and
 these layers must remain independent. Project manifests own workspace mounts, generated directories and build
-dependencies. Harness profiles own installation, selected configuration and session conventions.
-
-## Code and test design
-
-Give each behavior one owner. The layer that decides an operation performs all of it: `App` methods
-carry out whole operations (landing includes syncing instances), while the CLI selects inputs and
-prints results. Do not add a public method just so a caller can sequence a step that belongs to the
-same operation, or move behavior into the CLI to keep printing there; return the results instead.
+dependencies. Harness profiles own installation, selected configuration and session conventions. Within the
+codebase, each layer should also fully own its functionality. For example, core functionality of the `App`
+layer should be owned entirely by `App` instead of requiring the correct sequence of calls to be made from
+the CLI layer.
 
 Test each unit through its inputs and outputs: `repository` functions against real repositories,
 guest scripts by running them directly, `App` methods with `FakeEngine`/`FakeGit` and stubs for the
 units they call, and CLI handlers with stubbed `App` results. A test of a composition checks that it
 calls its collaborators with the right arguments and handles their results and failures; it does
-not re-exercise behavior their own tests cover. Keep end-to-end tests few and deliberate: per
-workflow, one base case or one compound case that exercises the real pieces together, chosen to
-minimize setup and subprocesses. Prefer copies of the session template repository over creating
-repositories or instances with real Git.
+not re-exercise behavior their own tests cover. Prefer fast small unit tests over slower end-to-end tests.
 
 ## Tooling
 

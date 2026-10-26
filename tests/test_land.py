@@ -1,13 +1,17 @@
+import json
+import subprocess
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 import devbox.repository
 from devbox import cli
-from devbox.app import App
+from devbox.app import App, Landing
 from devbox.cli import dispatch, parser
 from devbox.config import Harness, Project
+from devbox.engine import Container
 from devbox.errors import DevboxError
 from devbox.repository import Fetched, Landed, land, refs
 from devbox.state import Store
@@ -156,7 +160,7 @@ def test_land_requires_ff_merge(repository: Path, monkeypatch: pytest.MonkeyPatc
     assert not (repository / "guest").exists()
 
 
-# Selection: which fetched branch the CLI hands to App.land.
+# CLI: which fetched branch is handed to App.land, and what is printed.
 
 
 def fetched(id: str, name: str, commits: int = 1) -> Fetched:
@@ -176,15 +180,15 @@ def selecting(project: Project, harness: Harness, tmp_path: Path, monkeypatch: p
 def landings(app: App, monkeypatch: pytest.MonkeyPatch) -> list[Fetched]:
     landed: list[Fetched] = []
 
-    def land(instance: str, branch: Fetched) -> Landed:
+    def land(instance: str, branch: Fetched) -> Landing:
         landed.append(branch)
-        return Landed("main", "old", "new")
+        return Landing(Landed("main", "old", "new"), [(instance, ["main: fast-forwarded", "\x1b[2J"])])
 
     monkeypatch.setattr(app, "land", land)
     return landed
 
 
-def test_land_uses_instance_and_branch_pickers(
+def test_land_uses_pickers_and_prints_the_landing(
     selecting: tuple[App, str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     app, id = selecting
@@ -200,16 +204,21 @@ def test_land_uses_instance_and_branch_pickers(
     dispatch(parser().parse_args(["land"]), app)
     assert prompts == ["Instances", "Branches"]
     assert [branch.ref for branch in landed] == [f"refs/devbox/{id}/two"]
-    assert f"Landed {id.removeprefix('devbox-')}/two onto main." in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert f"Landed {id.removeprefix('devbox-')}/two onto main.\n" in out
+    assert f"{id}: main: fast-forwarded\n{id}: \\x1b[2J\n" in out
 
 
-def test_land_selects_named_branches(selecting: tuple[App, str], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_land_selects_named_branches_without_a_picker(
+    selecting: tuple[App, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     app, id = selecting
     landed = landings(app, monkeypatch)
+    monkeypatch.setattr(cli, "select", lambda *a: pytest.fail("no picker needed"))
     with pytest.raises(DevboxError, match="matches 0 branches"):
         dispatch(parser().parse_args(["land", id, "missing"]), app)
     assert not landed
-    dispatch(parser().parse_args(["land", id, "one"]), app)
+    dispatch(parser().parse_args(["land", id.removeprefix("devbox-"), "one"]), app)
     assert [branch.ref for branch in landed] == [f"refs/devbox/{id}/one"]
 
 
@@ -222,55 +231,171 @@ def test_land_without_new_work_fails(selecting: tuple[App, str], monkeypatch: py
         dispatch(parser().parse_args(["land", id]), app)
 
 
-# App composition with real Git: fetch, land in the primary checkout, then sync.
+# App.land: land in the instance's primary checkout, then sync every instance of its project.
+
+
+def running(id: str) -> Container:
+    return Container(id, "running", "project", "pi", "now")
 
 
 @pytest.fixture
-def instance(project: Project, harness: Harness, tmp_path: Path) -> tuple[App, str, Path]:
-    git(project.root, "config", "user.name", "Test")
-    git(project.root, "config", "user.email", "test@example.invalid")
-    app = App(FakeEngine(), Store(tmp_path / "state"))
-    id = app.new(project, harness, no_config=True)
-    return app, id, app.store.directory(id) / "repo"
+def project_instances(
+    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[App, list[str], list[tuple], list[tuple]]:
+    """Three instances of the project, the first started from a worktree; records the
+    repository landings and App syncs it would run."""
+    engine = FakeEngine()
+    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    worktree = project.root / ".worktrees/feature"
+    worktree.mkdir(parents=True)
+    ids = [
+        app.new(replace(project, checkout=worktree, cwd=worktree), harness, no_config=True),
+        *(app.new(project, harness, no_config=True) for _ in range(2)),
+    ]
+    elsewhere, directory = app.store.create()
+    (directory / "metadata.json").write_text(json.dumps({"root": str(tmp_path / "elsewhere")}))
+    first, second, idle = ids
+    engine.rows = [
+        running(first),
+        running(second),
+        replace(running(idle), state="stopped"),
+        running(elsewhere),
+        running("devbox-unrelated"),  # No saved state: not one of ours.
+    ]
+    landed: list[tuple] = []
+    synced: list[tuple] = []
+
+    def land(root: Path, branch: Fetched) -> Landed:
+        landed.append((root, branch))
+        return Landed("main", "fetched", "rebased")
+
+    def sync(container: Container, branches: list[str], rewrites=()) -> list[str]:
+        synced.append((container.id, branches, list(rewrites)))
+        return [f"{container.id} synced"]
+
+    monkeypatch.setattr(devbox.repository, "land", land)
+    monkeypatch.setattr(app, "sync", sync)
+    return app, ids, landed, synced
 
 
-def test_land_fetches_and_fast_forwards_without_a_picker(
+def test_app_land_lands_in_the_primary_checkout_then_syncs_the_project(
+    project: Project, project_instances: tuple[App, list[str], list[tuple], list[tuple]]
+) -> None:
+    app, (first, second, idle), landed, synced = project_instances
+    branch = fetched(first, "feature/x")
+    landing = app.land(first, branch)
+    assert landed == [(project.root, branch)]
+    assert landing.landed == Landed("main", "fetched", "rebased")
+    # Only the landing instance's branch moves to the rebased commits.
+    assert synced == [
+        (first, ["main"], [("feature/x", "fetched", "rebased")]),
+        (second, ["main"], []),
+    ]
+    assert landing.synced == [
+        (first, [f"{first} synced"]),
+        (second, [f"{second} synced"]),
+        (idle, ["stopped, not synced; run devbox sync later"]),
+    ]
+
+
+def test_app_land_reports_sync_failures_without_failing(
+    project_instances: tuple[App, list[str], list[tuple], list[tuple]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, (first, second, _), _, synced = project_instances
+    recorded = app.sync
+
+    def flaky(container: Container, branches: list[str], rewrites=()) -> list[str]:
+        if container.id == first:
+            raise DevboxError("container went away")
+        return recorded(container, branches, rewrites)
+
+    monkeypatch.setattr(app, "sync", flaky)
+    assert app.land(first, fetched(first, "feature")).synced[:2] == [
+        (first, ["not synced: container went away"]),
+        (second, [f"{second} synced"]),
+    ]
+
+    def stopped() -> None:
+        raise DevboxError("engine stopped")
+
+    monkeypatch.setattr(app.engine, "require_running", stopped)
+    assert app.land(first, fetched(first, "feature")).synced == [(first, ["not synced: engine stopped"])]
+
+
+def test_app_land_failure_syncs_nothing(
+    project_instances: tuple[App, list[str], list[tuple], list[tuple]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, (first, *_), _, synced = project_instances
+
+    def conflict(root: Path, branch: Fetched) -> Landed:
+        raise DevboxError("Rebase failed")
+
+    monkeypatch.setattr(devbox.repository, "land", conflict)
+    with pytest.raises(DevboxError, match="Rebase failed"):
+        app.land(first, fetched(first, "feature"))
+    assert synced == []
+
+
+# End to end with real Git: one compound landing that rebases, then syncs two running instances.
+
+
+class Guest(FakeEngine):
+    """Runs piped exec scripts locally, with the guest checkout path mapped to the clone."""
+
+    def __init__(self, store: Store) -> None:
+        super().__init__()
+        self.store = store
+
+    def exec(self, id: str, *args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        result = super().exec(id, *args, **kwargs)
+        if kwargs.get("input") is None:
+            return result
+        checkout = self.store.metadata(id)["workspace"]
+        clone = str(self.store.directory(id) / "repo")
+        command = [clone if arg == checkout else arg for arg in args]
+        return subprocess.run(command, input=kwargs["input"], text=True, check=True, capture_output=True)
+
+
+def test_land_rebases_and_syncs_running_instances(
     project: Project,
-    instance: tuple[App, str, Path],
-    monkeypatch: pytest.MonkeyPatch,
+    harness: Harness,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    app, id, clone = instance
-    tip = commit(clone, "feature/x", {"new": "instance work"})
+    git(project.root, "config", "user.name", "Test")
+    git(project.root, "config", "user.email", "test@example.invalid")
+    store = Store(tmp_path / "state")
+    engine = Guest(store)
+    app = App(engine, store)
+    first, second = (app.new(project, harness, no_config=True) for _ in range(2))
+    engine.rows = [running(first), running(second)]
+    clone, other = (store.directory(id) / "repo" for id in (first, second))
+    git(other, "switch", "-qc", "scratch")
     # Landing never runs Git in the clone, so its hooks never run on the host.
     marker = tmp_path / "hook-ran"
     hook = clone / ".git/hooks/pre-rebase"
     hook.write_text(f'#!/bin/sh\ntouch "{marker}"\n')
     hook.chmod(0o755)
+
+    # Another change lands first, so the instance's branch is rebased by the landing.
+    git(project.root, "commit", "--allow-empty", "-qm", "upstream")
+    upstream = git(project.root, "rev-parse", "main")
+    tip = commit(clone, "feature", {"a": "1"})
     monkeypatch.chdir(tmp_path)  # Selection, not cwd, determines the repository.
-    monkeypatch.setattr(cli, "select", lambda *a: pytest.fail("no picker needed"))
-    dispatch(parser().parse_args(["land", id.removeprefix("devbox-")]), app)
-    assert git(project.root, "rev-parse", "main") == tip
-    assert git(project.root, "branch", "--show-current") == "main"
-    assert git(project.root, "status", "--porcelain") == ""
-    assert refs(project.root, "refs/heads/") == {"refs/heads/main": tip}
-    assert git(project.root, "rev-parse", f"refs/devbox/{id}/feature/x") == tip
-    assert git(clone, "rev-parse", "feature/x") == tip
-    assert f"Landed {id.removeprefix('devbox-')}/feature/x onto main." in capsys.readouterr().out
+    dispatch(parser().parse_args(["land", first.removeprefix("devbox-")]), app)
+
+    main = git(project.root, "rev-parse", "main")
+    assert main != tip and git(project.root, "rev-parse", "main~1") == upstream
+    assert (git(project.root, "branch", "--show-current"), git(project.root, "status", "--porcelain")) == ("main", "")
+    assert refs(project.root, "refs/heads/") == {"refs/heads/main": main}
+    assert git(project.root, "rev-parse", f"refs/devbox/{first}/feature") == tip
+    assert git(clone, "rev-parse", "feature", "main").split() == [main, main]  # Rewritten, then fast-forwarded.
+    assert git(other, "rev-parse", "main") == main
+    assert git(other, "symbolic-ref", "--short", "HEAD") == "scratch"
     assert not marker.exists()
-
-
-def test_land_from_a_worktree_targets_primary_checkout(project: Project, harness: Harness, tmp_path: Path) -> None:
-    (project.root / ".git/info/exclude").write_text(".worktrees/\n")
-    tree = project.root / ".worktrees/feature"
-    git(project.root, "worktree", "add", "-q", "-b", "feature", str(tree))
-    app = App(FakeEngine(), Store(tmp_path / "state"))
-    id = app.new(Project.discover(tree), harness, no_config=True)
-    clone = app.store.directory(id) / "repo"
-    git(clone, "checkout", "-b", "main")
-    tip = commit(clone, "next", {"guest": "new"})
-    dispatch(parser().parse_args(["land", id]), app)
-    assert git(project.root, "rev-parse", "main") == tip
-    assert git(tree, "branch", "--show-current") == "feature"
-    assert not (tree / "guest").exists()
+    out = capsys.readouterr().out
+    assert f"Landed {first.removeprefix('devbox-')}/feature onto main." in out
+    assert f"{first}: feature: moved to the rebased commits" in out
+    assert f"{first}: main: fast-forwarded" in out
+    assert f"{second}: main: fast-forwarded" in out

@@ -423,9 +423,9 @@ def _land(app: App, *, id: str | None, branch: str | None) -> None:
         return
     selected = _selected_branch(instance, fetched, branch)
     print(fetched_label(selected), flush=True)
-    landed = app.land(instance, selected)
-    print(f"Landed {printable(selected.branch or selected.ref)} onto {printable(landed.target)}.")
-    for container, lines in app.sync_landed(instance, selected, landed):
+    landing = app.land(instance, selected)
+    print(f"Landed {printable(selected.branch or selected.ref)} onto {printable(landing.landed.target)}.")
+    for container, lines in landing.synced:
         for line in lines:
             print(f"{container}: {printable(line)}")
 

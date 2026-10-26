@@ -10,7 +10,7 @@ from devbox.config import Harness, Project
 from devbox.errors import DevboxError
 from devbox.repository import Fetched, fetch, refs
 from devbox.state import Store
-from tests.fakes import FakeEngine
+from tests.fakes import FakeEngine, FakeGit
 from tests.repos import commit, git
 
 NAMESPACE = "refs/devbox/devbox-x/"
@@ -229,48 +229,49 @@ def test_fetch_refuses_a_redirected_git_directory(repository: Path, tmp_path: Pa
         fetch(repository, directory / "repo", NAMESPACE, (), branch_prefix="x")
 
 
-# App.fetch composition: which refs and paths a real instance is fetched under.
+# App.fetch: which repository, clone, refs and paths an instance is fetched with.
 
 
-@pytest.fixture
-def instance(project: Project, harness: Harness, tmp_path: Path) -> tuple[App, str, Path]:
-    app = App(FakeEngine(), Store(tmp_path / "state"))
+def fetch_arguments(app: App, id: str, monkeypatch: pytest.MonkeyPatch) -> tuple:
+    calls = []
+
+    def record(*args: object, **kwargs: object) -> list[Fetched]:
+        calls.append((*args, kwargs))
+        return []
+
+    monkeypatch.setattr(devbox.repository, "fetch", record)
+    app.fetch(id)
+    (call,) = calls
+    return call
+
+
+def test_app_fetch_watches_paths_from_the_host_manifest(
+    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())
     id = app.new(project, harness, no_config=True)
-    return app, id, app.store.directory(id) / "repo"
-
-
-def test_app_fetch_watches_paths_from_the_host_manifest(project: Project, instance: tuple[App, str, Path]) -> None:
-    app, id, clone = instance
-    # Watched paths come from the host manifest; the clone's copy cannot remove them.
+    # Watched paths come from the host manifest, never the clone's copy.
     with (project.root / ".devbox.toml").open("a") as stream:
         stream.write('[review]\nwatch = ["hooks/**/*.sh"]\n')
-    commit(
-        clone,
-        "risky",
-        {".devbox.toml": "version = 1\n", ".devbox/extra": "", "hooks/a/run.sh": "", "x.sh": ""},
+    assert fetch_arguments(app, id, monkeypatch) == (
+        project.root,
+        app.store.directory(id) / "repo",
+        f"refs/devbox/{id}/",
+        [":(literal).devbox.toml", ":(literal).devbox/Containerfile", ":(literal).devbox", ":(glob)hooks/**/*.sh"],
+        {"branch_prefix": id.removeprefix("devbox-")},
     )
-    result = {branch.ref: branch for branch in app.fetch(id)}
-    assert set(result) == {f"refs/devbox/{id}/main", f"refs/devbox/{id}/risky"}
-    risky = result[f"refs/devbox/{id}/risky"]
-    assert risky.watched == (".devbox.toml", ".devbox/extra", "hooks/a/run.sh")
-    assert risky.branch == f"{id.removeprefix('devbox-')}/risky"
 
 
 def test_app_fetch_from_a_worktree_watches_repository_relative_paths(
-    project: Project, harness: Harness, tmp_path: Path
+    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tree = project.root / ".worktrees/feature"
     git(project.root, "worktree", "add", "-q", "-b", "feature", str(tree))
-    app = App(FakeEngine(), Store(tmp_path / "state"))
+    app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())
     id = app.new(Project.discover(tree), harness, no_config=True)
-    clone = app.store.directory(id) / "repo"
-    git(clone, "checkout", "-q", "-b", "next")
-    (clone / ".devbox/Containerfile").write_text("FROM other\n")
-    git(clone, "commit", "-qam", "change")
-    (branch,) = [b for b in app.fetch(id) if b.ref.endswith("/next")]
-    assert branch.watched == (".devbox/Containerfile",)
-    assert branch.branch_current
-    assert git(project.root, "rev-parse", f"refs/heads/{branch.branch}") == git(clone, "rev-parse", "HEAD")
+    root, _, _, watched, _ = fetch_arguments(app, id, monkeypatch)
+    assert root == project.root
+    assert watched == [":(literal).devbox.toml", ":(literal).devbox/Containerfile", ":(literal).devbox"]
 
 
 def test_printable_escapes_terminal_controls() -> None:

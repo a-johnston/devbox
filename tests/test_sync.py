@@ -1,13 +1,12 @@
+import json
 import subprocess
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from devbox.app import App
-from devbox.cli import dispatch, parser
 from devbox.config import Harness, Project
 from devbox.engine import Container
 from devbox.errors import DevboxError
@@ -15,23 +14,6 @@ from devbox.repository import RECEIVE, HostGit, Started, bundle
 from devbox.state import Session, Store
 from tests.fakes import BASE, FakeEngine, FakeGit
 from tests.repos import commit, git
-
-
-class Guest(FakeEngine):
-    """Runs piped exec scripts locally, with the guest checkout path mapped to the clone."""
-
-    def __init__(self, store: Store) -> None:
-        super().__init__()
-        self.store = store
-
-    def exec(self, id: str, *args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        result = super().exec(id, *args, **kwargs)
-        if kwargs.get("input") is None:
-            return result
-        checkout = self.store.metadata(id)["workspace"]
-        clone = str(self.store.directory(id) / "repo")
-        command = [clone if arg == checkout else arg for arg in args]
-        return subprocess.run(command, input=kwargs["input"], text=True, check=True, capture_output=True)
 
 
 def running(id: str) -> Container:
@@ -207,83 +189,32 @@ def test_sync_refusals(project: Project, harness: Harness, tmp_path: Path) -> No
         app.sync(running(detached), [])
 
 
-def test_sync_delivers_the_starting_branch_to_the_instance(project: Project, harness: Harness, tmp_path: Path) -> None:
-    store = Store(tmp_path / "state")
-    app = App(Guest(store), store)
-    id = app.new(project, harness, no_config=True)
-    clone = store.directory(id) / "repo"
-    assert app.sync(running(id), []) == ["main: up to date"]
-    assert git(clone, "rev-parse", "host/main") == store.metadata(id)["base"]
-    tip = advance(project.root)
-    git(project.root, "branch", "other")
-    assert app.sync(running(id), ["other"]) == ["other: delivered as host/other (no local branch)"]
-    assert app.sync(running(id), []) == ["main: fast-forwarded"]
-    assert git(clone, "rev-parse", "main") == tip
-
-
-def test_land_syncs_every_instance_of_the_project(
-    project: Project,
-    harness: Harness,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
+def test_sync_bundles_host_branches_for_the_guest_script(
+    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    git(project.root, "config", "user.name", "Test")
-    git(project.root, "config", "user.email", "test@example.invalid")
-    store = Store(tmp_path / "state")
-    engine = Guest(store)
-    app = App(engine, store)
-    first = app.new(project, harness, no_config=True)
-    second = app.new(project, harness, no_config=True)
-    idle = app.new(project, harness, no_config=True)
-    engine.rows = [
-        running(first),
-        running(second),
-        replace(running(idle), state="stopped"),
-        running("devbox-unrelated"),
-    ]
-    clone = store.directory(first) / "repo"
-    other = store.directory(second) / "repo"
-    git(other, "switch", "-qc", "scratch")
-
-    # Another change lands first, so the first instance's branch is rebased by the landing.
-    landed = advance(project.root)
-    tip = commit(clone, "feature", {"a": "1"})
-    dispatch(parser().parse_args(["land", first]), app)
-    main = git(project.root, "rev-parse", "main")
-    assert main != tip and git(project.root, "rev-parse", "main~1") == landed
-    assert git(clone, "rev-parse", "feature") == main  # Rewritten to the rebased commit.
-    assert git(clone, "rev-parse", "main") == main
-    assert git(other, "rev-parse", "main") == main
-    assert git(other, "symbolic-ref", "--short", "HEAD") == "scratch"
-    out = capsys.readouterr().out
-    assert f"{first}: feature: moved to the rebased commits" in out
-    assert f"{first}: main: fast-forwarded" in out
-    assert f"{second}: main: fast-forwarded" in out
-    assert f"{idle}: stopped, not synced" in out
-    assert "unrelated" not in out
-    assert git(store.directory(idle) / "repo", "rev-parse", "main") != main
-
-
-def test_land_sync_failure_does_not_undo_the_landing(
-    project: Project,
-    harness: Harness,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    git(project.root, "config", "user.name", "Test")
-    git(project.root, "config", "user.email", "test@example.invalid")
-    store = Store(tmp_path / "state")
-    engine = Guest(store)
-    app = App(engine, store)
+    engine = FakeEngine()
+    app = App(engine, Store(tmp_path / "state"), FakeGit())
     id = app.new(project, harness, no_config=True)
-    engine.rows = [running(id)]
-    tip = commit(store.directory(id) / "repo", "feature", {"a": "1"})
+    bundled = []
 
-    def broken(*args: Any, **kwargs: Any) -> None:
-        raise DevboxError("container went away")
+    def bundle(root: Path, branches: list[str], base: str) -> str:
+        bundled.append((root, branches, base))
+        return "BUNDLE"
 
-    monkeypatch.setattr(engine, "exec", broken)
-    dispatch(parser().parse_args(["land", id]), app)
-    assert git(project.root, "rev-parse", "main") == tip
-    assert f"{id}: not synced: container went away" in capsys.readouterr().out
+    monkeypatch.setattr("devbox.repository.bundle", bundle)
+    engine.execs.clear()
+    engine.stdout = "one\ntwo\n"
+    # Rewrites go first: a rebased branch must not be reported as diverged from its target.
+    assert app.sync(running(id), [], [("feature", "old", "new")]) == ["one", "two"]
+    assert bundled == [(project.root, ["main"], BASE)]  # Defaults to the branch the instance started from.
+    (request,) = engine.execs
+    assert request.args == ("sh", "-c", RECEIVE, "sh", str(project.workspace), "rewrite:feature:old:new", "ff:main")
+    assert request.input == "BUNDLE"
+
+    # Instances created before the workspace move mount their clone at the host checkout.
+    metadata = app.store.metadata(id)
+    del metadata["workspace"]
+    (app.store.directory(id) / "metadata.json").write_text(json.dumps(metadata))
+    app.sync(running(id), ["release", "main"])
+    assert bundled[-1] == (project.root, ["release", "main"], BASE)
+    assert engine.execs[-1].args[4:] == (metadata["checkout"], "ff:release", "ff:main")

@@ -12,7 +12,7 @@ import shutil
 import tempfile
 import time
 from collections.abc import Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -120,6 +120,13 @@ def containerfile_base(file: Path) -> str:
             if len(args) == 3 and args[1].upper() == "AS":
                 stages[args[2]] = base
     return "" if "$" in base or base == "scratch" else base
+
+
+@dataclass(frozen=True)
+class Landing:
+    landed: repository.Landed
+    # Per instance of the project: its sync report, or why it was not synced.
+    synced: list[tuple[str, list[str]]]
 
 
 class App:
@@ -501,20 +508,20 @@ class App:
         metadata = self.store.metadata(id)
         repository.show_diff(Path(metadata["root"]), ref, *options)
 
-    def land(self, id: str, branch: repository.Fetched) -> repository.Landed:
-        """Land a fetched branch in the instance's host repository's primary checkout."""
-        metadata = self.store.metadata(id)
-        return repository.land(Path(metadata["root"]), branch)
+    def land(self, id: str, branch: repository.Fetched) -> Landing:
+        """Land a fetched branch in the instance's host repository's primary checkout, then
+        sync the landed target to every instance of the project.
 
-    def sync_landed(
-        self, id: str, fetched: repository.Fetched, landed: repository.Landed
-    ) -> list[tuple[str, list[str]]]:
-        """Sync the landed target to every instance of the project; never fails the landing.
-
-        The landing instance's own branch also moves to its rebased commits, so its history
-        matches what was landed. Returns a report per instance.
+        A failed sync never fails the landing. The landing instance's own branch also moves
+        to its rebased commits, so its history matches what was landed.
         """
         root = self.store.metadata(id)["root"]
+        landed = repository.land(Path(root), branch)
+        return Landing(landed, self._sync_landed(id, root, branch, landed))
+
+    def _sync_landed(
+        self, id: str, root: str, fetched: repository.Fetched, landed: repository.Landed
+    ) -> list[tuple[str, list[str]]]:
         branch = fetched.ref.removeprefix(f"refs/devbox/{id}/")
         try:
             self.engine.require_running()

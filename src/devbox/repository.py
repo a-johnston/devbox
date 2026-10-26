@@ -149,8 +149,9 @@ class HostGit:
         return identity(directory)
 
 
-def refs(repository: Path, namespace: str) -> dict[str, str]:
-    output = git(repository, "for-each-ref", "--format=%(refname) %(objectname)", namespace)
+def refs(repository: Path, *patterns: str) -> dict[str, str]:
+    """Refs matching for-each-ref patterns and options, with their objects."""
+    output = git(repository, "for-each-ref", "--format=%(refname) %(objectname)", *patterns)
     return dict(line.split(" ", 1) for line in output.splitlines())
 
 
@@ -341,36 +342,62 @@ def show_diff(repository: Path, ref: str, *options: str) -> None:
     os.execvpe("git", argv, git_environment())
 
 
-def bundle(repository: Path, branches: Sequence[str], base: str) -> str:
-    """Base64 bundle of host branches; omits history the clone already has from base."""
+@dataclass(frozen=True)
+class Delivery:
+    """Host branches for a clone that already has base and its history."""
+
+    # Base64 bundle of the branches with commits beyond base; empty when there are none.
+    data: str
+    # The other branches, by name: their commits are already in base's history.
+    known: dict[str, str]
+
+
+def bundle(repository: Path, branches: Sequence[str], base: str) -> Delivery:
+    """Bundle host branches, omitting history the clone already has from base."""
     names = [f"refs/heads/{branch}" for branch in branches]
+    tips = refs(repository, *names)
     for name in names:
-        if git_output(repository, "show-ref", "--verify", "--quiet", name) is None:
+        if name not in tips:
             raise DevboxError(f"No branch {name.removeprefix('refs/heads/')} in {repository}")
-    # Git refuses an empty bundle, so exclude base only when something lies beyond it.
-    new = int(git(repository, "rev-list", "--count", *names, f"^{base}"))
+    # A bundle that excludes base drops refs at or behind it, so those are delivered by name.
+    merged = refs(repository, f"--merged={base}", *names)
+    known = {name.removeprefix("refs/heads/"): tips[name] for name in names if name in merged}
+    beyond = [name for name in names if name not in merged]
+    if not beyond:
+        return Delivery("", known)
     result = subprocess.run(
-        ["git", "-C", str(repository), "bundle", "create", "--quiet", "-", *names] + ([f"^{base}"] if new else []),
+        ["git", "-C", str(repository), "bundle", "create", "--quiet", "-", *beyond, f"^{base}"],
         capture_output=True,
         check=False,
         env=git_environment(),
     )
     if result.returncode:
         raise DevboxError(f"git bundle failed: {result.stderr.decode(errors='replace').strip()}")
-    return base64.b64encode(result.stdout).decode()
+    return Delivery(base64.b64encode(result.stdout).decode(), known)
 
 
-# Runs in the guest as the agent: unpack the bundle on stdin into host/* refs, then bring local
-# branches in step where that cannot lose work. Arguments: the checkout, then "ff:<branch>"
-# (fast-forward a local branch to host/<branch>) and "rewrite:<branch>:<old>:<new>" (replace
-# <branch> by its rebased <new> tip, only if it is still at <old>). A checked-out branch moves
-# only when the tree has no uncommitted changes to tracked files and no Git operation is under
-# way. One line is reported per spec; anything not moved is left alone, with the reason.
+def receive_specs(
+    delivery: Delivery, branches: Sequence[str], rewrites: Sequence[tuple[str, str, str]] = ()
+) -> list[str]:
+    """RECEIVE's arguments after the checkout: deliver, then rewrite, then fast-forward."""
+    specs = [f"host:{name}:{commit}" for name, commit in delivery.known.items()]
+    # Rewrites first: a rebased branch must not be reported as diverged from its target.
+    specs += [f"rewrite:{name}:{old}:{new}" for name, old, new in rewrites]
+    return specs + [f"ff:{branch}" for branch in branches]
+
+
+# Runs in the guest as the agent: unpack the bundle on stdin (if any) into host/* refs, then bring
+# local branches in step where that cannot lose work. Arguments: the checkout, then
+# "host:<branch>:<commit>" (set host/<branch> to a commit the clone already has; reports nothing),
+# "ff:<branch>" (fast-forward a local branch to host/<branch>) and "rewrite:<branch>:<old>:<new>"
+# (replace <branch> by its rebased <new> tip, only if it is still at <old>). A checked-out branch
+# moves only when the tree has no uncommitted changes to tracked files and no Git operation is
+# under way. One line is reported per ff or rewrite; anything not moved is left alone, with the reason.
 RECEIVE = f"""
 c=$1; shift
-b=$(mktemp) && base64 -d > "$b" && git -C "$c" fetch --quiet --no-tags "$b" \
-    "+refs/heads/*:{SYNCED}*"
-s=$?; rm -f "$b"; [ $s -eq 0 ] || exit $s
+b=$(mktemp) && base64 -d > "$b" || exit 1
+s=0; [ -s "$b" ] && {{ git -C "$c" fetch --quiet --no-tags "$b" "+refs/heads/*:{SYNCED}*"; s=$?; }}
+rm -f "$b"; [ $s -eq 0 ] || exit $s
 cd "$c" || exit 1
 
 move() {{ # branch old new description
@@ -419,6 +446,8 @@ rewrite() {{ # branch expected-old new
 
 for spec; do
     case $spec in
+        # Fails, leaving host/<branch> unset, if the clone no longer has the commit.
+        host:*) rest=${{spec#host:}}; git update-ref "{SYNCED}${{rest%%:*}}" "${{rest#*:}}" 2>/dev/null ;;
         ff:*) ff "${{spec#ff:}}" ;;
         rewrite:*)
             rest=${{spec#rewrite:}}; name=${{rest%%:*}}; rest=${{rest#*:}}

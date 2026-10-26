@@ -564,10 +564,7 @@ class App:
         branches = branches or ([metadata["branch"]] if metadata.get("branch") else [])
         if not branches:
             raise DevboxError(f"{container.id} started from a detached HEAD; name branches to sync")
-        data = repository.bundle(Path(metadata["root"]), branches, metadata["base"])
-        # Rewrites first: a rebased branch must not be reported as diverged from its target.
-        specs = [f"rewrite:{name}:{old}:{new}" for name, old, new in rewrites]
-        specs += [f"ff:{branch}" for branch in branches]
+        delivery = repository.bundle(Path(metadata["root"]), branches, metadata["base"])
         result = self.engine.exec(
             container.id,
             "sh",
@@ -576,8 +573,8 @@ class App:
             "sh",
             # Instances created before the workspace move mount their clone at the checkout.
             metadata.get("workspace", metadata["checkout"]),
-            *specs,
-            input=data,
+            *repository.receive_specs(delivery, branches, rewrites),
+            input=delivery.data,
         )
         return result.stdout.splitlines()
 

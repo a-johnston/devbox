@@ -1,3 +1,4 @@
+import base64
 import json
 import subprocess
 from collections.abc import Sequence
@@ -10,7 +11,7 @@ from devbox.app import App
 from devbox.config import Harness, Project
 from devbox.engine import Container
 from devbox.errors import DevboxError
-from devbox.repository import RECEIVE, HostGit, Started, bundle
+from devbox.repository import RECEIVE, Delivery, HostGit, Started, bundle, receive_specs
 from devbox.state import Session, Store
 from tests.fakes import BASE, FakeEngine, FakeGit
 from tests.repos import commit, git
@@ -27,14 +28,13 @@ def receive(
     repository: Path, clone: Path, branches: Sequence[str], rewrites: Sequence[tuple[str, str, str]] = ()
 ) -> list[str]:
     """Deliver host branches to clone as App.sync does, running the guest script locally."""
-    base = git(repository, "rev-list", "--max-parents=0", "main")
-    specs = [f"rewrite:{name}:{old}:{new}" for name, old, new in rewrites] + [f"ff:{b}" for b in branches]
+    delivery = bundle(repository, branches, git(repository, "rev-list", "--max-parents=0", "main"))
+    return run_receive(clone, receive_specs(delivery, branches, rewrites), delivery.data)
+
+
+def run_receive(clone: Path, specs: Sequence[str], data: str = "") -> list[str]:
     result = subprocess.run(
-        ["sh", "-c", RECEIVE, "sh", str(clone), *specs],
-        input=bundle(repository, branches, base),
-        text=True,
-        check=True,
-        capture_output=True,
+        ["sh", "-c", RECEIVE, "sh", str(clone), *specs], input=data, text=True, check=True, capture_output=True
     )
     return result.stdout.splitlines()
 
@@ -55,15 +55,11 @@ def test_receive_reports_each_branch_independently(repository: Path, clone: Path
     base = git(clone, "rev-parse", "HEAD")
     git(clone, "switch", "-qc", "work")
     guest = git(clone, "commit-tree", "-m", "guest work", "-p", base, f"{base}^{{tree}}")
-    branches(clone, ahead=guest, diverged=guest, moved=guest, undelivered=guest, matches=base, changed=base)
-    git(repository, "branch", "ahead")
-    assert receive(repository, clone, ["main", "ahead"]) == [
-        "main: up to date",
-        "ahead: has commits beyond host/ahead; left alone",
-    ]
+    branches(clone, ahead=guest, diverged=guest, moved=guest, undelivered=guest, matches=base, changed=base, same=base)
     tip = advance(repository)
     host = git(repository, "commit-tree", "-m", "host work", "-p", base, f"{base}^{{tree}}")
-    branches(repository, other=tip, diverged=host)
+    # Branches still at base travel by name beside the bundle of newer commits.
+    branches(repository, other=tip, diverged=host, same=base, ahead=base)
     missing = "f" * 40
     rewrites = [
         ("moved", guest, tip),
@@ -72,7 +68,7 @@ def test_receive_reports_each_branch_independently(repository: Path, clone: Path
         ("gone", guest, tip),
         ("undelivered", guest, missing),
     ]
-    assert receive(repository, clone, ["main", "other", "diverged"], rewrites) == [
+    assert receive(repository, clone, ["main", "other", "diverged", "same", "ahead"], rewrites) == [
         "moved: moved to the rebased commits",
         "matches: matches the landed commits",
         "changed: changed since it was fetched; left alone",
@@ -81,10 +77,16 @@ def test_receive_reports_each_branch_independently(repository: Path, clone: Path
         "main: fast-forwarded",
         "other: delivered as host/other (no local branch)",
         "diverged: diverged from host/diverged; left alone",
+        "same: up to date",
+        "ahead: has commits beyond host/ahead; left alone",
     ]
-    names = ("main", "moved", "changed", "undelivered", "ahead", "diverged", "host/other", "host/diverged")
-    assert git(clone, "rev-parse", *names).split() == [tip, tip, base, guest, guest, guest, tip, host]
+    names = ("main", "moved", "changed", "undelivered", "ahead", "diverged", "host/other", "host/diverged", "host/same")
+    assert git(clone, "rev-parse", *names).split() == [tip, tip, base, guest, guest, guest, tip, host, base]
     assert git(clone, "symbolic-ref", "--short", "HEAD") == "work"
+
+
+def test_receive_reports_a_known_commit_the_clone_lacks(clone: Path) -> None:
+    assert run_receive(clone, [f"host:gone:{'f' * 40}", "ff:gone"]) == ["gone: not delivered"]
 
 
 def test_receive_moves_a_clean_checked_out_branch(repository: Path, clone: Path) -> None:
@@ -115,6 +117,33 @@ def test_receive_leaves_a_busy_checked_out_branch(repository: Path, clone: Path,
     assert git(clone, "rev-parse", "HEAD", "host/main").split() == [base, tip]
     if busy == "edit":
         assert (clone / ".devbox.toml").read_text() == "edited"
+
+
+def test_bundle_delivers_branches_at_or_behind_base_by_name(repository: Path, tmp_path: Path) -> None:
+    root = git(repository, "rev-parse", "main")
+    base = advance(repository)
+    git(repository, "branch", "at-base")
+    git(repository, "branch", "behind", root)
+    advance(repository)
+    delivery = bundle(repository, ["main", "at-base", "behind"], base)
+    assert delivery.known == {"at-base": base, "behind": root}
+    data = tmp_path / "data.bundle"
+    data.write_bytes(base64.b64decode(delivery.data))
+    heads = git(repository, "bundle", "list-heads", str(data)).splitlines()
+    assert [line.split()[1] for line in heads] == ["refs/heads/main"]
+    # Nothing beyond base: no bundle at all, rather than the branches' whole history.
+    assert bundle(repository, ["at-base"], base) == Delivery("", {"at-base": base})
+
+
+def test_receive_specs_deliver_then_rewrite_then_fast_forward() -> None:
+    # A rebased branch must not be reported as diverged from its target.
+    delivery = Delivery("", {"release": "a" * 40})
+    assert receive_specs(delivery, ["main", "release"], [("feature", "old", "new")]) == [
+        f"host:release:{'a' * 40}",
+        "rewrite:feature:old:new",
+        "ff:main",
+        "ff:release",
+    ]
 
 
 def test_bundle_refuses_missing_branches(repository: Path) -> None:
@@ -182,18 +211,20 @@ def test_sync_bundles_host_branches_for_the_guest_script(
     id = app.new(project, harness, no_config=True)
     bundled = []
 
-    def bundle(root: Path, branches: list[str], base: str) -> str:
+    delivery = Delivery("BUNDLE", {"release": BASE})
+
+    def bundle(root: Path, branches: list[str], base: str) -> Delivery:
         bundled.append((root, branches, base))
-        return "BUNDLE"
+        return delivery
 
     monkeypatch.setattr("devbox.repository.bundle", bundle)
     engine.execs.clear()
     engine.stdout = "one\ntwo\n"
-    # Rewrites go first: a rebased branch must not be reported as diverged from its target.
     assert app.sync(running(id), [], [("feature", "old", "new")]) == ["one", "two"]
     assert bundled == [(project.root, ["main"], BASE)]  # Defaults to the branch the instance started from.
     (request,) = engine.execs
-    assert request.args == ("sh", "-c", RECEIVE, "sh", str(project.workspace), "rewrite:feature:old:new", "ff:main")
+    specs = receive_specs(delivery, ["main"], [("feature", "old", "new")])
+    assert request.args == ("sh", "-c", RECEIVE, "sh", str(project.workspace), *specs)
     assert request.input == "BUNDLE"
 
     # Instances created before the workspace move mount their clone at the host checkout.
@@ -202,4 +233,4 @@ def test_sync_bundles_host_branches_for_the_guest_script(
     (app.store.directory(id) / "metadata.json").write_text(json.dumps(metadata))
     app.sync(running(id), ["release", "main"])
     assert bundled[-1] == (project.root, ["release", "main"], BASE)
-    assert engine.execs[-1].args[4:] == (metadata["checkout"], "ff:release", "ff:main")
+    assert engine.execs[-1].args[4] == metadata["checkout"]

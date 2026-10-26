@@ -21,6 +21,14 @@ user's working tree: they see your work only after fetching it.
   moved to its rebased commits. Check `git status` and the log after the user lands work.
 - Uncommitted changes are lost when the user cleans up this instance.
 
+## Files
+
+- The user can copy files in with `devbox put {id} ...`. They arrive in `/devbox/inbox/`.
+- To give the user a file that does not belong in the repository (a document, image, report
+  or log, for example), write it to `/devbox/outbox/` and tell them its name. They copy it
+  out with `devbox get {id} <name>`.
+- Neither directory is shared with other instances or kept when the container is removed.
+
 ## Environment
 
 - Any previous session's processes, temporary files and OS assumptions do not carry over.

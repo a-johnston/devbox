@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 agent \
     && useradd --create-home --uid 10001 --gid 10001 --shell /bin/bash agent \
+    && install -d -o agent -g agent /devbox /devbox/inbox /devbox/outbox \
     && git config --system safe.directory '*'
 # TERM comes from the host terminal on attach; tmux.conf sets the panes' own.
 ENV HOME=/home/agent

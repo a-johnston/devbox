@@ -30,6 +30,8 @@ devbox review [id] [branch]                       # fetch, pick a branch, and sh
 devbox land [id] [branch]                         # fetch, rebase onto the current host branch, ff-merge
 devbox sessions                                   # saved conversations, including removed containers
 devbox sync [id] [branch ...]                     # deliver host branches to an instance as host/<branch>
+devbox put id path ...                            # copy host files into the instance's /devbox/inbox
+devbox get id [path ...]                          # copy files from its /devbox/outbox (or any path)
 devbox resume [session-id]                        # fork a conversation into a new container
 devbox build pi                                   # rebuild the project/runtime/harness image
 devbox cleanup [--only {instances,images}]        # remove orphaned state and unused images
@@ -96,6 +98,25 @@ every running instance of the project (stopped ones are reported, not synced). T
 instance's own branch is also moved to its rebased commits when it is still at the fetched
 tip, so later fetches and branches stacked on it see the commits that were landed. A failed
 sync is reported and never undoes the landing.
+
+## Files
+
+`devbox put <id> <path> ...` copies host files and directories into a running instance's
+`/devbox/inbox/`, or a directory within it given by `--dir`. Each one is named after its own
+basename, whatever directory it came from, so `~/Downloads/crash.log` arrives as
+`/devbox/inbox/crash.log`. A symlink argument sends what it points to; links inside directories
+stay links. Quote a glob to let devbox expand it, including `**`.
+
+`devbox get <id> [<path> ...]` copies files the other way, into the current directory or `--to`.
+Relative paths and quoted globs are resolved within `/devbox/outbox/`, where agents are told to
+leave documents, images and other files that don't belong in the repository; absolute paths
+can name anything in the guest. Without paths it offers the outbox in a picker, and shell
+completion lists the instance's files. Received archives extract only the requested names and
+refuse absolute or escaping links.
+
+Neither command replaces an existing name without `--force`, and both check every name before
+copying anything. The inbox and outbox live on the container's disk: they aren't shared with
+other instances, and removing the container removes them.
 
 ## Config and credentials
 

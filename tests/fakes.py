@@ -108,6 +108,9 @@ class FakeEngine(Engine):
         self.execs.append(ExecRequest(id, args, check, env, input))
         return subprocess.CompletedProcess(args, 0, "", "")
 
+    def pipe(self, id: str, *args: str, **kwargs: object) -> None:
+        raise AssertionError("No guest configured for streamed exec")
+
     def connect(self, id: str, *args: str, cwd: str | None = None) -> None:
         self.connections.append((id, args, cwd))
 

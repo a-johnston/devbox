@@ -16,9 +16,9 @@ from pathlib import Path
 
 import argcomplete
 
-from devbox import __version__
+from devbox import __version__, transfer
 from devbox.app import App
-from devbox.config import Harness, Project, harnesses, init
+from devbox.config import Harness, Project, harnesses, init, relative
 from devbox.engine import Container, Image
 from devbox.engine.engine import image_identity
 from devbox.errors import DevboxError
@@ -212,8 +212,31 @@ def complete_ids(*, clones: bool = False) -> Callable[..., list[str]]:
     return complete
 
 
+def complete_guest_paths(prefix: str, parsed_args: argparse.Namespace, **_: object) -> list[str]:
+    """Complete guest paths from a running instance: relative ones within the outbox."""
+    try:
+        app = App(store=Store(parsed_args.state_dir))
+        saved = app.store.saved()
+        # As `match` resolves IDs, without its picker or errors.
+        ids = [id for id in saved if id == parsed_args.id] or [
+            id for id in saved if id.removeprefix("devbox-").startswith(parsed_args.id)
+        ]
+        if len(ids) != 1:
+            return []
+        head, slash, _rest = prefix.rpartition("/")
+        directory = (head or "/") if prefix.startswith("/") else str(transfer.OUTBOX / head)
+        return [head + slash + name for name in app.guest_entries(ids[0], directory)]
+    except (DevboxError, OSError):
+        return []
+
+
 def id_argument(
-    command: argparse.ArgumentParser, name: str, nargs: str, help: str, *, clones: bool = False
+    command: argparse.ArgumentParser,
+    name: str,
+    nargs: str | None,
+    help: str,
+    *,
+    clones: bool = False,
 ) -> None:
     # argcomplete reads `completer` off the action; argparse does not declare it.
     action = command.add_argument(name, nargs=nargs, help=help)
@@ -426,6 +449,39 @@ def _sync(app: App, *, id: str | None, branches: list[str]) -> None:
         print(f"{container.id}: {printable(line)}")
 
 
+def _put(app: App, *, id: str, paths: list[str], directory: str | None, force: bool) -> None:
+    container = match(
+        _containers(app, running=True), id, "Containers", lambda c: c.id, container_label
+    )
+    named = transfer.uploads(transfer.expand(paths))
+    target = transfer.INBOX / relative(directory) if directory else transfer.INBOX
+    files, size = transfer.measure(list(named.values()))
+    print(
+        f"Sending {files} file{'' if files == 1 else 's'} ({format_size(size)}) "
+        f"to {container.id}:{target}",
+        flush=True,
+    )
+    app.put(container, named, target, force=force)
+    print(f"Put {', '.join(printable(name) for name in named)} in {target}")
+
+
+def _get(app: App, *, id: str, paths: list[str], to: Path, force: bool) -> None:
+    container = match(
+        _containers(app, running=True), id, "Containers", lambda c: c.id, container_label
+    )
+    if not paths:
+        entries = app.guest_entries(container.id, str(transfer.OUTBOX))
+        if not entries:
+            raise DevboxError(f"{container.id}:{transfer.OUTBOX} is empty")
+        paths = [entry.rstrip("/") for entry in select_many(entries, "Outbox", printable)]
+        if not paths:
+            print("Nothing selected.")
+            return
+    named = app.guest_matches(container, paths)
+    app.get(container, named, to, force=force)
+    print(f"Got {', '.join(printable(name) for name in named)} in {to}")
+
+
 def _kill_all(app: App, *, yes: bool) -> None:
     containers = _containers(app)
     if not containers:
@@ -507,6 +563,31 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument(
         "branches", nargs="*", help="Host branches (default: the one the instance started from)"
     )
+    command = commands.add_parser(
+        "put", help=f"Copy host files into a running instance's {transfer.INBOX}"
+    )
+    command.set_defaults(func=_put)
+    id_argument(command, "id", None, "Container ID")
+    command.add_argument("paths", nargs="+", help="Host files or directories; quote ** globs")
+    command.add_argument(
+        "--dir", dest="directory", help=f"Directory within {transfer.INBOX} to put them in"
+    )
+    command.add_argument("--force", action="store_true", help="Replace existing names")
+    command = commands.add_parser(
+        "get", help=f"Copy files out of a running instance, such as from its {transfer.OUTBOX}"
+    )
+    command.set_defaults(func=_get)
+    id_argument(command, "id", None, "Container ID")
+    action = command.add_argument(
+        "paths",
+        nargs="*",
+        help=f"Guest paths or quoted globs, relative to {transfer.OUTBOX} (omit for a picker)",
+    )
+    action.completer = complete_guest_paths  # ty: ignore[unresolved-attribute]
+    command.add_argument(
+        "--to", type=Path, default=Path("."), help="Host directory (default: current)"
+    )
+    command.add_argument("--force", action="store_true", help="Replace existing names")
     command = commands.add_parser("resume", help="Fork a saved conversation into a new container")
     command.set_defaults(func=_resume)
     command.add_argument("session", nargs="?")

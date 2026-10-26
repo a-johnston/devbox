@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
 
-from devbox import repository
+from devbox import repository, transfer
 from devbox.config import ASSETS, Harness, Project, configured_secrets, git, git_output, relative
 from devbox.engine.engine import (
     IMAGE_BASE,
@@ -536,6 +536,60 @@ class App:
             input=data,
         )
         return result.stdout.splitlines()
+
+    def put(
+        self,
+        container: Container,
+        named: dict[str, Path],
+        directory: PurePosixPath = transfer.INBOX,
+        *,
+        force: bool = False,
+    ) -> None:
+        """Upload host files into a running instance, each named after itself."""
+        if container.state != "running":
+            raise DevboxError(f"{container.id} is stopped; put needs a running container")
+        self.engine.pipe(
+            container.id,
+            "sh",
+            "-c",
+            transfer.RECEIVE,
+            "sh",
+            str(transfer.INBOX),
+            str(directory),
+            "1" if force else "0",
+            *named,
+            send=lambda stream: transfer.write(stream, named),
+        )
+
+    def guest_matches(self, container: Container, patterns: Sequence[str]) -> dict[str, str]:
+        """Host name -> resolved guest path for guest paths or globs, relative to the outbox."""
+        if container.state != "running":
+            raise DevboxError(f"{container.id} is stopped; get needs a running container")
+        absolute = [str(transfer.OUTBOX / pattern) for pattern in patterns]
+        output = self.engine.exec(container.id, "sh", "-c", transfer.MATCHES, "sh", *absolute)
+        fields = output.stdout.split("\0")[:-1]
+        return transfer.downloads(list(zip(fields[::2], fields[1::2], strict=True)))[0]
+
+    def get(
+        self, container: Container, named: dict[str, str], destination: Path, *, force: bool
+    ) -> None:
+        """Download guest paths into destination, refusing to replace names without force."""
+        _, archived = transfer.downloads([(name, path) for name, path in named.items()])
+        destination.mkdir(parents=True, exist_ok=True)
+        if not force and (clashes := transfer.existing(destination, list(named))):
+            raise DevboxError(
+                f"{', '.join(map(str, clashes))} already exists; use --force to replace it"
+            )
+        self.engine.pipe(
+            container.id,
+            *transfer.tar_arguments(named),
+            receive=lambda stream: transfer.extract(stream, destination, archived),
+        )
+
+    def guest_entries(self, id: str, directory: str) -> list[str]:
+        """A guest directory's names for completion; nothing when it cannot be listed."""
+        result = self.engine.exec(id, "sh", "-c", transfer.ENTRIES, "sh", directory, check=False)
+        return [] if result.returncode else result.stdout.splitlines()
 
     def orphaned_instances(self) -> list[Instance]:
         self.engine.require_running()

@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import IO
 
 from devbox.errors import DevboxError
 
@@ -234,6 +238,58 @@ class Engine(ABC):
         return self.call(
             "exec", "--user", "agent", *flags, id, *args, check=check, env=env, input=input
         )
+
+    def pipe(
+        self,
+        id: str,
+        *args: str,
+        send: Callable[[IO[bytes]], None] | None = None,
+        receive: Callable[[IO[bytes]], None] | None = None,
+    ) -> None:
+        """Stream bytes into (send) or out of (receive) a guest command, without buffering
+        them in memory. Callbacks raise DevboxError to abandon the command."""
+        flags = ["--interactive"] if send else []
+        command = [self.executable, "exec", "--user", "agent", *flags, id, *args]
+        with tempfile.TemporaryFile() as errors:
+            try:
+                process = subprocess.Popen(
+                    command,
+                    stdin=subprocess.PIPE if send else subprocess.DEVNULL,
+                    stdout=subprocess.PIPE if receive else subprocess.DEVNULL,
+                    stderr=errors,
+                )
+            except FileNotFoundError as exc:
+                raise DevboxError(self.install_hint) from exc
+
+            def detail() -> str:
+                errors.seek(0)
+                text = errors.read().decode(errors="replace").strip()
+                return text or f"{self.executable} exec exited with status {process.returncode}"
+
+            with process:
+                try:
+                    if send and process.stdin:
+                        with contextlib.suppress(BrokenPipeError), process.stdin:
+                            # The guest may exit early; its status explains why.
+                            send(process.stdin)
+                    if receive and process.stdout:
+                        receive(process.stdout)
+                except (DevboxError, KeyboardInterrupt):
+                    process.kill()
+                    raise
+                except Exception as exc:
+                    # Usually a truncated stream, after the guest command failed.
+                    if process.stdout:
+                        process.stdout.close()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                    if process.returncode:
+                        raise DevboxError(f"{detail()} ({exc})") from exc
+                    raise
+            if process.returncode:
+                raise DevboxError(detail())
 
     def connect(self, id: str, *args: str, cwd: str | None = None) -> None:
         """Replace the wrapper; detaching the tmux client returns to the host shell."""

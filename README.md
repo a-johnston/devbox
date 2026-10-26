@@ -132,8 +132,16 @@ across instances. The host auth is never used, so the first pi instance will nee
 Doesn't apply to instances created with `--no-config`. This is done with a small custom launcher;
 see [pi/README.md](src/devbox/assets/harnesses/pi/README.md).
 
-Host Claude auth is never directly used. Use `/login` in the container, or create a separate token
-with `claude setup-token`. Supply it via `CLAUDE_CODE_OAUTH_TOKEN` in devbox's environment, or save it
+Claude devbox instances likewise share a devbox-only login in `$XDG_CONFIG_HOME/devbox/shared/claude/auth/`
+(eg `~/.config/devbox/shared/claude/auth/`). Host Claude auth (the macOS Keychain) is never used: run
+`/login` in any instance once and later instances, resumed ones included, reuse it, while settings and
+conversations stay per instance. `/logout` affects every instance. Claude selects this store with the
+undocumented `CLAUDE_SECURESTORAGE_CONFIG_DIR`, so a Claude update could break the sharing. Refreshes are
+coordinated with Claude's own lock directories in the shared mount. `--no-config` instances keep a
+private login in their own home instead.
+
+Alternatively, create a separate long-lived token with `claude setup-token`. When set, it takes
+precedence over the shared login. Supply it via `CLAUDE_CODE_OAUTH_TOKEN` in devbox's environment, or save it
 in `$XDG_CONFIG_HOME/devbox/config.toml` (default `~/.config/devbox/config.toml`):
 
 ```toml

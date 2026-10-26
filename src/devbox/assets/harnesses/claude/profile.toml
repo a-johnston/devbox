@@ -10,13 +10,22 @@ session_glob = "*/*.jsonl"
 version_command = ["claude", "--version"]
 seed_dir = "~/.claude"
 # Never the host login (Keychain or .credentials.json): sharing it would rotate the host's tokens.
+# Instances share a separate devbox-only login instead; see [shared_dirs].
 seed_files = ["settings.json", "keybindings.json", "CLAUDE.md"]
 
-# A long-lived token from `claude setup-token`, from the host environment or devbox config.
+# Optional long-lived token from `claude setup-token`, from the host environment or devbox
+# config. When set, it takes precedence over the shared login.
 secrets = ["CLAUDE_CODE_OAUTH_TOKEN"]
 
 [environment]
 # Keeps the global .claude.json inside the seeded state directory.
 CLAUDE_CONFIG_DIR = "/home/agent/.claude"
+# Moves only .credentials.json out of the config directory. Claude locks refreshes with
+# <dir>/.oauth_refresh.lock and a sibling <dir>.lock, so <dir> sits inside the shared mount.
+# With --no-config nothing is mounted and Claude creates a private store in the instance home.
+CLAUDE_SECURESTORAGE_CONFIG_DIR = "/home/agent/.devbox/claude-auth/credentials"
 # The image's install is root-owned; it follows the host version on the next launch instead.
 DISABLE_AUTOUPDATER = "1"
+
+[shared_dirs]
+auth = ".devbox/claude-auth"

@@ -1,13 +1,13 @@
 import json
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
 from devbox.app import App
 from devbox.config import ASSETS, Harness, Project
 from devbox.errors import DevboxError
-from devbox.state import Session, Store, seed_config
+from devbox.state import Session, Store, seed_config, shared_config
 from tests.fakes import FakeEngine
 
 
@@ -110,6 +110,32 @@ def test_resume_places_snapshot_by_id_and_forks(
 
 def test_claude_never_copies_the_host_login() -> None:
     assert ".credentials.json" not in Harness.load(ASSETS / "harnesses/claude").seed_files
+
+
+def test_instances_share_a_devbox_only_login(
+    project: Project, claude: Harness, tmp_path: Path
+) -> None:
+    claude.seed_dir.mkdir()
+    (claude.seed_dir / ".credentials.json").write_text('"host refresh token"')
+    engine = FakeEngine()
+    app = App(engine, Store(tmp_path / "state"))
+    for _ in range(2):
+        app.new(project, claude)
+    shared = shared_config(claude)["auth"]
+    assert shared == tmp_path / "config/devbox/shared/claude/auth"
+    assert list(shared.iterdir()) == []
+    for run in engine.runs:
+        assert run.binds[-1] == (str(shared), "/home/agent/.devbox/claude-auth")
+        # Claude's refresh locks sit inside and beside the store: both must be on the mount.
+        store = PurePosixPath(run.env["CLAUDE_SECURESTORAGE_CONFIG_DIR"])
+        assert store.parent == PurePosixPath("/home/agent/.devbox/claude-auth")
+
+
+def test_no_config_keeps_a_private_login(project: Project, claude: Harness, tmp_path: Path) -> None:
+    engine = FakeEngine()
+    App(engine, Store(tmp_path / "state")).new(project, claude, no_config=True)
+    assert all("claude-auth" not in target for _, target in engine.runs[0].binds)
+    assert not (tmp_path / "config/devbox/shared").exists()
 
 
 @pytest.mark.parametrize("no_config", [False, True])

@@ -53,7 +53,9 @@ and never removed by instance cleanup. Names must match `[a-z][a-z0-9_]*`.
 For example, Pi declares `[shared_dirs] auth = ".devbox/pi-auth"`. This exposes only the
 Devbox-owned auth directory, never `~/.pi/agent`, and its launcher uses `DEVBOX_SHARED_AUTH`
 to select Pi's native locked credential store. A separate login avoids rotating the host's
-refresh token. See [Pi's profile notes](pi/README.md).
+refresh token. See [Pi's profile notes](pi/README.md). Claude declares `auth = ".devbox/claude-auth"`
+and points `CLAUDE_SECURESTORAGE_CONFIG_DIR` at a subdirectory of it, because Claude locks
+refreshes both inside and beside its credentials directory.
 
 ## Containerfile
 

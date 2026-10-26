@@ -13,12 +13,13 @@ from devbox.config import Harness, Project
 from devbox.engine import Container, mount
 from devbox.errors import DevboxError
 from devbox.state import Session, Store
-from tests.fakes import FakeEngine
+from tests.fakes import BASE, FakeEngine, FakeGit
+from tests.repos import git
 
 
 def test_new_composes_images_and_mounts_only_selected_paths(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"))
+    app = App(engine, Store(tmp_path / "state"), FakeGit())
     id = app.new(project, harness, no_config=True)
     assert len(engine.builds) == 3
     run = engine.runs[0]
@@ -45,72 +46,72 @@ def test_new_composes_images_and_mounts_only_selected_paths(project: Project, ha
     assert "prefix C-a" in (home / ".devbox/tmux.conf").read_text()
 
 
-def git(directory: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", "-C", str(directory), "-c", "user.name=T", "-c", "user.email=t@e.invalid", *args],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-
-
-def test_clone_copies_committed_branch_without_host_links(
-    project: Project, harness: Harness, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_start_clones_committed_branch_without_host_links(project: Project, tmp_path: Path) -> None:
     (project.root / ".devbox.toml").write_text("dirty")
-    app = App(FakeEngine(), Store(tmp_path / "state"))
-    id = app.new(project, harness, no_config=True)
-    clone = app.store.directory(id) / "repo"
-    assert "Uncommitted changes" in capsys.readouterr().out
+    clone = tmp_path / "clone"
+    started = repository.start(project.checkout, clone)
+    assert started == repository.Started("main", git(project.root, "rev-parse", "HEAD"), dirty=True)
     assert git(clone, "symbolic-ref", "HEAD") == "refs/heads/main"
-    assert git(clone, "rev-parse", "HEAD") == git(project.root, "rev-parse", "HEAD")
+    assert git(clone, "rev-parse", "HEAD") == started.base
     assert "dirty" not in (clone / ".devbox.toml").read_text()
     assert git(clone, "remote") == ""
     assert git(clone, "rev-parse", "refs/remotes/origin/main")
     assert not (clone / ".git/objects/info/alternates").exists()
     packs = [p for p in (clone / ".git/objects").rglob("*") if p.is_file()]
     assert packs and all(p.stat().st_nlink == 1 for p in packs)
-    metadata = app.store.metadata(id)
-    assert (metadata["branch"], metadata["base"]) == ("main", git(clone, "rev-parse", "HEAD"))
 
 
-def test_clone_follows_a_detached_worktree(project: Project, harness: Harness, tmp_path: Path) -> None:
+def test_start_follows_a_detached_worktree(project: Project, tmp_path: Path) -> None:
     tree = project.root / ".worktrees/loose"
     git(project.root, "worktree", "add", "--detach", str(tree))
     git(tree, "commit", "--allow-empty", "-m", "unreachable from branches")
-    engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"))
-    id = app.new(Project.discover(tree), harness, no_config=True)
-    clone = app.store.directory(id) / "repo"
-    assert git(clone, "rev-parse", "HEAD") == git(tree, "rev-parse", "HEAD")
-    assert app.store.metadata(id)["branch"] is None
+    clone = tmp_path / "clone"
+    started = repository.start(tree, clone)
+    assert started.branch is None
+    assert git(clone, "rev-parse", "HEAD") == git(tree, "rev-parse", "HEAD") == started.base
+    assert git(clone, "rev-parse", "--abbrev-ref", "HEAD") == "HEAD"
     # Named after the primary checkout, not the worktree.
-    assert engine.runs[0].binds[0] == (str(clone), "/workspace/project with spaces")
+    assert Project.discover(tree).workspace == project.workspace
 
 
-def test_non_repository_projects_are_rejected(tmp_path: Path, harness: Harness, project: Project) -> None:
-    plain = tmp_path / "plain"
-    plain.mkdir()
+def test_start_rejects_non_repositories(tmp_path: Path) -> None:
     with pytest.raises(DevboxError, match="Git repository"):
-        App(FakeEngine(), Store(tmp_path / "state")).new(
-            replace(project, root=plain, cwd=plain, checkout=plain), harness, no_config=True
-        )
+        repository.start(tmp_path, tmp_path / "clone")
 
 
-def test_git_identity_is_passed_as_environment(project: Project, harness: Harness, tmp_path: Path) -> None:
-    for key, value in (("user.name", "Ada"), ("user.email", "ada@example.invalid")):
-        subprocess.run(["git", "-C", str(project.root), "config", key, value], check=True)
+def test_identity_is_only_the_author(project: Project) -> None:
+    git(project.root, "config", "user.name", "Old")
+    git(project.root, "config", "--add", "user.name", "Ada")
+    git(project.root, "config", "user.email", "ada@example.invalid")
+    git(project.root, "config", "credential.helper", "store")
+    assert repository.identity(project.root) == {
+        "GIT_AUTHOR_NAME": "Ada",
+        "GIT_COMMITTER_NAME": "Ada",
+        "GIT_AUTHOR_EMAIL": "ada@example.invalid",
+        "GIT_COMMITTER_EMAIL": "ada@example.invalid",
+    }
+
+
+@pytest.mark.parametrize("branch", ["main", None])
+def test_new_records_where_the_clone_started(
+    project: Project, harness: Harness, tmp_path: Path, capsys: pytest.CaptureFixture[str], branch: str | None
+) -> None:
     engine = FakeEngine()
-    App(engine, Store(tmp_path / "state")).new(project, harness, no_config=True)
-    env = engine.runs[0].env
-    assert env["GIT_AUTHOR_NAME"] == env["GIT_COMMITTER_NAME"] == "Ada"
-    assert env["GIT_AUTHOR_EMAIL"] == env["GIT_COMMITTER_EMAIL"] == "ada@example.invalid"
-    assert not any("credential" in key.lower() for key in env)
+    host = FakeGit(repository.Started(branch, BASE, dirty=True), identity={"GIT_AUTHOR_NAME": "Ada"})
+    app = App(engine, Store(tmp_path / "state"), host)
+    id = app.new(project, harness, no_config=True)
+    assert "Uncommitted changes" in capsys.readouterr().out
+    metadata = app.store.metadata(id)
+    assert (metadata["branch"], metadata["base"]) == (branch, BASE)
+    assert engine.runs[0].env["GIT_AUTHOR_NAME"] == "Ada"
+    start = branch or BASE[:12]
+    text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()
+    assert f"private clone of the user's repository, started from {start}" in text
 
 
 def test_fork_snapshots_conversation(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"))
+    app = App(engine, Store(tmp_path / "state"), FakeGit())
     original_id, original = app.store.create()
     (original / "metadata.json").write_text("{}")
     source = original / "home/source.jsonl"
@@ -126,7 +127,7 @@ def test_failed_start_removes_container_but_retains_state(
     project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"))
+    app = App(engine, Store(tmp_path / "state"), FakeGit())
     execute = engine.exec
 
     def fail_tmux(id: str, *args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -196,7 +197,7 @@ def test_accent_is_stable_and_status_cannot_inject_tmux_commands() -> None:
 def test_instances_are_named_after_free_colors_then_fall_back(
     project: Project, harness: Harness, tmp_path: Path
 ) -> None:
-    app = App(FakeEngine(), Store(tmp_path / "state"))
+    app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())
     first = app.new(project, harness, no_config=True)
     second = app.new(project, harness, no_config=True)
     assert first != second
@@ -223,7 +224,7 @@ def test_colorterm_is_inherited_unless_overridden(
     monkeypatch.setenv("COLORTERM", "truecolor")
     monkeypatch.setenv("SECRET_TOKEN", "hunter2")
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"))
+    app = App(engine, Store(tmp_path / "state"), FakeGit())
     app.new(project, harness, no_config=True)
     assert engine.runs[-1].env["COLORTERM"] == "truecolor"
     assert "SECRET_TOKEN" not in engine.runs[-1].env
@@ -236,7 +237,7 @@ def test_builds_and_describes_the_host_architecture(
 ) -> None:
     monkeypatch.setattr("platform.machine", lambda: "x86_64")
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"))
+    app = App(engine, Store(tmp_path / "state"), FakeGit())
     id = app.new(project, harness, no_config=True)
     assert [build.platform for build in engine.builds] == ["linux/amd64"] * 3
     text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()

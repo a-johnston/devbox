@@ -147,7 +147,10 @@ class Project:
         cwd = directory.expanduser().resolve()
         if not cwd.is_dir():
             raise DevboxError(f"Project directory does not exist: {cwd}")
-        common = git_output(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        # Fails outside a work tree (a bare repository or inside .git), where no checkout is found
+        # and the config search below reaches the same primary checkout from cwd's parents.
+        found = git_output(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel")
+        common, toplevel = found.split("\n") if found else (None, None)
         # Only a normal repository's .git directory identifies a primary checkout.
         # Bare repos and linked worktrees outside that checkout are not workspace mounts.
         primary = Path(common).parent if common and Path(common).name == ".git" else None
@@ -177,7 +180,6 @@ class Project:
         for path in (context, containerfile):
             if not path.is_relative_to(real) or path.is_relative_to(real / ".git"):
                 raise DevboxError(f"{path} must be inside {root} and outside .git")
-        toplevel = git_output(cwd, "rev-parse", "--show-toplevel")
         checkout = Path(toplevel).resolve() if toplevel else root
         cpus = container.get("cpus", 4)
         if type(cpus) is not int or cpus < 1:

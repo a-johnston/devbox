@@ -8,7 +8,7 @@ from devbox.cli import parser
 from devbox.config import ASSETS, Harness, Project
 from devbox.errors import DevboxError
 from devbox.state import Store
-from tests.fakes import FakeEngine
+from tests.fakes import FakeEngine, FakeGit
 
 
 @pytest.fixture
@@ -40,7 +40,7 @@ def test_secrets_reach_only_the_harness_process(
     else:
         secrets_config.write_text('[secrets]\nHARNESS_TOKEN = "s3cret"\n')
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"))
+    app = App(engine, Store(tmp_path / "state"), FakeGit())
     id = app.new(project, secretive, no_config=False)
     startup = engine.execs[-1]
     assert startup.id == id and startup.args[:3] == (
@@ -69,7 +69,7 @@ def test_no_config_skips_secrets(
     monkeypatch.setenv("HARNESS_TOKEN", "s3cret")
     secrets_config.write_text(content)
     engine = FakeEngine()
-    App(engine, Store(tmp_path / "state")).new(project, secretive, no_config=True)
+    App(engine, Store(tmp_path / "state"), FakeGit()).new(project, secretive, no_config=True)
     assert engine.execs[-1].env == {}
 
 

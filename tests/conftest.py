@@ -71,6 +71,12 @@ def repository(tmp_path: Path, repository_template: Path) -> Path:
 
 
 @pytest.fixture
+def clone(tmp_path: Path, repository_template: Path) -> Path:
+    # Stands in for an instance clone: the host's history in a separate repository.
+    return Path(shutil.copytree(repository_template, tmp_path / "clone"))
+
+
+@pytest.fixture
 def project(repository: Path) -> Project:
     return Project.discover(repository)
 

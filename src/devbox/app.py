@@ -17,7 +17,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from devbox import repository, transfer
-from devbox.config import ASSETS, Harness, Project, configured_secrets, git, git_output, relative
+from devbox.config import ASSETS, Harness, Project, configured_secrets, relative
 from devbox.engine.engine import (
     IMAGE_BASE,
     IMAGE_KIND,
@@ -63,15 +63,6 @@ COLORS = {
 }
 # Terminal capabilities the guest cannot detect itself; manifests and profiles override them.
 INHERITED = ("COLORTERM",)
-
-
-def git_identity(directory: Path) -> dict[str, str]:
-    """Only the author identity crosses over: no credential helpers, hooks or rewrites."""
-    env = {}
-    for key, name in (("user.name", "NAME"), ("user.email", "EMAIL")):
-        if value := git_output(directory, "config", "--get", key):
-            env[f"GIT_AUTHOR_{name}"] = env[f"GIT_COMMITTER_{name}"] = value
-    return env
 
 
 def environment_secrets(names: Sequence[str]) -> dict[str, str]:
@@ -132,9 +123,12 @@ def containerfile_base(file: Path) -> str:
 
 
 class App:
-    def __init__(self, engine: Engine | None = None, store: Store | None = None) -> None:
+    def __init__(
+        self, engine: Engine | None = None, store: Store | None = None, git: repository.HostGit | None = None
+    ) -> None:
         self.engine = engine or select_engine()
         self.store = store or Store(backend=self.engine.name)
+        self.git = git or repository.HostGit()
         if self.store.backend != self.engine.name:
             raise DevboxError("The saved-state backend must match the container engine")
 
@@ -364,7 +358,7 @@ class App:
                 (str(home), "/home/agent"),
                 *shared_mounts,
             ),
-            env={**env, **git_identity(project.cwd), "DEVBOX_INSTANCE": id},
+            env={**env, **self.git.identity(project.cwd), "DEVBOX_INSTANCE": id},
         )
         started = time.monotonic()
         try:
@@ -473,22 +467,14 @@ class App:
     def _clone(self, project: Project, target: Path, previous: str | None) -> tuple[str | None, str, str]:
         """Return the host branch and commit the work started from, and what is checked out."""
         if previous:
-            source = repository.git_directory(self.store.directory(previous) / "repo")
             metadata = self.store.metadata(previous)
-            branch, head = repository.clone(source, target)
+            start = self.git.clone_instance(self.store.directory(previous) / "repo", target)
             # Keep the original host starting point for provenance and sync bundles.
-            return metadata.get("branch"), metadata["base"], branch or head[:12]
-        if git_output(project.checkout, "rev-parse", "--verify", "HEAD^{commit}") is None:
-            raise DevboxError(f"{project.checkout} must be a Git repository with a commit")
-        if git_output(project.checkout, "status", "--porcelain", "--untracked-files=no"):
+            return metadata.get("branch"), metadata["base"], start
+        started = self.git.start(project.checkout, target)
+        if started.dirty:
             print(f"Uncommitted changes in {project.checkout} are not copied.", flush=True)
-        branch = git_output(project.checkout, "symbolic-ref", "--quiet", "--short", "HEAD")
-        # Cloning the checkout, not the primary, transfers its HEAD even when it is detached.
-        _, head = repository.clone(project.checkout, target)
-        if branch is None:
-            # Clone guesses a branch at the same commit; the host checkout is detached.
-            git(target, "checkout", "--quiet", "--detach")
-        return branch, head, branch or head[:12]
+        return started.branch, started.base, started.branch or started.base[:12]
 
     def fetch(self, id: str) -> list[repository.Fetched]:
         """Fetch instance refs and publish new work as <short-instance>/<branch>."""

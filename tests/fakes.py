@@ -1,4 +1,4 @@
-"""Application-level engine fake: records requests, never translates backend CLI arguments."""
+"""Application-level fakes: record requests, never translate backend CLI arguments or run Git."""
 
 import subprocess
 from collections.abc import Generator
@@ -7,6 +7,29 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from devbox.engine import Container, Engine, Image, RunSpec, backend_name
+from devbox.repository import HostGit, Started
+
+BASE = "0123456789abcdef" * 2 + "01234567"
+STARTED = Started("main", BASE, dirty=False)
+
+
+class FakeGit(HostGit):
+    """Starts instances from an empty stand-in clone. Use the real HostGit for Git behavior."""
+
+    def __init__(self, started: Started = STARTED, identity: dict[str, str] | None = None) -> None:
+        self.started = started
+        self.author = identity or {}
+
+    def start(self, checkout: Path, target: Path) -> Started:
+        (target / ".git").mkdir(parents=True)
+        return self.started
+
+    def clone_instance(self, source: Path, target: Path) -> str:
+        (target / ".git").mkdir(parents=True)
+        return "copied"
+
+    def identity(self, directory: Path) -> dict[str, str]:
+        return self.author
 
 
 @dataclass(frozen=True)

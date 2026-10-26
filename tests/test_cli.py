@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from functools import partial
 from io import StringIO
 from pathlib import Path
@@ -16,9 +17,9 @@ from devbox.config import Harness, Project
 from devbox.engine import Container
 from devbox.engine.engine import backend_name
 from devbox.errors import DevboxError
+from devbox.repository import Fetched
 from devbox.state import Session, Store
-from tests.fakes import FakeEngine
-from tests.test_fetch import commit, git
+from tests.fakes import FakeEngine, FakeGit
 from tests.test_utils import patch_input
 
 
@@ -306,101 +307,73 @@ def test_kill_all_yes_dispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     assert engine.removed == ["devbox-aabb"]
 
 
-def test_fetch_dispatch_prints_flagged_refs(
-    project: Project, harness: Harness, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    app = App(FakeEngine(), Store(tmp_path / "state"))
+@pytest.fixture
+def fetching(
+    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[App, str, list[Fetched], list[list[str]]]:
+    """An instance whose fetch returns the listed branches; records the diffs review runs."""
+    app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())
     id = app.new(project, harness, no_config=True)
-    clone = app.store.directory(id) / "repo"
-    git = ["git", "-C", str(clone), "-c", "user.name=T", "-c", "user.email=t@e.invalid"]
-    subprocess.run([*git, "checkout", "-q", "-b", "feature"], check=True)
-    (clone / ".devbox/Containerfile").write_text("FROM evil\n")
-    subprocess.run([*git, "commit", "-qam", "change"], check=True)
+    short = id.removeprefix("devbox-")
+    branches = [
+        Fetched(f"refs/devbox/{id}/main", 0, False, (), None, False),
+        Fetched(f"refs/devbox/{id}/feature/x", 1, False, (".devbox/Containerfile",), f"{short}/feature/x", True),
+    ]
+    monkeypatch.setattr(app, "fetch", lambda instance: list(branches))
+    execs: list[list[str]] = []
+    monkeypatch.setattr("devbox.repository.os.execvpe", lambda f, argv, env: execs.append(argv))
+    return app, id, branches, execs
+
+
+def test_fetch_dispatch_prints_flagged_refs(
+    fetching: tuple[App, str, list[Fetched], list], capsys: pytest.CaptureFixture[str]
+) -> None:
+    app, id, _, _ = fetching
     capsys.readouterr()
     dispatch(parser().parse_args(["fetch", id.removeprefix("devbox-")[:6]]), app)
     out = capsys.readouterr().out
-    assert f"refs/devbox/{id}/feature  1 new commit  CHANGES .devbox/Containerfile" in out
+    assert f"refs/devbox/{id}/feature/x  1 new commit  CHANGES .devbox/Containerfile" in out
     assert f"refs/devbox/{id}/main  0 new commits\n" in out
-    assert f"local branch {id.removeprefix('devbox-')}/feature" in out
+    assert f"local branch {id.removeprefix('devbox-')}/feature/x" in out
     assert "WARNING" not in out
     assert "Compared with the current host HEAD (merge base per branch); see devbox review." in out
     assert "git merge" not in out
 
 
-@pytest.fixture
-def reviewed(
-    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[App, str, Path, list[tuple[str, list[str]]]]:
-    app = App(FakeEngine(), Store(tmp_path / "state"))
-    id = app.new(project, harness, no_config=True)
-    execs: list[tuple[str, list[str]]] = []
-    monkeypatch.setattr("devbox.repository.os.execvpe", lambda f, argv, env: execs.append((f, argv)))
-    return app, id, app.store.directory(id) / "repo", execs
+def test_fetched_label_warns_about_unpublished_and_rewritten_branches() -> None:
+    branch = Fetched("refs/devbox/i/feature", 2, True, (), "i/feature", False)
+    assert cli.fetched_label(branch) == (
+        "refs/devbox/i/feature  2 new commits  REWRITTEN since the last fetch  "
+        "WARNING: local branch i/feature not updated (checked out, changed locally, or could not be created); "
+        "use refs/devbox/i/feature"
+    )
 
 
-def commit_branch(clone: Path, branch: str) -> None:
-    git = ["git", "-C", str(clone), "-c", "user.name=T", "-c", "user.email=t@e.invalid"]
-    subprocess.run([*git, "checkout", "-q", "-B", branch, "main"], check=True)
-    subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", branch], check=True)
-
-
-def test_review_diffs_the_only_unlanded_branch_from_its_merge_base(
-    reviewed: tuple[App, str, Path, list],
+def test_review_diffs_the_only_changed_branch_from_its_merge_base(
+    fetching: tuple[App, str, list[Fetched], list],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    app, id, clone, execs = reviewed
-    metadata = app.store.metadata(id)
-    root = Path(metadata["root"])
-    # The clone predates a landed ancestor and a divergent host-only commit.
-    landed = commit(clone, "main", {".devbox/Containerfile": "FROM prior\n"})
-    commit(clone, "feature/x", {"new": "still to land"})
-    app.fetch(id)
-    git(root, "merge", "--ff-only", landed)
-    commit(root, "release", {"host-only": "not part of the review"})
+    app, id, _, execs = fetching
     monkeypatch.setattr(cli, "select", lambda *a: pytest.fail("one changed branch needs no picker"))
-    capsys.readouterr()
     dispatch(parser().parse_args(["review", id]), app)
-    text = capsys.readouterr().out
-    assert "1 new commit" in text
-    assert "CHANGES" not in text  # The watched Containerfile change already landed.
-    assert git(root, "diff", "--name-only", f"HEAD...refs/devbox/{id}/feature/x") == "new"
-    assert execs == [
-        (
-            "git",
-            [
-                "git",
-                "-C",
-                metadata["root"],
-                "diff",
-                f"HEAD...refs/devbox/{id}/feature/x",
-                "--",
-            ],
-        )
-    ]
+    assert "1 new commit" in capsys.readouterr().out
+    root = app.store.metadata(id)["root"]
+    assert execs == [["git", "-C", root, "diff", f"HEAD...refs/devbox/{id}/feature/x", "--"]]
 
 
-def test_review_matches_named_branches_and_passes_stat(
-    reviewed: tuple[App, str, Path, list],
-) -> None:
-    app, id, clone, execs = reviewed
-    commit_branch(clone, "feature/x")
-    commit_branch(clone, "feature/y")
-    dispatch(parser().parse_args(["review", id, "feature/y", "--stat"]), app)
-    ((_, argv),) = execs
-    assert argv[4:] == [
-        "--stat",
-        f"HEAD...refs/devbox/{id}/feature/y",
-        "--",
-    ]
+def test_review_matches_named_branches_and_passes_stat(fetching: tuple[App, str, list[Fetched], list]) -> None:
+    app, id, _, execs = fetching
+    dispatch(parser().parse_args(["review", id, "main", "--stat"]), app)
+    (argv,) = execs
+    assert argv[4:] == ["--stat", f"HEAD...refs/devbox/{id}/main", "--"]
 
 
 def test_review_picks_among_changed_branches(
-    reviewed: tuple[App, str, Path, list], monkeypatch: pytest.MonkeyPatch
+    fetching: tuple[App, str, list[Fetched], list], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app, id, clone, execs = reviewed
-    commit_branch(clone, "one")
-    commit_branch(clone, "two")
+    app, id, branches, execs = fetching
+    branches.append(replace(branches[1], ref=f"refs/devbox/{id}/two"))
     offered = []
 
     def pick(items: list, prompt: str, label: object) -> object:
@@ -409,8 +382,8 @@ def test_review_picks_among_changed_branches(
 
     monkeypatch.setattr(cli, "select", pick)
     dispatch(parser().parse_args(["review", id]), app)
-    assert offered == [f"refs/devbox/{id}/{name}" for name in ("one", "two")]
-    assert execs[0][1][-2].endswith(f"refs/devbox/{id}/two")
+    assert offered == [f"refs/devbox/{id}/{name}" for name in ("feature/x", "two")]
+    assert execs[0][-2].endswith(f"refs/devbox/{id}/two")
 
 
 def test_unknown_command_fails(capsys: pytest.CaptureFixture[str]) -> None:

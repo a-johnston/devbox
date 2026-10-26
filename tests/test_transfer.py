@@ -16,7 +16,7 @@ from devbox.config import Harness, Project
 from devbox.engine import Container, Engine
 from devbox.errors import DevboxError
 from devbox.state import Store
-from tests.fakes import FakeEngine
+from tests.fakes import FakeEngine, FakeGit
 
 # Drops the `exec --user agent [--interactive] <id>` prefix and runs the guest command here.
 # COPYFILE_DISABLE keeps macOS tar from adding AppleDouble ._ entries to archives.
@@ -162,7 +162,7 @@ def test_put_explains_an_image_without_an_inbox(app: App, guest: Guest, tmp_path
 
 
 def test_instances_learn_about_the_inbox_and_outbox(project: Project, harness: Harness, tmp_path: Path) -> None:
-    app = App(FakeEngine(), Store(tmp_path / "state"))
+    app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())
     id = app.new(project, harness, no_config=True)
     text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()
     assert "`/devbox/inbox/`" in text and f"`devbox get {id} <name>`" in text

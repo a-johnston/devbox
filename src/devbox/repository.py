@@ -66,9 +66,12 @@ def clone(source: Path, target: Path) -> tuple[str | None, str]:
 def _copy_lfs_objects(source: Path, target: Path) -> None:
     """Seed the clone's LFS store from the source's: with no remote, checkout cannot download."""
     store = git_output(source, "rev-parse", "--path-format=absolute", "--git-path", "lfs/objects")
+    # Without a source store there is nothing to copy; skip starting git-lfs at all.
+    if store is None or not Path(store).is_dir():
+        return
     # Fails without git-lfs, which also means checkout has no LFS filter to satisfy.
     listing = git_output(target, "lfs", "ls-files", "--long", "HEAD")
-    if store is None or not listing:
+    if not listing:
         return
     for line in listing.splitlines():
         oid = line.split(" ", 1)[0]
@@ -82,24 +85,100 @@ def _copy_lfs_objects(source: Path, target: Path) -> None:
             shutil.copyfile(Path(store) / relative, destination)
 
 
+@dataclass(frozen=True)
+class Started:
+    """The host checkout an instance clone was made from."""
+
+    branch: str | None  # None when the checkout is detached.
+    base: str
+    # Uncommitted changes to tracked files stayed behind.
+    dirty: bool
+
+
+def start(checkout: Path, target: Path) -> Started:
+    """Clone a host checkout's committed HEAD, detached in the clone if it is on the host."""
+    if git_output(checkout, "rev-parse", "--verify", "HEAD^{commit}") is None:
+        raise DevboxError(f"{checkout} must be a Git repository with a commit")
+    dirty = bool(git_output(checkout, "status", "--porcelain", "--untracked-files=no"))
+    branch = git_output(checkout, "symbolic-ref", "--quiet", "--short", "HEAD")
+    # Cloning the checkout, not the primary, transfers its HEAD even when it is detached.
+    _, head = clone(checkout, target)
+    if branch is None:
+        # Clone guesses a branch at the same commit; the host checkout is detached.
+        git(target, "checkout", "--quiet", "--detach")
+    return Started(branch, head, dirty)
+
+
+def identity(directory: Path) -> dict[str, str]:
+    """Only the author identity crosses over: no credential helpers, hooks or rewrites."""
+    output = git_output(directory, "config", "--null", "--get-regexp", r"^user\.(name|email)$") or ""
+    # The last value wins, as with git config --get.
+    values = dict(entry.split("\n", 1) for entry in output.split("\0") if "\n" in entry)
+    env = {}
+    for key, name in (("user.name", "NAME"), ("user.email", "EMAIL")):
+        if value := values.get(key):
+            env[f"GIT_AUTHOR_{name}"] = env[f"GIT_COMMITTER_{name}"] = value
+    return env
+
+
+class HostGit:
+    """The Git that starting an instance runs on the host. App takes it as a parameter,
+    so that tests of everything else about an instance need not spawn Git."""
+
+    def start(self, checkout: Path, target: Path) -> Started:
+        return start(checkout, target)
+
+    def clone_instance(self, source: Path, target: Path) -> str:
+        """Clone another instance's clone; return what it has checked out."""
+        branch, head = clone(git_directory(source), target)
+        return branch or head[:12]
+
+    def identity(self, directory: Path) -> dict[str, str]:
+        return identity(directory)
+
+
 def refs(repository: Path, namespace: str) -> dict[str, str]:
     output = git(repository, "for-each-ref", "--format=%(refname) %(objectname)", namespace)
     return dict(line.split(" ", 1) for line in output.splitlines())
 
 
-def local_branch(repository: Path, name: str, new: str, old: str | None) -> bool:
+def checked_out(repository: Path) -> set[str]:
+    """Branch refs checked out in any of the repository's worktrees."""
+    worktrees = git(repository, "worktree", "list", "--porcelain", "-z").split("\0")
+    return {line.removeprefix("branch ") for line in worktrees if line.startswith("branch ")}
+
+
+@dataclass(frozen=True)
+class LocalBranches:
+    """The host's local branches, read once per fetch; updates compare-and-swap against it."""
+
+    commits: dict[str, str]
+    symbolic: set[str]
+    checked_out: set[str]
+
+    @classmethod
+    def read(cls, repository: Path) -> LocalBranches:
+        output = git(repository, "for-each-ref", "--format=%(refname) %(objectname) %(symref)", "refs/heads/")
+        commits, symbolic = {}, set()
+        for line in output.splitlines():
+            ref, commit, target = line.split(" ", 2)
+            if target:
+                symbolic.add(ref)
+            else:
+                commits[ref] = commit
+        return cls(commits, symbolic, checked_out(repository))
+
+
+def local_branch(repository: Path, name: str, new: str, old: str | None, local: LocalBranches) -> bool:
     """Publish a fetched tip without moving checked-out or locally changed branches."""
     ref = f"refs/heads/{name}"
     # Never follow a symbolic branch reference to some other host branch.
-    if git_output(repository, "symbolic-ref", "--quiet", ref) is not None:
+    if ref in local.symbolic:
         return False
-    current = git_output(repository, "show-ref", "--verify", "--hash", ref)
+    current = local.commits.get(ref)
     if current == new:
         return True
-    if current is not None and current != old:
-        return False
-    worktrees = git(repository, "worktree", "list", "--porcelain", "-z")
-    if f"branch {ref}" in worktrees.split("\0"):
+    if (current is not None and current != old) or ref in local.checked_out:
         return False
     # Compare-and-swap: do not clobber a branch created or moved since we checked it.
     # Ref collisions (e.g. an existing <instance> branch) also leave host refs intact.
@@ -132,6 +211,7 @@ def fetch(
     # Snapshot the primary checkout's current HEAD, not the instance's creation base.
     # Triple-dot diffs use each branch's merge base and exclude host-only changes.
     head = git(repository, "rev-parse", "--verify", "HEAD").strip()
+    local = LocalBranches.read(repository)
     fetched = []
     for ref, new in refs(repository, namespace).items():
         old = before.get(ref)
@@ -148,7 +228,7 @@ def fetch(
                 and git_output(repository, "merge-base", "--is-ancestor", old, new) is None,
                 tuple(changed.split("\0")[:-1]),
                 branch,
-                branch is not None and local_branch(repository, branch, new, old),
+                branch is not None and local_branch(repository, branch, new, old, local),
             )
         )
     return fetched
@@ -164,17 +244,10 @@ def land(repository: Path, fetched: Fetched) -> Landed:
     if branch is None or not fetched.branch_current:
         raise DevboxError("Cannot land: the fetched local branch is unavailable or changed locally")
     source = f"refs/heads/{branch}"
-    for state in (
-        "rebase-merge",
-        "rebase-apply",
-        "MERGE_HEAD",
-        "CHERRY_PICK_HEAD",
-        "REVERT_HEAD",
-        "sequencer",
-    ):
-        path = Path(git(repository, "rev-parse", "--git-path", state).strip())
-        if (path if path.is_absolute() else repository / path).exists():
-            raise DevboxError(f"Cannot land in {repository}: a Git operation is already in progress")
+    states = ("rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer")
+    paths = git(repository, "rev-parse", "--path-format=absolute", *(a for s in states for a in ("--git-path", s)))
+    if any(Path(path).exists() for path in paths.splitlines()):
+        raise DevboxError(f"Cannot land in {repository}: a Git operation is already in progress")
     target = git_output(repository, "symbolic-ref", "--quiet", "HEAD")
     if target is None or not target.startswith("refs/heads/"):
         raise DevboxError(f"Cannot land in {repository}: check out a target branch first")
@@ -190,8 +263,7 @@ def land(repository: Path, fetched: Fetched) -> Landed:
     ):
         raise DevboxError(f"Cannot land: {branch!r} no longer matches the fetched branch")
     # Even an unchanged branch cannot be rebased while checked out in another worktree.
-    worktrees = git(repository, "worktree", "list", "--porcelain", "-z")
-    if f"branch {source}" in worktrees.split("\0"):
+    if source in checked_out(repository):
         raise DevboxError(f"Cannot land: {branch!r} is checked out in a worktree")
     target_name = target.removeprefix("refs/heads/")
     try:

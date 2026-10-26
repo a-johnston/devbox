@@ -165,5 +165,5 @@ uv run prek install
 uv run prek run --all-files
 ```
 
-- [adding a container engine](src/devbox/engine/README.md)
-- [adding a harness](src/devbox/assets/harnesses/README.md)
+- [container engine docs](src/devbox/engine/README.md)
+- [harness docs](src/devbox/assets/harnesses/README.md)

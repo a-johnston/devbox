@@ -23,7 +23,7 @@ user's working tree: they see your work only after fetching it.
 
 ## Files
 
-- The user can copy files in with `devbox put {id} ...`. They arrive in `/devbox/inbox/`.
+- The user can copy files in with `devbox put {id} ...`. They arrive in `/devbox/inbox/` by default.
 - To give the user a file that does not belong in the repository (a document, image, report
   or log, for example), write it to `/devbox/outbox/` and tell them its name. They copy it
   out with `devbox get {id} <name>`.

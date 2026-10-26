@@ -1,8 +1,7 @@
 # Container engines
 
-`App` talks to a container engine through the [`Engine`](engine.py) interface. Each backend
-is a small adapter around its engine: [apple.py](apple.py) for Apple's `container` and [podman.py](podman.py)
-for rootless Podman, as examples.
+`App` talks to a container engine through the [`Engine`](engine.py) interface. Each backend is a small adapter
+around its engine: [apple.py](apple.py) for Apple's `container` and [podman.py](podman.py) for rootless Podman.
 
 ## Adding a backend
 

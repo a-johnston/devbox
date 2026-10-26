@@ -21,9 +21,8 @@ uv tool install --editable .
 ```sh
 devbox new [{pi,claude}] [--project project]      # project defaults to .
 devbox ls                                         # list running and stopped managed containers
-devbox attach [id]                                # attach to a container. id can be a unique shorthand eg "g" instead of devbox-green
+devbox attach [id]                                # attach, recovering an exited harness in place
 devbox shell [id]                                 # non-root bash shell
-devbox stop [id ...]                              # stop processes, keep container disk
 devbox rm [id ...]                                # remove container, keep history and clone
 devbox fetch [id]                                 # fetch new work as local <instance id>/<branch>
 devbox review [id] [branch]                       # fetch, pick a branch, and show its diff
@@ -32,7 +31,7 @@ devbox sessions                                   # saved conversations, includi
 devbox sync [id] [branch ...]                     # deliver host branches to an instance as host/<branch>
 devbox put id path ...                            # copy host files into the instance's /devbox/inbox
 devbox get id [path ...]                          # copy files from its /devbox/outbox (or any path)
-devbox resume [session-id]                        # fork a conversation into a new container
+devbox fork [session-id]                          # fork a conversation into a new container
 devbox build pi                                   # rebuild the project/runtime/harness image
 devbox cleanup [--only {instances,images}]        # remove orphaned state and unused images
 devbox init                                       # default template .devbox.toml and .devbox/Containerfile
@@ -41,6 +40,35 @@ devbox [command] --help                           # full options
 ```
 
 New instances run the selected harness in tmux within the container - `C+a` then `d` detaches without stopping the harness.
+Instance IDs accept unique shorthand, e.g. `g` instead of `devbox-green`.
+
+### Attach, fork and container lifecycle
+
+`devbox attach [id]` reconnects to a live harness. If the harness has exited or tmux was killed,
+attach recreates it **in the same running container**, continuing that instance's most recently
+modified valid conversation. If there is no saved conversation, it starts a fresh one. The
+repository, uncommitted files, home and container filesystem stay in place. Recovery is announced,
+uses the instance's saved launch policy (including `--no-config`), and reacquires declared
+credentials from the host; their values are never saved. It does not rebuild images or copy config
+again. A continuation failure is an error, not a silent switch to an empty conversation.
+
+`devbox fork [session-id]` (formerly `resume`) always creates a **new instance**, leaving the source
+untouched, whether its container is running, stopped or removed. It copies conversation history
+and clones the source instance's committed repository state by default. Use `--from host` to clone
+the host checkout instead, or `--from instance` to require the saved clone. This is not a container
+snapshot: uncommitted files and the old container's writable layer are not copied.
+
+Devbox does not start or stop existing containers. Use the selected runtime's CLI, e.g.
+`container stop devbox-green` / `container start devbox-green`, or the corresponding `podman`
+commands. Once a stopped container is started, `devbox attach` can recover its harness. `devbox rm`
+remains the normal disposal command and retains saved conversations and the repository clone.
+`ls` includes stopped containers; `shell`, `sync`, `put` and `get` need running ones. Saved
+conversations and clones remain usable by `sessions`, `fork`, `fetch`, `review` and `land` after
+container removal. `cleanup` only offers saved instances whose containers no longer exist, not
+ones that are merely stopped.
+
+Instances created before launch policy was saved can still attach to an existing tmux session,
+but cannot automatically recover an exited harness; use `fork` or inspect them with `shell`.
 
 ## Project setup
 
@@ -60,7 +88,7 @@ which every harness appends to its system prompt. Container images are reused wh
 when the project dependencies or harness version change.
 
 The built-in Claude harness runs with `--dangerously-skip-permissions` (YOLO mode) for both new and
-resumed sessions, including with `--no-config`. Claude does not ask for tool permission approvals;
+forked and recovered sessions, including with `--no-config`. Claude does not ask for tool permission approvals;
 the devbox container is the isolation boundary. Only run trusted tasks: Claude can still modify
 its clone, saved conversations and any explicitly shared harness state.
 
@@ -134,7 +162,7 @@ see [pi/README.md](src/devbox/assets/harnesses/pi/README.md).
 
 Claude devbox instances likewise share a devbox-only login in `$XDG_CONFIG_HOME/devbox/shared/claude/auth/`
 (eg `~/.config/devbox/shared/claude/auth/`). Host Claude auth (the macOS Keychain) is never used: run
-`/login` in any instance once and later instances, resumed ones included, reuse it, while settings and
+`/login` in any instance once and later instances, forked ones included, reuse it, while settings and
 conversations stay per instance. `/logout` affects every instance. Claude selects this store with the
 undocumented `CLAUDE_SECURESTORAGE_CONFIG_DIR`, so a Claude update could break the sharing. Refreshes are
 coordinated with Claude's own lock directories in the shared mount. `--no-config` instances keep a

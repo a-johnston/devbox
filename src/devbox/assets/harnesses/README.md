@@ -25,7 +25,8 @@ runs on the host. Install only profiles you trust.
 | `state_dir` | yes | The harness's config/state directory, relative to `/home/agent`. Seed files are copied here. |
 | `session_dir` | yes | Where it saves conversations, relative to `/home/agent`. Kept after container removal. |
 | `session_glob` | no | Conversation files under `session_dir` (default `**/*.jsonl`). The first line must be JSON; its `id`, or else the file name, is the session ID. |
-| `resume_args` | no | Arguments appended to `command` to resume a forked copy of a saved session. Use `{session}` (the snapshot's guest path) or `{session_id}`. Omit if the harness cannot resume. |
+| `resume_args` | no | Arguments appended to `command` by `devbox fork` to resume a forked copy of a saved session. Use `{session}` (the snapshot's guest path) or `{session_id}`. Omit if the harness cannot fork saved history. |
+| `continue_args` | no | Arguments appended to `command` when `attach` recovers an exited harness in the same instance. Use `{session}` (the existing transcript's guest path) or `{session_id}`. Must continue in place, without forking. If omitted, recovery with saved history fails rather than silently starting fresh. |
 | `seed_dir` | yes | Host config directory to copy from, such as `~/.pi/agent`. Never mounted. |
 | `seed_files` | no | Files copied from `seed_dir` into `state_dir` per instance (symlinks are skipped). |
 | `prepared_dirs` | no | Directories, relative to `/home/agent`, prepared at build time under `/opt/devbox/prepared/` and linked into each home, e.g. installed packages. |
@@ -38,6 +39,12 @@ Load devbox's instructions so the agent knows its constraints (a private clone, 
 and `devbox sync`, no host bridge): pass `/home/agent/.devbox/environment.md` to the harness's
 option for appending to its system prompt in `command`, as both built-in profiles do. If the
 harness has no such option, point its global instructions file at it instead.
+
+Launch command, continuation arguments, secret names and `--no-config` policy are saved when an
+instance is created; recovery does not load a changed host profile. Only public policy is saved,
+never secret values. Session selection is limited to that instance's `session_dir` / `session_glob`
+and chooses the most recently modified valid matching transcript (or the fork's initial snapshot
+if the harness has not written its own transcript yet).
 
 ## Shared state
 

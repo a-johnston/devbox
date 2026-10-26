@@ -272,9 +272,18 @@ def _containers(app: App, *, running: bool = False) -> list[Container]:
 
 
 def _attach(app: App, *, id: str | None) -> None:
-    container = match(
-        _containers(app, running=True), id, "Containers", lambda c: c.id, container_label
-    )
+    containers = _containers(app, running=id is None)
+    if id and not any(
+        c.id == id or c.id.removeprefix("devbox-").startswith(id) for c in containers
+    ):
+        saved = [
+            s for s in app.store.saved() if s == id or s.removeprefix("devbox-").startswith(id)
+        ]
+        if len(saved) == 1:
+            raise DevboxError(
+                f"{saved[0]} has been removed; use devbox fork to continue its saved conversation"
+            )
+    container = match(containers, id, "Containers", lambda c: c.id, container_label)
     require_terminal()
     app.attach(container)
 
@@ -287,22 +296,16 @@ def _shell(app: App, *, id: str | None) -> None:
     app.shell(container)
 
 
-def _selected_containers(app: App, ids: list[str], *, running: bool) -> list[Container]:
-    containers = _containers(app, running=running)
+def _selected_containers(app: App, ids: list[str]) -> list[Container]:
+    containers = _containers(app)
     if not ids:
         return select_many(containers, "Containers", container_label)
     selected = [match(containers, id, "Containers", lambda c: c.id, container_label) for id in ids]
     return list({c.id: c for c in selected}.values())
 
 
-def _stop(app: App, *, ids: list[str]) -> None:
-    for container in _selected_containers(app, ids, running=True):
-        app.engine.stop(container.id)
-        print(f"Stopped {container.id}. Conversation files retained; the live process is gone.")
-
-
 def _rm(app: App, *, ids: list[str]) -> None:
-    for container in _selected_containers(app, ids, running=False):
+    for container in _selected_containers(app, ids):
         app.engine.remove(container.id)
         print(f"Removed {container.id}. Saved conversations and repository clone retained.")
 
@@ -325,7 +328,7 @@ def _sessions(app: App, *, json_output: bool) -> None:
             print(session_label(session))
 
 
-def _resume(
+def _fork(
     app: App,
     *,
     session: str | None,
@@ -529,10 +532,11 @@ def parser() -> argparse.ArgumentParser:
         command = commands.add_parser(name)
         command.set_defaults(func=func)
         id_argument(command, "id", "?", "Container ID")
-    for name, func in (("stop", _stop), ("rm", _rm)):
-        command = commands.add_parser(name)
-        command.set_defaults(func=func)
-        id_argument(command, "ids", "*", "Container IDs")
+    command = commands.add_parser(
+        "rm", help="Remove containers, retaining saved history and clones"
+    )
+    command.set_defaults(func=_rm)
+    id_argument(command, "ids", "*", "Container IDs")
     for name, func in (("ls", _ls), ("sessions", _sessions)):
         command = commands.add_parser(name)
         command.set_defaults(func=func)
@@ -588,8 +592,8 @@ def parser() -> argparse.ArgumentParser:
         "--to", type=Path, default=Path("."), help="Host directory (default: current)"
     )
     command.add_argument("--force", action="store_true", help="Replace existing names")
-    command = commands.add_parser("resume", help="Fork a saved conversation into a new container")
-    command.set_defaults(func=_resume)
+    command = commands.add_parser("fork", help="Fork a saved conversation into a new container")
+    command.set_defaults(func=_fork)
     command.add_argument("session", nargs="?")
     command.add_argument(
         "--project", type=Path, help="Override the saved project's working directory"

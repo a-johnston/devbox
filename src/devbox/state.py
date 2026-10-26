@@ -141,11 +141,12 @@ class Store:
             raise DevboxError(f"Not a removable instance: {id}")
         shutil.rmtree(self.instances / id)
 
-    def sessions(self) -> list[Session]:
+    def sessions(self, *, instance: str | None = None) -> list[Session]:
         if not self.instances.exists():
             return []
         sessions = []
-        for directory in sorted(self.instances.iterdir()):
+        directories = [self.directory(instance)] if instance else sorted(self.instances.iterdir())
+        for directory in directories:
             if not (directory / "metadata.json").is_file():
                 continue
             metadata = self.metadata(directory.name)

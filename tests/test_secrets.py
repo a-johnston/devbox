@@ -43,7 +43,11 @@ def test_secrets_reach_only_the_harness_process(
     app = App(engine, Store(tmp_path / "state"))
     id = app.new(project, secretive, no_config=False)
     startup = engine.execs[-1]
-    assert startup.id == id and startup.args[0] == "tmux"
+    assert startup.id == id and startup.args[:3] == (
+        "bash",
+        "/home/agent/.devbox/harness.sh",
+        "start",
+    )
     assert startup.env == {"HARNESS_TOKEN": "s3cret"}
     assert all(request.env is None for request in engine.execs[:-1])
     assert "s3cret" not in str(engine.builds) + str(engine.runs)
@@ -77,7 +81,7 @@ def test_unset_or_empty_secrets_are_skipped(
         monkeypatch.delenv("HARNESS_TOKEN", raising=False)
     else:
         monkeypatch.setenv("HARNESS_TOKEN", value)
-    assert environment_secrets(secretive) == {}
+    assert environment_secrets(secretive.secrets) == {}
 
 
 def test_only_declared_secrets_are_forwarded(
@@ -85,7 +89,7 @@ def test_only_declared_secrets_are_forwarded(
 ) -> None:
     monkeypatch.setenv("HARNESS_TOKEN", "s3cret")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "other")
-    assert environment_secrets(secretive) == {"HARNESS_TOKEN": "s3cret"}
+    assert environment_secrets(secretive.secrets) == {"HARNESS_TOKEN": "s3cret"}
 
 
 @pytest.mark.parametrize("value", [None, "", "override"])
@@ -99,7 +103,7 @@ def test_environment_overrides_config_secrets(
     monkeypatch.delenv("HARNESS_TOKEN", raising=False)
     if value is not None:
         monkeypatch.setenv("HARNESS_TOKEN", value)
-    assert environment_secrets(secretive) == {"HARNESS_TOKEN": value or "from-file"}
+    assert environment_secrets(secretive.secrets) == {"HARNESS_TOKEN": value or "from-file"}
 
 
 def test_only_declared_config_secrets_are_forwarded(
@@ -109,7 +113,7 @@ def test_only_declared_config_secrets_are_forwarded(
     secrets_config.write_text(
         '[secrets]\nHARNESS_TOKEN = "s3cret"\nAWS_SECRET_ACCESS_KEY = "other"\n'
     )
-    assert environment_secrets(secretive) == {"HARNESS_TOKEN": "s3cret"}
+    assert environment_secrets(secretive.secrets) == {"HARNESS_TOKEN": "s3cret"}
 
 
 @pytest.mark.parametrize("content", ["", '[secrets]\nHARNESS_TOKEN = ""', "[unrelated]"])
@@ -121,7 +125,7 @@ def test_missing_or_empty_config_secrets_are_skipped(
 ) -> None:
     monkeypatch.delenv("HARNESS_TOKEN", raising=False)
     secrets_config.write_text(content)
-    assert environment_secrets(secretive) == {}
+    assert environment_secrets(secretive.secrets) == {}
 
 
 @pytest.mark.parametrize("xdg", [None, "", "custom", "~/custom"])
@@ -137,7 +141,7 @@ def test_config_location(
     path = base / "devbox/config.toml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('[secrets]\nHARNESS_TOKEN = "from-file"\n')
-    assert environment_secrets(secretive) == {"HARNESS_TOKEN": "from-file"}
+    assert environment_secrets(secretive.secrets) == {"HARNESS_TOKEN": "from-file"}
 
 
 @pytest.mark.parametrize(
@@ -154,7 +158,7 @@ def test_invalid_secrets_config_fails_without_revealing_values(
 ) -> None:
     secrets_config.write_text(content)
     with pytest.raises(DevboxError) as error:
-        environment_secrets(secretive)
+        environment_secrets(secretive.secrets)
     assert str(secrets_config) in str(error.value)
     assert "s3cret" not in str(error.value)
 
@@ -162,7 +166,7 @@ def test_invalid_secrets_config_fails_without_revealing_values(
 def test_invalid_config_encoding_fails(secretive: Harness, secrets_config: Path) -> None:
     secrets_config.write_bytes(b'[secrets]\nHARNESS_TOKEN = "s3cret\xff"')
     with pytest.raises(DevboxError, match="Cannot read") as error:
-        environment_secrets(secretive)
+        environment_secrets(secretive.secrets)
     assert "s3cret" not in str(error.value)
 
 
@@ -170,14 +174,14 @@ def test_unreadable_secrets_config_fails(secretive: Harness, secrets_config: Pat
     secrets_config.unlink()
     secrets_config.mkdir()
     with pytest.raises(DevboxError, match="Cannot read"):
-        environment_secrets(secretive)
+        environment_secrets(secretive.secrets)
 
 
 def test_harness_without_secrets_does_not_read_config(
     harness: Harness, secrets_config: Path
 ) -> None:
     secrets_config.write_text('invalid = "')
-    assert environment_secrets(replace(harness, secrets=())) == {}
+    assert environment_secrets(harness.secrets) == {}
 
 
 def test_claude_reads_its_oauth_token_from_config(
@@ -185,7 +189,7 @@ def test_claude_reads_its_oauth_token_from_config(
 ) -> None:
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     secrets_config.write_text('[secrets]\nCLAUDE_CODE_OAUTH_TOKEN = "claude-token"\n')
-    assert environment_secrets(Harness.load(ASSETS / "harnesses/claude")) == {
+    assert environment_secrets(Harness.load(ASSETS / "harnesses/claude").secrets) == {
         "CLAUDE_CODE_OAUTH_TOKEN": "claude-token"
     }
 

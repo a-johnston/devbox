@@ -2,6 +2,8 @@ name = "pi"
 command = ["devbox-pi", "--append-system-prompt", "/home/agent/.devbox/environment.md"]
 # Always fork the snapshot, so the source session never has two writers.
 resume_args = ["--fork", "{session}"]
+# Recovery in the same instance continues the existing transcript, without forking.
+continue_args = ["--session", "{session}"]
 state_dir = ".pi/agent"
 session_dir = ".pi/agent/sessions"
 prepared_dirs = [".pi/agent/npm", ".pi/agent/git"]

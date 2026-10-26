@@ -309,12 +309,6 @@ def test_podman_connect_strips_outer_tmux(monkeypatch: pytest.MonkeyPatch) -> No
     assert "TMUX" not in env
 
 
-def test_podman_stop(monkeypatch: pytest.MonkeyPatch) -> None:
-    engine, recorder = engine_with(monkeypatch)
-    engine.stop("devbox-a")
-    assert recorder.calls == [("stop", "devbox-a")]
-
-
 def test_podman_remove_ignores_a_container_that_never_started(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

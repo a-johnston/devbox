@@ -35,17 +35,11 @@ def test_new_composes_images_and_mounts_only_selected_paths(
     (startup,) = engine.execs
     assert startup.id == id
     assert startup.args == (
-        "tmux",
-        "-u",
-        "-f",
-        "/home/agent/.devbox/tmux.conf",
-        "new-session",
-        "-d",
-        "-s",
-        "agent",
-        "-c",
+        "bash",
+        "/home/agent/.devbox/harness.sh",
+        "start",
         "/workspace/project with spaces",
-        "--",
+        "0",
         *harness.command,
     )
     home = app.store.directory(id) / "home"
@@ -122,7 +116,7 @@ def test_git_identity_is_passed_as_environment(
     assert not any("credential" in key.lower() for key in env)
 
 
-def test_resume_snapshots_and_forks(project: Project, harness: Harness, tmp_path: Path) -> None:
+def test_fork_snapshots_conversation(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
     original_id, original = app.store.create()
@@ -144,7 +138,7 @@ def test_failed_start_removes_container_but_retains_state(
     execute = engine.exec
 
     def fail_tmux(id: str, *args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        if "tmux" in args:
+        if "start" in args:
             raise DevboxError("startup failed")
         return execute(id, *args, **kwargs)
 
@@ -158,9 +152,11 @@ def test_failed_start_removes_container_but_retains_state(
 def test_attach_connects_directly_to_tmux(tmp_path: Path) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path))
-    container = Container("ours", "running", "project", "pi", "now")
+    id, directory = app.store.create()
+    (directory / "metadata.json").write_text("{}")
+    container = Container(id, "running", "project", "pi", "now")
     app.attach(container)
-    assert engine.connections == [("ours", ("tmux", "-u", "attach-session", "-t", "agent"), None)]
+    assert engine.connections == [(id, ("tmux", "-u", "attach-session", "-t", "agent"), None)]
 
 
 @pytest.mark.parametrize(

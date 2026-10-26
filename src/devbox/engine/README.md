@@ -19,7 +19,7 @@ for rootless Podman, as examples.
 
 ## Methods
 
-The base class provides `run`, `exec`, `connect` and `stop` implementations for a Docker-like CLI.
+The base class provides `run`, `exec` and `connect` implementations for a Docker-like CLI.
 Override any whose syntax differs:
 
 - `run`: `run --detach --init --name <id> <run_options> --cpus N --memory M`, then
@@ -29,7 +29,6 @@ Override any whose syntax differs:
   (`devbox sync` sends a bundle this way).
 - `connect`: replaces the Devbox process with `exec -it --user agent [--env TERM]
   [--workdir DIR] <id> sh -c TERMINAL sh <args>`, so the user's terminal attaches directly.
-- `stop`: `stop <id>`.
 
 ## Abstract methods
 

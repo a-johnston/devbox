@@ -70,7 +70,7 @@ def test_dispatch_initializes_app_with_custom_state(
     factory = Mock(return_value=app)
     monkeypatch.setattr(cli, "App", factory)
     handler = Mock()
-    args = parser().parse_args(["--state-dir", str(tmp_path), "stop", "first", "second"])
+    args = parser().parse_args(["--state-dir", str(tmp_path), "rm", "first", "second"])
     args.func = handler
     dispatch(args)
     assert factory.call_args.kwargs["store"].root == app.store.root
@@ -124,7 +124,7 @@ def test_build_dispatch(
 
 
 @pytest.mark.parametrize(("detach", "override"), [(False, False), (True, True)])
-def test_resume_dispatch(
+def test_fork_dispatch(
     detach: bool,
     override: bool,
     project: Project,
@@ -151,7 +151,7 @@ def test_resume_dispatch(
     monkeypatch.setattr(app, "attach", attach)
     monkeypatch.setattr(cli, "require_terminal", terminal)
     monkeypatch.setattr(cli, "get_harness", lambda name: harness)
-    argv = ["resume", "aabb/conversation", "--no-config"]
+    argv = ["fork", "aabb/conversation", "--no-config"]
     if override:
         argv.extend(["--project", str(project.cwd)])
     if detach:
@@ -174,7 +174,7 @@ def test_resume_dispatch(
         (["--from", "instance"], False, None),
     ],
 )
-def test_resume_clone_source(
+def test_fork_clone_source(
     flag: list[str],
     has_clone: bool,
     expected: bool | None,
@@ -190,7 +190,7 @@ def test_resume_clone_source(
     monkeypatch.setattr(cli, "get_harness", lambda name: harness)
     create = Mock(return_value="devbox-ccdd")
     monkeypatch.setattr(app, "new", create)
-    args = parser().parse_args(["resume", "aabb/c", "--detach", *flag])
+    args = parser().parse_args(["fork", "aabb/c", "--detach", *flag])
     if expected is None:
         with pytest.raises(DevboxError, match="--from host"):
             dispatch(args, app)
@@ -199,8 +199,7 @@ def test_resume_clone_source(
     assert create.call_args.kwargs["from_instance"] is expected
 
 
-@pytest.mark.parametrize("action", ["stop", "rm"])
-def test_multiple_container_ids_are_resolved_before_mutation(action: str, tmp_path: Path) -> None:
+def test_multiple_container_ids_are_resolved_before_mutation(tmp_path: Path) -> None:
     engine = FakeEngine()
     engine.rows = [
         Container("devbox-aabb", "running", "project", "pi", "now"),
@@ -208,48 +207,61 @@ def test_multiple_container_ids_are_resolved_before_mutation(action: str, tmp_pa
     ]
     app = App(engine, Store(tmp_path))
     with pytest.raises(DevboxError, match="matches 0"):
-        dispatch(parser().parse_args([action, "aab", "missing"]), app)
-    assert not engine.stopped
+        dispatch(parser().parse_args(["rm", "aab", "missing"]), app)
     assert not engine.removed
-    dispatch(parser().parse_args([action, "aab", "ccd", "devbox-aabb"]), app)
-    assert (engine.stopped if action == "stop" else engine.removed) == [
+    dispatch(parser().parse_args(["rm", "aab", "ccd", "devbox-aabb"]), app)
+    assert engine.removed == [
         "devbox-aabb",
         "devbox-ccdd",
     ]
 
 
-@pytest.mark.parametrize("action", ["stop", "rm"])
 @pytest.mark.parametrize("cancel", [False, True])
 def test_missing_ids_use_multi_select(
-    action: str, cancel: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    cancel: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     engine = FakeEngine()
     running = Container("devbox-aabb", "running", "project", "pi", "now")
     stopped = Container("devbox-ccdd", "stopped", "project", "pi", "now")
     engine.rows = [running, stopped]
-    eligible = [running] if action == "stop" else engine.rows
+    eligible = engine.rows
     picker = Mock(return_value=[] if cancel else eligible)
     monkeypatch.setattr(cli, "select_many", picker)
-    dispatch(parser().parse_args([action]), App(engine, Store(tmp_path)))
+    dispatch(parser().parse_args(["rm"]), App(engine, Store(tmp_path)))
     picker.assert_called_once_with(eligible, "Containers", cli.container_label)
-    assert (engine.stopped if action == "stop" else engine.removed) == (
-        [] if cancel else [c.id for c in eligible]
-    )
+    assert engine.removed == ([] if cancel else [c.id for c in eligible])
 
 
-@pytest.mark.parametrize("action", ["stop", "rm"])
-def test_stopped_container_eligibility(action: str, tmp_path: Path) -> None:
+def test_rm_accepts_stopped_containers(tmp_path: Path) -> None:
     engine = FakeEngine()
     engine.rows = [Container("devbox-aabb", "stopped", "project", "pi", "now")]
-    args = parser().parse_args([action, "aabb"])
-    app = App(engine, Store(tmp_path))
-    if action == "stop":
-        with pytest.raises(DevboxError, match="matches 0"):
-            dispatch(args, app)
-        assert not engine.stopped
-    else:
-        dispatch(args, app)
-        assert engine.removed == ["devbox-aabb"]
+    dispatch(parser().parse_args(["rm", "aabb"]), App(engine, Store(tmp_path)))
+    assert engine.removed == ["devbox-aabb"]
+
+
+@pytest.mark.parametrize("action", ["stop", "resume"])
+def test_removed_commands_are_rejected(action: str) -> None:
+    with pytest.raises(SystemExit):
+        parser().parse_args([action])
+
+
+def test_attach_stopped_container_explains_runtime_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = FakeEngine()
+    engine.rows = [Container("devbox-aabb", "stopped", "project", "pi", "now")]
+    monkeypatch.setattr(cli, "require_terminal", Mock())
+    with pytest.raises(DevboxError, match="start it with the container runtime"):
+        dispatch(parser().parse_args(["attach", "aabb"]), App(engine, Store(tmp_path)))
+    assert not engine.execs and not engine.connections and not engine.runs
+
+
+def test_attach_removed_instance_suggests_fork(tmp_path: Path) -> None:
+    app = App(FakeEngine(), Store(tmp_path))
+    id, directory = app.store.create()
+    (directory / "metadata.json").write_text("{}")
+    with pytest.raises(DevboxError, match="removed; use devbox fork"):
+        dispatch(parser().parse_args(["attach", id]), app)
 
 
 @pytest.mark.parametrize("action", ["attach", "shell"])
@@ -264,7 +276,7 @@ def test_single_container_dispatch(
     terminal = Mock()
     monkeypatch.setattr(app, action, handler)
     monkeypatch.setattr(cli, "require_terminal", terminal)
-    dispatch(parser().parse_args([action, "aa"]), app)
+    dispatch(parser().parse_args([action, "aabb"]), app)
     handler.assert_called_once_with(running)
     terminal.assert_called_once_with()
 
@@ -467,7 +479,7 @@ def test_init_creates_missing_templates_without_engine_or_state(
     ("shell", "line", "expected"),
     [
         ("bash", "devbox n", "new"),
-        ("bash", "devbox re", "resume"),
+        ("bash", "devbox fo", "fork"),
         ("bash", "devbox cl", "cleanup"),
         ("bash", "devbox cleanup --", "--select"),
         ("bash", "devbox ", "completion"),

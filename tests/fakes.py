@@ -37,7 +37,6 @@ class FakeEngine(Engine):
         self.runs: list[RunSpec] = []
         self.execs: list[ExecRequest] = []
         self.connections: list[tuple[str, tuple[str, ...], str | None]] = []
-        self.stopped: list[str] = []
         self.removed: list[str] = []
         self.rows: list[Container] = []
         self.built_images: set[str] = set()
@@ -113,9 +112,6 @@ class FakeEngine(Engine):
 
     def connect(self, id: str, *args: str, cwd: str | None = None) -> None:
         self.connections.append((id, args, cwd))
-
-    def stop(self, id: str) -> None:
-        self.stopped.append(id)
 
     def remove(self, id: str) -> None:
         self.removed.append(id)

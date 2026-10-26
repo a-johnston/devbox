@@ -3,6 +3,7 @@ name = "claude"
 command = ["claude", "--dangerously-skip-permissions", "--append-system-prompt-file", "/home/agent/.devbox/environment.md"]
 # Claude resumes by ID; always fork, so the source session never has two writers.
 resume_args = ["--resume", "{session_id}", "--fork-session"]
+continue_args = ["--resume", "{session_id}"]
 state_dir = ".claude"
 session_dir = ".claude/projects"
 # Top-level transcripts only, not subagent transcripts nested beside them.

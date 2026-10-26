@@ -13,7 +13,7 @@ The whole directory is mounted read/write so Pi's native lock acquisition, token
 and credential write operate on the same shared filesystem in every instance. devbox never
 reads its contents or copies credentials into images or per-instance homes.
 
-Run `/login` in any guest once. New instances and `devbox resume` reuse that login. Each
+Run `/login` in any guest once. New instances and `devbox fork` reuse that login. Each
 instance has its own settings, model configuration, packages, instructions and conversations.
 Removing containers or running `cleanup` does not remove shared auth. Changing `--state-dir`
 does not select a new identity; `XDG_CONFIG_HOME` selects the shared-state base.

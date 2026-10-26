@@ -187,6 +187,7 @@ def test_shared_config_resolves_a_relative_config_base(
         'auth = ".pi"',
         'auth = ".devbox"',
         'auth = ".devbox/environment.md"',
+        'auth = ".devbox/harness.sh"',
         'auth = ".devbox/resume.jsonl"',
         '"../auth" = "shared"',
         'AUTH = "shared"',

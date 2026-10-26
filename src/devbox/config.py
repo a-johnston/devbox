@@ -7,7 +7,7 @@ import os
 import re
 import subprocess
 import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -212,6 +212,7 @@ class Harness:
     version_command: tuple[str, ...] = ()
     secrets: tuple[str, ...] = ()
     shared_dirs: dict[str, str] = field(default_factory=dict)
+    continue_args: tuple[str, ...] = ()
 
     @classmethod
     def load(cls, directory: Path) -> Harness:
@@ -221,12 +222,12 @@ class Harness:
             raise DevboxError(f"Invalid harness name: {name!r}")
         command = strings(data.get("command"), "command")
         resume = strings(data.get("resume_args", []), "resume_args")
-        if not command or (
-            resume and not any("{session}" in arg or "{session_id}" in arg for arg in resume)
-        ):
-            raise DevboxError(
-                "Harness needs a command and {session} or {session_id} in resume_args"
-            )
+        continuation = strings(data.get("continue_args", []), "continue_args")
+        if not command:
+            raise DevboxError("Harness needs a command")
+        for key, args in (("resume_args", resume), ("continue_args", continuation)):
+            if args and not any("{session}" in arg or "{session_id}" in arg for arg in args):
+                raise DevboxError(f"Harness needs {{session}} or {{session_id}} in {key}")
         prepared = tuple(
             relative(v) for v in strings(data.get("prepared_dirs", []), "prepared_dirs")
         )
@@ -247,6 +248,7 @@ class Harness:
                 *prepared,
                 ".devbox/environment.md",
                 ".devbox/tmux.conf",
+                ".devbox/harness.sh",
                 ".devbox/resume.jsonl",
             )
         ):
@@ -268,6 +270,7 @@ class Harness:
             strings(data.get("version_command", []), "version_command"),
             tuple(environment({name: "" for name in strings(data.get("secrets", []), "secrets")})),
             shared,
+            continuation,
         )
 
     def hook(self, name: str) -> Callable[..., Any] | None:
@@ -283,9 +286,9 @@ class Harness:
         return getattr(module, name, None)
 
 
-def configured_secrets(harness: Harness) -> dict[str, str]:
+def configured_secrets(names: Sequence[str]) -> dict[str, str]:
     """Only profile-declared secrets from the user's host-only devbox configuration."""
-    if not harness.secrets:
+    if not names:
         return {}
     base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config").expanduser()
     path = base / "devbox/config.toml"
@@ -298,7 +301,7 @@ def configured_secrets(harness: Harness) -> dict[str, str]:
         # Parser diagnostics can include source text containing credentials.
         raise DevboxError(f"Cannot read {path}: expected a readable TOML configuration") from None
     values = environment(data.get("secrets", {}), f"{path}: secrets")
-    return {name: values[name] for name in harness.secrets if values.get(name)}
+    return {name: values[name] for name in names if values.get(name)}
 
 
 def harnesses() -> dict[str, Harness]:

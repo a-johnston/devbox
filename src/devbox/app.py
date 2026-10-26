@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -13,6 +14,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 from devbox import repository, transfer
 from devbox.config import ASSETS, Harness, Project, configured_secrets, git, git_output, relative
@@ -37,6 +39,7 @@ from devbox.state import (
     Store,
     build_files,
     host_version,
+    read_session,
     run_hook,
     seed_config,
     shared_config,
@@ -71,12 +74,19 @@ def git_identity(directory: Path) -> dict[str, str]:
     return env
 
 
-def environment_secrets(harness: Harness) -> dict[str, str]:
+def environment_secrets(names: Sequence[str]) -> dict[str, str]:
     """Declared host secrets, with nonempty environment values overriding devbox config."""
     return {
-        **configured_secrets(harness),
-        **{name: value for name in harness.secrets if (value := os.environ.get(name))},
+        **configured_secrets(names),
+        **{name: value for name in names if (value := os.environ.get(name))},
     }
+
+
+def session_args(args: Sequence[str], path: str, id: str) -> list[str]:
+    """Fill a profile's {session} (guest path under /home/agent) and {session_id}."""
+    return [
+        arg.replace("{session}", f"/home/agent/{path}").replace("{session_id}", id) for arg in args
+    ]
 
 
 def accent(id: str) -> int:
@@ -254,7 +264,7 @@ class App:
         session: Session | None = None,
         from_instance: bool = False,
     ) -> str:
-        """from_instance clones the resumed session's instance instead of the host checkout."""
+        """from_instance clones the forked session's instance instead of the host checkout."""
         if self.store.root.is_relative_to(project.root):
             raise DevboxError("Keep devbox state outside the shared project directory")
         if session and not harness.resume_args:
@@ -270,7 +280,7 @@ class App:
         else:
             image = self._build(project, harness, files, args)
         # Only the harness process receives these: not the container config or saved state.
-        secrets = {} if no_config else environment_secrets(harness)
+        secrets = {} if no_config else environment_secrets(harness.secrets)
         if secrets:
             print("Forwarding harness credentials: " + ", ".join(secrets), flush=True)
         shared_mounts = []
@@ -302,6 +312,7 @@ class App:
             link.parent.mkdir(parents=True, exist_ok=True)
             link.symlink_to(PREPARED / prepared)
         command = list(harness.command)
+        initial_session = None
         if session:
             session_id = session.id.split("/", 1)[1]
             # Harnesses that resume by ID choose where their snapshot must live.
@@ -312,13 +323,10 @@ class App:
             snapshot_session(
                 session.path, home / target, root=self.store.directory(session.instance) / "home"
             )
-            command.extend(
-                arg.replace("{session}", f"/home/agent/{target}").replace(
-                    "{session_id}", session_id
-                )
-                for arg in harness.resume_args
-            )
+            initial_session = {"path": target, "id": session_id}
+            command.extend(session_args(harness.resume_args, target, session_id))
         (home / ".devbox").mkdir(exist_ok=True)
+        shutil.copyfile(ASSETS / "runtime/harness.sh", home / ".devbox/harness.sh")
         architecture = host_platform().removeprefix("linux/").upper()
         (home / ".devbox/environment.md").write_text(
             (ASSETS / "runtime/environment.md")
@@ -345,7 +353,15 @@ class App:
             "session_dir": harness.session_dir,
             "session_glob": harness.session_glob,
             "image": image,
-            "resumed_from": session.id if session else None,
+            "forked_from": session.id if session else None,
+            # Public launch policy only: credentials are reacquired on recovery.
+            "launch": {
+                "command": list(harness.command),
+                "continue_args": list(harness.continue_args),
+                "secrets": list(harness.secrets),
+                "no_config": no_config,
+                "initial_session": initial_session,
+            },
         }
         (directory / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
         spec = RunSpec(
@@ -368,21 +384,12 @@ class App:
         started = time.monotonic()
         try:
             self.engine.run(spec)
-            self.engine.exec(
+            self._start_harness(
                 id,
-                "tmux",
-                "-u",
-                "-f",
-                "/home/agent/.devbox/tmux.conf",
-                "new-session",
-                "-d",
-                "-s",
-                "agent",
-                "-c",
                 str(project.workdir),
-                "--",
-                *command,
-                env=secrets,
+                command,
+                secrets,
+                () if no_config else harness.secrets,
             )
         except (DevboxError, KeyboardInterrupt):
             # Retain state for diagnosis, but do not leak a container.
@@ -398,16 +405,91 @@ class App:
     def attach(self, container: Container) -> None:
         if container.state != "running":
             raise DevboxError(
-                f"{container.id} is stopped; resume a saved conversation in a new container"
+                f"{container.id} is stopped; start it with the container runtime, then attach"
             )
-        if self.engine.exec(
-            container.id, "tmux", "has-session", "-t", "agent", check=False
-        ).returncode:
-            raise DevboxError(
-                "Harness session has exited. Use shell to inspect, or resume saved history."
-            )
+        directory = self.store.directory(container.id)
+        # Serialize the check/restart, but not the interactive connection. Every
+        # host devbox process for this instance uses the same saved-state lock.
+        with (directory / "attach.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            metadata = self.store.metadata(container.id)
+            launch = metadata.get("launch")
+            if launch is None:
+                # Older instances have no saved launch policy. Do not guess one
+                # from today's profile, which may have changed since creation.
+                if self.engine.exec(
+                    container.id, "tmux", "has-session", "-t", "agent", check=False
+                ).returncode:
+                    raise DevboxError(
+                        "Harness exited; this older instance has no saved launch policy. "
+                        "Use shell to inspect, or devbox fork to continue saved history."
+                    )
+            elif not self._harness_alive(container.id):
+                self._recover_harness(container.id, metadata)
         print("Detach with Ctrl-a, then d. The harness will keep running.", flush=True)
         self.engine.connect(container.id, "tmux", "-u", "attach-session", "-t", "agent")
+
+    def _start_harness(
+        self,
+        id: str,
+        workdir: str,
+        command: Sequence[str],
+        secrets: dict[str, str],
+        names: Sequence[str],
+    ) -> None:
+        self.engine.exec(
+            id,
+            "bash",
+            "/home/agent/.devbox/harness.sh",
+            "start",
+            workdir,
+            str(len(names)),
+            *names,
+            *command,
+            env=secrets,
+        )
+
+    def _harness_alive(self, id: str) -> bool:
+        return (
+            self.engine.exec(
+                id, "bash", "/home/agent/.devbox/harness.sh", "alive", check=False
+            ).returncode
+            == 0
+        )
+
+    def _recover_harness(self, id: str, metadata: dict[str, Any]) -> None:
+        launch = metadata["launch"]
+        command = list(launch["command"])
+        home = self.store.directory(id) / "home"
+        sessions = self.store.sessions(instance=id)
+        latest = max(sessions, key=lambda s: (s.path.stat().st_mtime_ns, s.id), default=None)
+        session = (
+            {"path": str(latest.path.relative_to(home)), "id": latest.id.split("/", 1)[1]}
+            if latest
+            else launch.get("initial_session")
+        )
+        if session:
+            try:
+                json.loads(read_session(home / relative(session["path"]), home, header=True))
+            except (DevboxError, OSError, ValueError) as exc:
+                raise DevboxError(
+                    "Cannot read the saved conversation; use shell to inspect"
+                ) from exc
+            if not launch["continue_args"]:
+                raise DevboxError(
+                    f"{metadata['harness']} cannot continue a conversation in place; "
+                    "use devbox fork or shell to inspect"
+                )
+            command.extend(session_args(launch["continue_args"], session["path"], session["id"]))
+        names = () if launch["no_config"] else launch["secrets"]
+        secrets = environment_secrets(names)
+        detail = f"continuing session {session['id']}" if session else "starting a new conversation"
+        print(f"Restarting {metadata['harness']} in {id}; {detail}.", flush=True)
+        # A dead pane or a replacement shell may still occupy the session. Only
+        # remove it after resolving the continuation and credentials successfully.
+        # harness.sh start returns only once the new pane leader is recognizable.
+        self.engine.exec(id, "tmux", "kill-session", "-t", "agent", check=False)
+        self._start_harness(id, metadata["workdir"], command, secrets, names)
 
     def shell(self, container: Container) -> None:
         if container.state != "running":

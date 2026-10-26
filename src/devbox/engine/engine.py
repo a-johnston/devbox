@@ -309,9 +309,6 @@ class Engine(ABC):
             env,
         )
 
-    def stop(self, id: str) -> None:
-        self.call("stop", id)
-
 
 def backend_name() -> str:
     """The host OS determines the backend and its saved-state namespace."""

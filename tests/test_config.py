@@ -51,6 +51,7 @@ def test_discovery_from_subdirectory(repository: Path) -> None:
     assert project.root == repository
     assert project.cwd == child
     assert project.context == repository / ".devbox"
+    assert str(project.workdir) == f"/workspace/{repository.name}/nested/deeper"
 
 
 def test_worktree_uses_primary_mount_and_falls_back_to_config(repository: Path) -> None:
@@ -90,7 +91,10 @@ def test_worktree_is_its_own_checkout(repository: Path) -> None:
         capture_output=True,
     )
     (tree / ".devbox.toml").unlink()
-    assert Project.discover(tree).checkout == tree
+    (tree / "sub").mkdir()
+    project = Project.discover(tree / "sub")
+    assert project.checkout == tree
+    assert str(project.workdir) == f"/workspace/{repository.name}/sub"
 
 
 def test_external_worktree_rejected(repository: Path, tmp_path: Path) -> None:

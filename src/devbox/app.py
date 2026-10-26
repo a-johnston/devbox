@@ -295,7 +295,7 @@ class App:
             imported = seed_config(harness, home)
             if imported:
                 print("Seeded isolated config copy: " + ", ".join(imported), flush=True)
-        run_hook(harness, "trust_project", home / harness.state_dir, str(project.cwd))
+        run_hook(harness, "trust_project", home / harness.state_dir, str(project.workdir))
         for prepared in harness.prepared_dirs:
             # Image-local and copy-on-write per container, never through the host mount.
             link = home / prepared
@@ -306,7 +306,7 @@ class App:
             session_id = session.id.split("/", 1)[1]
             # Harnesses that resume by ID choose where their snapshot must live.
             target = relative(
-                run_hook(harness, "resume_file", session_id, str(project.cwd))
+                run_hook(harness, "resume_file", session_id, str(project.workdir))
                 or ".devbox/resume.jsonl"
             )
             snapshot_session(
@@ -326,7 +326,7 @@ class App:
             .format(
                 id=id,
                 architecture=architecture,
-                checkout=project.checkout,
+                checkout=project.workspace,
                 start=start,
             )
         )
@@ -336,6 +336,8 @@ class App:
             "project": str(project.cwd),
             "root": str(project.root),
             "checkout": str(project.checkout),
+            "workspace": str(project.workspace),
+            "workdir": str(project.workdir),
             "branch": branch,
             "base": base,
             "harness": harness.name,
@@ -357,7 +359,7 @@ class App:
                 "dev.devbox.harness": harness.name,
             },
             binds=(
-                (str(cloned), str(project.checkout)),
+                (str(cloned), str(project.workspace)),
                 (str(home), "/home/agent"),
                 *shared_mounts,
             ),
@@ -377,7 +379,7 @@ class App:
                 "-s",
                 "agent",
                 "-c",
-                str(project.cwd),
+                str(project.workdir),
                 "--",
                 *command,
                 env=secrets,
@@ -411,7 +413,9 @@ class App:
         if container.state != "running":
             raise DevboxError(f"{container.id} is stopped")
         metadata = self.store.metadata(container.id)
-        self.engine.connect(container.id, "/bin/bash", cwd=metadata["project"])
+        self.engine.connect(
+            container.id, "/bin/bash", cwd=metadata.get("workdir", metadata["project"])
+        )
 
     def _clone(
         self, project: Project, target: Path, previous: str | None
@@ -526,7 +530,8 @@ class App:
             "-c",
             repository.RECEIVE,
             "sh",
-            metadata["checkout"],
+            # Instances created before the workspace move mount their clone at the checkout.
+            metadata.get("workspace", metadata["checkout"]),
             *specs,
             input=data,
         )

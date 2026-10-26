@@ -26,7 +26,7 @@ class Guest(FakeEngine):
         result = super().exec(id, *args, **kwargs)
         if kwargs.get("input") is None:
             return result
-        checkout = self.store.metadata(id)["checkout"]
+        checkout = self.store.metadata(id)["workspace"]
         clone = str(self.store.directory(id) / "repo")
         command = [clone if arg == checkout else arg for arg in args]
         return subprocess.run(
@@ -47,7 +47,8 @@ def test_instance_learns_its_identity_and_constraints(
     assert engine.runs[0].env["DEVBOX_INSTANCE"] == id
     text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()
     assert (
-        f"{project.checkout} is a private clone of the user's repository, started from main" in text
+        f"{project.workspace} is a private clone of the user's repository, started from main"
+        in text
     )
     assert f"`devbox review {id}`" in text and f"`devbox sync {id} [branch ...]`" in text
 

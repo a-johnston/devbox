@@ -102,7 +102,7 @@ def test_resume_places_snapshot_by_id_and_forks(
     session = Session(f"{original_id}/abc", original_id, "claude", str(project.cwd), source)
     id = app.new(project, claude, no_config=True, session=session)
     home = app.store.directory(id) / "home"
-    key = "".join(c if c.isalnum() else "-" for c in str(project.cwd))
+    key = "".join(c if c.isalnum() else "-" for c in str(project.workdir))
     assert (home / f".claude/projects/{key}/abc.jsonl").read_text() == source.read_text()
     assert "--dangerously-skip-permissions" in engine.execs[-1].args
     assert engine.execs[-1].args[-3:] == ("--resume", "abc", "--fork-session")
@@ -122,7 +122,7 @@ def test_new_trusts_project_and_skips_bypass_warning(
     id = app.new(project, claude, no_config=no_config)
     state = app.store.directory(id) / "home/.claude"
     config = json.loads((state / ".claude.json").read_text())
-    assert config["projects"][str(project.cwd)]["hasTrustDialogAccepted"] is True
+    assert config["projects"][str(project.workdir)]["hasTrustDialogAccepted"] is True
     settings = json.loads((state / "settings.json").read_text())
     assert settings["skipDangerousModePermissionPrompt"] is True
     assert settings.get("model") == (None if no_config else "opus")

@@ -15,6 +15,8 @@ from typing import Any
 from devbox.errors import DevboxError
 
 ASSETS = Path(__file__).parent / "assets"
+# Instances mount their clone here, not at the host checkout's path.
+WORKSPACE = PurePosixPath("/workspace")
 
 
 def table(value: Any, name: str) -> dict[str, Any]:
@@ -129,6 +131,16 @@ class Project:
     memory: str = "8G"
     # Paths that fetch flags when an instance's branches change them, beyond the image inputs.
     watch: tuple[str, ...] = ()
+
+    @property
+    def workspace(self) -> PurePosixPath:
+        """The clone's guest path, named after the primary checkout even from a worktree."""
+        return WORKSPACE / self.root.name
+
+    @property
+    def workdir(self) -> PurePosixPath:
+        """cwd's counterpart in the guest."""
+        return self.workspace / self.cwd.relative_to(self.checkout).as_posix()
 
     @classmethod
     def discover(cls, directory: Path) -> Project:

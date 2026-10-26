@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 from dataclasses import replace
@@ -25,7 +26,7 @@ def test_new_composes_images_and_mounts_only_selected_paths(
     run = engine.runs[0]
     clone = app.store.directory(id) / "repo"
     assert run.binds == (
-        (str(clone), str(project.checkout)),
+        (str(clone), "/workspace/project with spaces"),
         (str(app.store.directory(id) / "home"), "/home/agent"),
     )
     assert run.cpus == project.cpus
@@ -43,7 +44,7 @@ def test_new_composes_images_and_mounts_only_selected_paths(
         "-s",
         "agent",
         "-c",
-        str(project.cwd),
+        "/workspace/project with spaces",
         "--",
         *harness.command,
     )
@@ -93,7 +94,8 @@ def test_clone_follows_a_detached_worktree(
     clone = app.store.directory(id) / "repo"
     assert git(clone, "rev-parse", "HEAD") == git(tree, "rev-parse", "HEAD")
     assert app.store.metadata(id)["branch"] is None
-    assert engine.runs[0].binds[0] == (str(clone), str(tree))
+    # Named after the primary checkout, not the worktree.
+    assert engine.runs[0].binds[0] == (str(clone), "/workspace/project with spaces")
 
 
 def test_non_repository_projects_are_rejected(
@@ -159,6 +161,28 @@ def test_attach_connects_directly_to_tmux(tmp_path: Path) -> None:
     container = Container("ours", "running", "project", "pi", "now")
     app.attach(container)
     assert engine.connections == [("ours", ("tmux", "-u", "attach-session", "-t", "agent"), None)]
+
+
+@pytest.mark.parametrize(
+    ("metadata", "cwd"),
+    [
+        (
+            {"project": "/host/project", "workdir": "/workspace/project/sub"},
+            "/workspace/project/sub",
+        ),
+        # Instances created before the workspace move mount their clone at the host path.
+        ({"project": "/host/project"}, "/host/project"),
+    ],
+)
+def test_shell_starts_in_the_guest_workdir(
+    tmp_path: Path, metadata: dict[str, str], cwd: str
+) -> None:
+    engine = FakeEngine()
+    app = App(engine, Store(tmp_path))
+    id, directory = app.store.create()
+    (directory / "metadata.json").write_text(json.dumps(metadata))
+    app.shell(Container(id, "running", "project", "pi", "now"))
+    assert engine.connections == [(id, ("/bin/bash",), cwd)]
 
 
 def test_kill_all_retains_state(tmp_path: Path) -> None:

@@ -52,7 +52,7 @@ runtime and harness. The image context and Containerfile must be inside the proj
 
 `devbox new` creates a new container with the selected harness for a given project path, defaulting to the current
 directory. Each instance clones the committed `HEAD` of the active checkout into its saved state, and mounts the clone
-at the checkout's path. Uncommitted changes are not copied. The clone has no remote and must be resynced with the host
+at `/workspace/<name>`, named after the primary checkout even when started from a worktree. Uncommitted changes are not copied. The clone has no remote and must be resynced with the host
 checkout with `devbox sync`. Agents learn these constraints from devbox's [instructions](src/devbox/assets/runtime/environment.md),
 which every harness appends to its system prompt. Container images are reused when possible and only require rebuilding
 when the project dependencies or harness version change.

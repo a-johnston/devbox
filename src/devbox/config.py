@@ -71,9 +71,13 @@ def load_toml(path: Path) -> dict[str, Any]:
         raise DevboxError(f"Cannot read {path}: {exc}") from exc
 
 
+# Where the user's Git configuration lives: chosen by the user, never exported by Git itself.
+CONFIG_LOCATIONS = ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM")
+
+
 def git_environment() -> dict[str, str]:
     # Variables exported by Git hooks (GIT_DIR, ...) must not override --project.
-    return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    return {key: value for key, value in os.environ.items() if not key.startswith("GIT_") or key in CONFIG_LOCATIONS}
 
 
 def _git(directory: Path, *args: str) -> subprocess.CompletedProcess[str]:

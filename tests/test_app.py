@@ -81,6 +81,7 @@ def test_start_rejects_non_repositories(tmp_path: Path) -> None:
 
 
 def test_identity_is_only_the_author(project: Project) -> None:
+    assert Git(project.root).identity() == {}  # Nothing leaks from the developer's configuration.
     git(project.root, "config", "user.name", "Old")
     git(project.root, "config", "--add", "user.name", "Ada")
     git(project.root, "config", "user.email", "ada@example.invalid")

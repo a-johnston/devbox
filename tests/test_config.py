@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from devbox.config import Harness, Project, harnesses, init
+from devbox.config import Harness, Project, git_environment, harnesses, init
 from devbox.errors import DevboxError
 
 
@@ -175,3 +175,11 @@ def test_custom_profile_overrides_builtin(tmp_path: Path, harness: Harness, monk
     (target / "Containerfile").write_text("ARG RUNTIME_IMAGE\nFROM ${RUNTIME_IMAGE}\n")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     assert harnesses()["pi"].command[0] == "custom-pi"
+
+
+def test_git_environment_drops_hook_variables_but_keeps_the_users_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"):
+        monkeypatch.setenv(key, "x")
+    env = git_environment()
+    assert "GIT_DIR" not in env and "GIT_INDEX_FILE" not in env and "GIT_WORK_TREE" not in env
+    assert (env["GIT_CONFIG_GLOBAL"], env["GIT_CONFIG_NOSYSTEM"]) == ("x", "x")

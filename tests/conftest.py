@@ -11,14 +11,18 @@ from devbox.config import ASSETS, Harness, Project
 
 
 @pytest.fixture(scope="session", autouse=True)
-def isolated_git_environment() -> Iterator[None]:
+def isolated_git_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     # Git hooks export repository-local variables. Never let fixture operations
     # inherit a parent commit's index/worktree or the user's executable hooks.
+    # Every Git, devbox's own included, reads only this global configuration. Background
+    # maintenance would race with tests copying or inspecting repositories in parallel.
+    config = tmp_path_factory.mktemp("git") / "config"
+    config.write_text("[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n")
     with pytest.MonkeyPatch.context() as patch:
         for key in os.environ:
             if key.startswith("GIT_"):
                 patch.delenv(key)
-        patch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+        patch.setenv("GIT_CONFIG_GLOBAL", str(config))
         patch.setenv("GIT_CONFIG_NOSYSTEM", "1")
         yield
 

@@ -10,14 +10,14 @@ from devbox.app import App
 from devbox.config import ASSETS, Harness, Project
 from devbox.errors import DevboxError
 from devbox.state import Store, build_files, host_version
-from tests.fakes import FakeEngine, FakeGit
+from tests.fakes import FakeEngine, FakeRepository
 
 
 @pytest.mark.parametrize("name", ["pi", "claude"])
 def test_built_in_harnesses_share_vim_runtime(name: str, project: Project, tmp_path: Path) -> None:
     harness = replace(Harness.load(ASSETS / "harnesses" / name), version_command=())
     engine = FakeEngine()
-    App(engine, Store(tmp_path / "state"), FakeGit()).build(project, harness, no_config=True)
+    App(engine, Store(tmp_path / "state"), FakeRepository()).build(project, harness, no_config=True)
     _, runtime, prepared = engine.builds
     assert runtime.file == ASSETS / "runtime/Containerfile"
     containerfile = runtime.file.read_text()
@@ -29,7 +29,7 @@ def test_built_in_harnesses_share_vim_runtime(name: str, project: Project, tmp_p
 
 def test_second_new_never_enters_build_scope(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    app = App(engine, Store(tmp_path / "state"), FakeRepository())
     app.new(project, harness, no_config=True)
     app.new(project, harness, no_config=True)
     assert engine.build_scopes == 1
@@ -48,7 +48,7 @@ def test_failed_preparation_exits_build_scope_without_creating_instance(
     failure: BaseException,
 ) -> None:
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    app = App(engine, Store(tmp_path / "state"), FakeRepository())
 
     def fail(*args: object, **kwargs: object) -> None:
         assert engine.building_active
@@ -73,7 +73,7 @@ def test_invalid_package_settings_fail_before_build(harness: Harness, packages: 
 
 def test_explicit_build_rebuilds(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    app = App(engine, Store(tmp_path / "state"), FakeRepository())
     first = app.build(project, harness)
     assert app.build(project, harness) == first
     assert len(engine.builds) == 6
@@ -95,7 +95,7 @@ def test_package_variant_ignores_private_config_and_filters(project: Project, ha
     files = build_files(harness)
     assert files == {"package-sources.txt": "npm:example@1\nnpm:other\n"}
     assert build_files(harness, no_config=True) == {}
-    app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())
+    app = App(FakeEngine(), Store(tmp_path / "state"), FakeRepository())
     image = app._prepared_image(project, harness, files, {})
     settings.write_text(json.dumps({"packages": ["npm:other", "npm:example@1"], "apiKey": "different"}))
     assert app._prepared_image(project, harness, build_files(harness), {}) == image
@@ -133,7 +133,7 @@ def test_build_context_never_contains_private_settings(
         build(tag, file, context, args, **kwargs)
 
     monkeypatch.setattr(engine, "build", inspect)
-    App(engine, Store(tmp_path / "state"), FakeGit()).build(project, harness)
+    App(engine, Store(tmp_path / "state"), FakeRepository()).build(project, harness)
 
 
 def version_command(output: str, code: int = 0) -> tuple[str, ...]:
@@ -157,7 +157,7 @@ def test_host_version(harness: Harness, command: tuple[str, ...], expected: str 
 
 def test_host_version_is_a_build_arg_and_image_variant(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    app = App(engine, Store(tmp_path / "state"), FakeRepository())
     first = app.build(project, replace(harness, version_command=version_command("1.3.0")))
     assert engine.builds[-1].args["HARNESS_VERSION"] == "1.3.0"
     upgraded = app.build(project, replace(harness, version_command=version_command("1.4.0")))
@@ -171,7 +171,7 @@ def test_host_version_is_a_build_arg_and_image_variant(project: Project, harness
 def test_architecture_is_an_image_variant(
     project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())
+    app = App(FakeEngine(), Store(tmp_path / "state"), FakeRepository())
     monkeypatch.setattr("platform.machine", lambda: "arm64")
     arm = app._prepared_image(project, harness, {}, {})
     monkeypatch.setattr("platform.machine", lambda: "x86_64")
@@ -184,6 +184,6 @@ def test_unsupported_host_fails_before_building(
     monkeypatch.setattr("platform.machine", lambda: "riscv64")
     engine = FakeEngine()
     with pytest.raises(DevboxError, match="riscv64"):
-        App(engine, Store(tmp_path / "state"), FakeGit()).new(project, harness, no_config=True)
+        App(engine, Store(tmp_path / "state"), FakeRepository()).new(project, harness, no_config=True)
     assert engine.builds == []
     assert engine.build_scopes == 0

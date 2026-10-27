@@ -9,7 +9,7 @@ from devbox.app import App
 from devbox.config import Harness, Project
 from devbox.errors import DevboxError
 from devbox.state import Store, snapshot_session
-from tests.fakes import FakeEngine, FakeGit
+from tests.fakes import FakeEngine, FakeRepository
 
 
 def test_catalog_does_not_follow_home_symlinks(tmp_path: Path) -> None:
@@ -55,5 +55,5 @@ def test_snapshot_refuses_fifo_without_blocking(tmp_path: Path) -> None:
 def test_state_cannot_be_inside_shared_project(project: Project, harness: Harness) -> None:
     engine = FakeEngine()
     with pytest.raises(DevboxError, match="outside the shared"):
-        App(engine, Store(project.root / "state"), FakeGit()).new(project, harness)
+        App(engine, Store(project.root / "state"), FakeRepository()).new(project, harness)
     assert engine.builds == [] and engine.runs == []

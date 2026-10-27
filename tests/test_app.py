@@ -12,14 +12,15 @@ from devbox.app import COLORS, PALETTE, App, accent, tmux_config
 from devbox.config import Harness, Project
 from devbox.engine import Container, mount
 from devbox.errors import DevboxError
+from devbox.repository import Git
 from devbox.state import Session, Store
-from tests.fakes import BASE, FakeEngine, FakeGit
+from tests.fakes import BASE, FakeEngine, FakeRepository
 from tests.repos import git
 
 
 def test_new_composes_images_and_mounts_only_selected_paths(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    app = App(engine, Store(tmp_path / "state"), FakeRepository())
     id = app.new(project, harness, no_config=True)
     assert len(engine.builds) == 3
     run = engine.runs[0]
@@ -49,7 +50,7 @@ def test_new_composes_images_and_mounts_only_selected_paths(project: Project, ha
 def test_start_clones_committed_branch_without_host_links(project: Project, tmp_path: Path) -> None:
     (project.root / ".devbox.toml").write_text("dirty")
     clone = tmp_path / "clone"
-    started = repository.start(project.checkout, clone)
+    started = Git().start(project.checkout, clone)
     assert started == repository.Started("main", git(project.root, "rev-parse", "HEAD"), dirty=True)
     assert git(clone, "symbolic-ref", "HEAD") == "refs/heads/main"
     assert git(clone, "rev-parse", "HEAD") == started.base
@@ -66,7 +67,7 @@ def test_start_follows_a_detached_worktree(project: Project, tmp_path: Path) -> 
     git(project.root, "worktree", "add", "--detach", str(tree))
     git(tree, "commit", "--allow-empty", "-m", "unreachable from branches")
     clone = tmp_path / "clone"
-    started = repository.start(tree, clone)
+    started = Git().start(tree, clone)
     assert started.branch is None
     assert git(clone, "rev-parse", "HEAD") == git(tree, "rev-parse", "HEAD") == started.base
     assert git(clone, "rev-parse", "--abbrev-ref", "HEAD") == "HEAD"
@@ -76,7 +77,7 @@ def test_start_follows_a_detached_worktree(project: Project, tmp_path: Path) -> 
 
 def test_start_rejects_non_repositories(tmp_path: Path) -> None:
     with pytest.raises(DevboxError, match="Git repository"):
-        repository.start(tmp_path, tmp_path / "clone")
+        Git().start(tmp_path, tmp_path / "clone")
 
 
 def test_identity_is_only_the_author(project: Project) -> None:
@@ -84,7 +85,7 @@ def test_identity_is_only_the_author(project: Project) -> None:
     git(project.root, "config", "--add", "user.name", "Ada")
     git(project.root, "config", "user.email", "ada@example.invalid")
     git(project.root, "config", "credential.helper", "store")
-    assert repository.identity(project.root) == {
+    assert Git().identity(project.root) == {
         "GIT_AUTHOR_NAME": "Ada",
         "GIT_COMMITTER_NAME": "Ada",
         "GIT_AUTHOR_EMAIL": "ada@example.invalid",
@@ -97,7 +98,7 @@ def test_new_records_where_the_clone_started(
     project: Project, harness: Harness, tmp_path: Path, capsys: pytest.CaptureFixture[str], branch: str | None
 ) -> None:
     engine = FakeEngine()
-    host = FakeGit(repository.Started(branch, BASE, dirty=True), identity={"GIT_AUTHOR_NAME": "Ada"})
+    host = FakeRepository(repository.Started(branch, BASE, dirty=True), identity={"GIT_AUTHOR_NAME": "Ada"})
     app = App(engine, Store(tmp_path / "state"), host)
     id = app.new(project, harness, no_config=True)
     assert "Uncommitted changes" in capsys.readouterr().out
@@ -111,7 +112,7 @@ def test_new_records_where_the_clone_started(
 
 def test_fork_snapshots_conversation(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    app = App(engine, Store(tmp_path / "state"), FakeRepository())
     original_id, original = app.store.create()
     (original / "metadata.json").write_text("{}")
     source = original / "home/source.jsonl"
@@ -127,7 +128,7 @@ def test_failed_start_removes_container_but_retains_state(
     project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    app = App(engine, Store(tmp_path / "state"), FakeRepository())
     execute = engine.exec
 
     def fail_tmux(id: str, *args: str, **kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -197,7 +198,7 @@ def test_accent_is_stable_and_status_cannot_inject_tmux_commands() -> None:
 def test_instances_are_named_after_free_colors_then_fall_back(
     project: Project, harness: Harness, tmp_path: Path
 ) -> None:
-    app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())
+    app = App(FakeEngine(), Store(tmp_path / "state"), FakeRepository())
     first = app.new(project, harness, no_config=True)
     second = app.new(project, harness, no_config=True)
     assert first != second
@@ -224,7 +225,7 @@ def test_colorterm_is_inherited_unless_overridden(
     monkeypatch.setenv("COLORTERM", "truecolor")
     monkeypatch.setenv("SECRET_TOKEN", "hunter2")
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    app = App(engine, Store(tmp_path / "state"), FakeRepository())
     app.new(project, harness, no_config=True)
     assert engine.runs[-1].env["COLORTERM"] == "truecolor"
     assert "SECRET_TOKEN" not in engine.runs[-1].env
@@ -237,7 +238,7 @@ def test_builds_and_describes_the_host_architecture(
 ) -> None:
     monkeypatch.setattr("platform.machine", lambda: "x86_64")
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    app = App(engine, Store(tmp_path / "state"), FakeRepository())
     id = app.new(project, harness, no_config=True)
     assert [build.platform for build in engine.builds] == ["linux/amd64"] * 3
     text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()

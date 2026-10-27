@@ -33,6 +33,7 @@ from devbox.engine.engine import (
     select_engine,
 )
 from devbox.errors import DevboxError
+from devbox.repository import Git, Repository
 from devbox.state import (
     Instance,
     Session,
@@ -131,11 +132,11 @@ class Landing:
 
 class App:
     def __init__(
-        self, engine: Engine | None = None, store: Store | None = None, git: repository.HostGit | None = None
+        self, engine: Engine | None = None, store: Store | None = None, repository: Repository | None = None
     ) -> None:
         self.engine = engine or select_engine()
         self.store = store or Store(backend=self.engine.name)
-        self.git = git or repository.HostGit()
+        self.repository = repository or Git()
         if self.store.backend != self.engine.name:
             raise DevboxError("The saved-state backend must match the container engine")
 
@@ -365,7 +366,7 @@ class App:
                 (str(home), "/home/agent"),
                 *shared_mounts,
             ),
-            env={**env, **self.git.identity(project.cwd), "DEVBOX_INSTANCE": id},
+            env={**env, **self.repository.identity(project.cwd), "DEVBOX_INSTANCE": id},
         )
         started = time.monotonic()
         try:
@@ -475,10 +476,10 @@ class App:
         """Return the host branch and commit the work started from, and what is checked out."""
         if previous:
             metadata = self.store.metadata(previous)
-            start = self.git.clone_instance(self.store.directory(previous) / "repo", target)
+            start = self.repository.clone_instance(self.store.directory(previous) / "repo", target)
             # Keep the original host starting point for provenance and sync bundles.
             return metadata.get("branch"), metadata["base"], start
-        started = self.git.start(project.checkout, target)
+        started = self.repository.start(project.checkout, target)
         if started.dirty:
             print(f"Uncommitted changes in {project.checkout} are not copied.", flush=True)
         return started.branch, started.base, started.branch or started.base[:12]
@@ -495,7 +496,7 @@ class App:
             for path in (project.config.resolve(), project.containerfile, project.context)
             if path.is_relative_to(project.checkout)
         ] + [f":(glob){pattern}" for pattern in project.watch]
-        return repository.fetch(
+        return self.repository.fetch(
             project.root,
             clone,
             f"refs/devbox/{id}/",
@@ -506,7 +507,7 @@ class App:
     def review(self, id: str, ref: str, *options: str) -> None:
         """Show a fetched branch's changes since its merge base with the current host HEAD."""
         metadata = self.store.metadata(id)
-        repository.show_diff(Path(metadata["root"]), ref, *options)
+        self.repository.show_diff(Path(metadata["root"]), ref, *options)
 
     def land(self, id: str, branch: repository.Fetched) -> Landing:
         """Land a fetched branch in the instance's host repository's primary checkout, then
@@ -516,7 +517,7 @@ class App:
         to its rebased commits, so its history matches what was landed.
         """
         root = self.store.metadata(id)["root"]
-        landed = repository.land(Path(root), branch)
+        landed = self.repository.land(Path(root), branch)
         return Landing(landed, self._sync_landed(id, root, branch, landed))
 
     def _sync_landed(
@@ -564,7 +565,7 @@ class App:
         branches = branches or ([metadata["branch"]] if metadata.get("branch") else [])
         if not branches:
             raise DevboxError(f"{container.id} started from a detached HEAD; name branches to sync")
-        delivery = repository.bundle(Path(metadata["root"]), branches, metadata["base"])
+        delivery = self.repository.bundle(Path(metadata["root"]), branches, metadata["base"])
         result = self.engine.exec(
             container.id,
             "sh",

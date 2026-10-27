@@ -11,9 +11,9 @@ from devbox.app import App
 from devbox.config import Harness, Project
 from devbox.engine import Container
 from devbox.errors import DevboxError
-from devbox.repository import RECEIVE, Delivery, HostGit, Started, bundle, receive_specs
+from devbox.repository import RECEIVE, Delivery, Git, Started, receive_specs
 from devbox.state import Session, Store
-from tests.fakes import BASE, FakeEngine, FakeGit
+from tests.fakes import BASE, FakeEngine, FakeRepository
 from tests.repos import commit, git
 
 
@@ -28,7 +28,7 @@ def receive(
     repository: Path, clone: Path, branches: Sequence[str], rewrites: Sequence[tuple[str, str, str]] = ()
 ) -> list[str]:
     """Deliver host branches to clone as App.sync does, running the guest script locally."""
-    delivery = bundle(repository, branches, git(repository, "rev-list", "--max-parents=0", "main"))
+    delivery = Git().bundle(repository, branches, git(repository, "rev-list", "--max-parents=0", "main"))
     return run_receive(clone, receive_specs(delivery, branches, rewrites), delivery.data)
 
 
@@ -125,14 +125,14 @@ def test_bundle_delivers_branches_at_or_behind_base_by_name(repository: Path, tm
     git(repository, "branch", "at-base")
     git(repository, "branch", "behind", root)
     advance(repository)
-    delivery = bundle(repository, ["main", "at-base", "behind"], base)
+    delivery = Git().bundle(repository, ["main", "at-base", "behind"], base)
     assert delivery.known == {"at-base": base, "behind": root}
     data = tmp_path / "data.bundle"
     data.write_bytes(base64.b64decode(delivery.data))
     heads = git(repository, "bundle", "list-heads", str(data)).splitlines()
     assert [line.split()[1] for line in heads] == ["refs/heads/main"]
     # Nothing beyond base: no bundle at all, rather than the branches' whole history.
-    assert bundle(repository, ["at-base"], base) == Delivery("", {"at-base": base})
+    assert Git().bundle(repository, ["at-base"], base) == Delivery("", {"at-base": base})
 
 
 def test_receive_specs_deliver_then_rewrite_then_fast_forward() -> None:
@@ -148,7 +148,7 @@ def test_receive_specs_deliver_then_rewrite_then_fast_forward() -> None:
 
 def test_bundle_refuses_missing_branches(repository: Path) -> None:
     with pytest.raises(DevboxError, match="No branch missing"):
-        bundle(repository, ["missing"], git(repository, "rev-parse", "main"))
+        Git().bundle(repository, ["missing"], git(repository, "rev-parse", "main"))
 
 
 # Instances: what they are told, where forks start, and which branches App.sync delivers.
@@ -156,7 +156,7 @@ def test_bundle_refuses_missing_branches(repository: Path) -> None:
 
 def test_instance_learns_its_identity_and_constraints(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    app = App(engine, Store(tmp_path / "state"), FakeRepository())
     id = app.new(project, harness, no_config=True)
     assert engine.runs[0].env["DEVBOX_INSTANCE"] == id
     text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()
@@ -167,7 +167,7 @@ def test_instance_learns_its_identity_and_constraints(project: Project, harness:
 def test_clone_instance_continues_from_its_checked_out_branch(clone: Path, tmp_path: Path) -> None:
     work = commit(clone, "work", {"a": "1"})
     target = tmp_path / "fork"
-    assert HostGit().clone_instance(clone, target) == "work"
+    assert Git().clone_instance(clone, target) == "work"
     assert git(target, "rev-parse", "HEAD") == work
     assert git(target, "symbolic-ref", "--short", "HEAD") == "work"
 
@@ -175,12 +175,12 @@ def test_clone_instance_continues_from_its_checked_out_branch(clone: Path, tmp_p
 def test_fork_from_instance_keeps_the_original_host_starting_point(
     project: Project, harness: Harness, tmp_path: Path
 ) -> None:
-    app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit(Started("release", BASE, dirty=False)))
+    app = App(FakeEngine(), Store(tmp_path / "state"), FakeRepository(Started("release", BASE, dirty=False)))
     first = app.new(project, harness, no_config=True)
     source = app.store.directory(first) / "home/source.jsonl"
     source.write_text('{"type":"session","id":"s"}\n')
     session = Session(f"{first}/s", first, "pi", str(project.cwd), source)
-    app.git = FakeGit(Started("main", "f" * 40, dirty=False))
+    app.repository = FakeRepository(Started("main", "f" * 40, dirty=False))
 
     resumed = app.new(project, harness, no_config=True, session=session, from_instance=True)
     metadata = app.store.metadata(resumed)
@@ -193,37 +193,29 @@ def test_fork_from_instance_keeps_the_original_host_starting_point(
 
 
 def test_sync_refusals(project: Project, harness: Harness, tmp_path: Path) -> None:
-    app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())
+    app = App(FakeEngine(), Store(tmp_path / "state"), FakeRepository())
     id = app.new(project, harness, no_config=True)
     with pytest.raises(DevboxError, match="stopped"):
         app.sync(replace(running(id), state="stopped"), [])
-    app.git = FakeGit(Started(None, BASE, dirty=False))
+    app.repository = FakeRepository(Started(None, BASE, dirty=False))
     detached = app.new(project, harness, no_config=True)
     with pytest.raises(DevboxError, match="name branches"):
         app.sync(running(detached), [])
 
 
-def test_sync_bundles_host_branches_for_the_guest_script(
-    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_sync_bundles_host_branches_for_the_guest_script(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    repository = FakeRepository()
+    app = App(engine, Store(tmp_path / "state"), repository)
     id = app.new(project, harness, no_config=True)
-    bundled = []
-
-    delivery = Delivery("BUNDLE", {"release": BASE})
-
-    def bundle(root: Path, branches: list[str], base: str) -> Delivery:
-        bundled.append((root, branches, base))
-        return delivery
-
-    monkeypatch.setattr("devbox.repository.bundle", bundle)
+    repository.delivery = Delivery("BUNDLE", {"release": BASE})
     engine.execs.clear()
     engine.stdout = "one\ntwo\n"
     assert app.sync(running(id), [], [("feature", "old", "new")]) == ["one", "two"]
-    assert bundled == [(project.root, ["main"], BASE)]  # Defaults to the branch the instance started from.
+    # Defaults to the branch the instance started from.
+    assert repository.calls == [("bundle", project.root, ["main"], BASE)]
     (request,) = engine.execs
-    specs = receive_specs(delivery, ["main"], [("feature", "old", "new")])
+    specs = receive_specs(repository.delivery, ["main"], [("feature", "old", "new")])
     assert request.args == ("sh", "-c", RECEIVE, "sh", str(project.workspace), *specs)
     assert request.input == "BUNDLE"
 
@@ -232,5 +224,5 @@ def test_sync_bundles_host_branches_for_the_guest_script(
     del metadata["workspace"]
     (app.store.directory(id) / "metadata.json").write_text(json.dumps(metadata))
     app.sync(running(id), ["release", "main"])
-    assert bundled[-1] == (project.root, ["release", "main"], BASE)
+    assert repository.calls[-1] == ("bundle", project.root, ["release", "main"], BASE)
     assert engine.execs[-1].args[4] == metadata["checkout"]

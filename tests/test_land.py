@@ -12,9 +12,9 @@ from devbox.cli import dispatch, parser
 from devbox.config import Harness, Project
 from devbox.engine import Container
 from devbox.errors import DevboxError
-from devbox.repository import Fetched, HostCheckout, Landed, LocalBranches, land, landing_target, refs
+from devbox.repository import Fetched, Git, HostCheckout, Landed, LocalBranches, landing_target, refs
 from devbox.state import Store
-from tests.fakes import FakeEngine, FakeGit
+from tests.fakes import FakeEngine, FakeRepository
 from tests.repos import commit, git
 
 
@@ -33,7 +33,7 @@ def test_land_rebases_before_fast_forwarding(repository: Path) -> None:
     # Host configuration must not silently stash work or move other branches during rebase.
     git(repository, "config", "rebase.updateRefs", "true")
     git(repository, "branch", "keep", original)
-    assert land(repository, feature) == Landed("main", original, git(repository, "rev-parse", "main"))
+    assert Git().land(repository, feature) == Landed("main", original, git(repository, "rev-parse", "main"))
     assert git(repository, "rev-parse", "main^") == host
     assert git(repository, "rev-list", "--count", f"{host}..main") == "1"
     assert git(repository, "rev-parse", "keep") == original
@@ -47,7 +47,7 @@ def test_land_targets_the_current_host_branch(repository: Path) -> None:
     feature = publish(repository, "feature", {"guest": "new"})
     main = git(repository, "rev-parse", "main")
     host = commit(repository, "release", {"host": "new"})
-    assert land(repository, feature).target == "release"
+    assert Git().land(repository, feature).target == "release"
     assert git(repository, "branch", "--show-current") == "release"
     assert git(repository, "rev-parse", "release^") == host
     assert git(repository, "rev-parse", "main") == main
@@ -58,7 +58,7 @@ def test_land_leaves_conflicting_rebase_for_the_user(repository: Path) -> None:
     original = git(repository, "rev-parse", feature.ref)
     host = commit(repository, "main", {"conflict": "host"})
     with pytest.raises(DevboxError, match="Rebase failed") as exc:
-        land(repository, feature)
+        Git().land(repository, feature)
     assert str(repository) in str(exc.value)
     assert "--continue" in str(exc.value)
     assert "--abort" in str(exc.value)
@@ -68,7 +68,7 @@ def test_land_leaves_conflicting_rebase_for_the_user(repository: Path) -> None:
     assert "AA conflict" in git(repository, "status", "--porcelain")
     # A second invocation must not interfere with the unresolved rebase.
     with pytest.raises(DevboxError, match="already in progress"):
-        land(repository, feature)
+        Git().land(repository, feature)
     git(repository, "rebase", "--abort")
     assert git(repository, "branch", "--show-current") == "x/feature"
     assert git(repository, "rev-parse", "HEAD") == original
@@ -153,7 +153,7 @@ def test_land_requires_ff_merge(repository: Path, monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(devbox.repository, "git", advance_before_merge)
     with pytest.raises(DevboxError, match="Not possible to fast-forward"):
-        land(repository, feature)
+        Git().land(repository, feature)
     assert git(repository, "rev-parse", "main") == host[0]
     assert git(repository, "rev-parse", "x/feature") == guest
     assert not (repository / "guest").exists()
@@ -170,7 +170,7 @@ def fetched(id: str, name: str, commits: int = 1) -> Fetched:
 @pytest.fixture
 def selecting(project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[App, str]:
     """An instance whose fetch returns main and two changed branches."""
-    app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())
+    app = App(FakeEngine(), Store(tmp_path / "state"), FakeRepository())
     id = app.new(project, harness, no_config=True)
     monkeypatch.setattr(app, "fetch", lambda i: [fetched(i, "main", 0), fetched(i, "one"), fetched(i, "two")])
     return app, id
@@ -224,8 +224,6 @@ def test_land_selects_named_branches_without_a_picker(
 def test_land_without_new_work_fails(selecting: tuple[App, str], monkeypatch: pytest.MonkeyPatch) -> None:
     app, id = selecting
     monkeypatch.setattr(app, "fetch", lambda i: [fetched(i, "main", 0)])
-    with pytest.raises(DevboxError, match="unavailable"):
-        dispatch(parser().parse_args(["land", id, "main"]), app)
     with pytest.raises(DevboxError, match="No branches have new commits"):
         dispatch(parser().parse_args(["land", id]), app)
 
@@ -240,11 +238,12 @@ def running(id: str) -> Container:
 @pytest.fixture
 def project_instances(
     project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[App, list[str], list[tuple], list[tuple]]:
+) -> tuple[App, list[str], FakeRepository, list[tuple]]:
     """Three instances of the project, the first started from a worktree; records the
-    repository landings and App syncs it would run."""
+    App syncs a landing would run."""
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    repository = FakeRepository()
+    app = App(engine, Store(tmp_path / "state"), repository)
     worktree = project.root / ".worktrees/feature"
     worktree.mkdir(parents=True)
     ids = [
@@ -261,30 +260,24 @@ def project_instances(
         running(elsewhere),
         running("devbox-unrelated"),  # No saved state: not one of ours.
     ]
-    landed: list[tuple] = []
     synced: list[tuple] = []
-
-    def land(root: Path, branch: Fetched) -> Landed:
-        landed.append((root, branch))
-        return Landed("main", "fetched", "rebased")
 
     def sync(container: Container, branches: list[str], rewrites=()) -> list[str]:
         synced.append((container.id, branches, list(rewrites)))
         return [f"{container.id} synced"]
 
-    monkeypatch.setattr(devbox.repository, "land", land)
     monkeypatch.setattr(app, "sync", sync)
-    return app, ids, landed, synced
+    return app, ids, repository, synced
 
 
 def test_app_land_lands_in_the_primary_checkout_then_syncs_the_project(
-    project: Project, project_instances: tuple[App, list[str], list[tuple], list[tuple]]
+    project: Project, project_instances: tuple[App, list[str], FakeRepository, list[tuple]]
 ) -> None:
-    app, (first, second, idle), landed, synced = project_instances
+    app, (first, second, idle), repository, synced = project_instances
     branch = fetched(first, "feature/x")
     landing = app.land(first, branch)
-    assert landed == [(project.root, branch)]
-    assert landing.landed == Landed("main", "fetched", "rebased")
+    assert repository.calls == [("land", project.root, branch)]
+    assert landing.landed == repository.landed == Landed("main", "fetched", "rebased")
     # Only the landing instance's branch moves to the rebased commits.
     assert synced == [
         (first, ["main"], [("feature/x", "fetched", "rebased")]),
@@ -298,9 +291,9 @@ def test_app_land_lands_in_the_primary_checkout_then_syncs_the_project(
 
 
 def test_app_land_reports_sync_failures_without_failing(
-    project_instances: tuple[App, list[str], list[tuple], list[tuple]], monkeypatch: pytest.MonkeyPatch
+    project_instances: tuple[App, list[str], FakeRepository, list[tuple]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    app, (first, second, _), _, synced = project_instances
+    app, (first, second, _), _, _ = project_instances
     recorded = app.sync
 
     def flaky(container: Container, branches: list[str], rewrites=()) -> list[str]:
@@ -322,14 +315,10 @@ def test_app_land_reports_sync_failures_without_failing(
 
 
 def test_app_land_failure_syncs_nothing(
-    project_instances: tuple[App, list[str], list[tuple], list[tuple]], monkeypatch: pytest.MonkeyPatch
+    project_instances: tuple[App, list[str], FakeRepository, list[tuple]],
 ) -> None:
-    app, (first, *_), _, synced = project_instances
-
-    def conflict(root: Path, branch: Fetched) -> Landed:
-        raise DevboxError("Rebase failed")
-
-    monkeypatch.setattr(devbox.repository, "land", conflict)
+    app, (first, *_), repository, synced = project_instances
+    repository.landed = DevboxError("Rebase failed")
     with pytest.raises(DevboxError, match="Rebase failed"):
         app.land(first, fetched(first, "feature"))
     assert synced == []

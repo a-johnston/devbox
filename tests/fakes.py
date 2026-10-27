@@ -1,24 +1,31 @@
 """Application-level fakes: record requests, never translate backend CLI arguments or run Git."""
 
 import subprocess
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 from devbox.engine import Container, Engine, Image, RunSpec, backend_name
-from devbox.repository import HostGit, Started
+from devbox.errors import DevboxError
+from devbox.repository import Delivery, Fetched, Landed, Repository, Started
 
 BASE = "0123456789abcdef" * 2 + "01234567"
 STARTED = Started("main", BASE, dirty=False)
 
 
-class FakeGit(HostGit):
-    """Starts instances from an empty stand-in clone. Use the real HostGit for Git behavior."""
+class FakeRepository(Repository):
+    """In-memory host Git: records what App asks for and answers with the configured results.
+    Instances start from an empty stand-in clone. Use Git itself to test Git behavior."""
 
     def __init__(self, started: Started = STARTED, identity: dict[str, str] | None = None) -> None:
         self.started = started
         self.author = identity or {}
+        self.fetched: list[Fetched] = []
+        # What land returns, or raises.
+        self.landed: Landed | DevboxError = Landed("main", "fetched", "rebased")
+        self.delivery = Delivery("", {})
+        self.calls: list[tuple[object, ...]] = []
 
     def start(self, checkout: Path, target: Path) -> Started:
         (target / ".git").mkdir(parents=True)
@@ -30,6 +37,25 @@ class FakeGit(HostGit):
 
     def identity(self, directory: Path) -> dict[str, str]:
         return self.author
+
+    def fetch(
+        self, repository: Path, clone: Path, namespace: str, watched: Sequence[str], *, branch_prefix: str
+    ) -> list[Fetched]:
+        self.calls.append(("fetch", repository, clone, namespace, list(watched), branch_prefix))
+        return list(self.fetched)
+
+    def show_diff(self, repository: Path, ref: str, *options: str) -> None:
+        self.calls.append(("show_diff", repository, ref, *options))
+
+    def land(self, repository: Path, fetched: Fetched) -> Landed:
+        self.calls.append(("land", repository, fetched))
+        if isinstance(self.landed, DevboxError):
+            raise self.landed
+        return self.landed
+
+    def bundle(self, repository: Path, branches: Sequence[str], base: str) -> Delivery:
+        self.calls.append(("bundle", repository, list(branches), base))
+        return self.delivery
 
 
 @dataclass(frozen=True)

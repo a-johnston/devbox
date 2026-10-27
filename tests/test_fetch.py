@@ -8,9 +8,9 @@ from devbox.app import App
 from devbox.cli import printable
 from devbox.config import Harness, Project
 from devbox.errors import DevboxError
-from devbox.repository import Fetched, LocalBranches, Tip, fetch, publish, refs
+from devbox.repository import Fetched, Git, LocalBranches, Tip, publish, refs
 from devbox.state import Store
-from tests.fakes import FakeEngine, FakeGit
+from tests.fakes import FakeEngine, FakeRepository
 from tests.repos import commit, git
 
 NAMESPACE = "refs/devbox/devbox-x/"
@@ -18,7 +18,7 @@ NAMESPACE = "refs/devbox/devbox-x/"
 
 def fetched(repository: Path, clone: Path, *watched: str) -> dict[str, Fetched]:
     """Fetch as instance devbox-x, keyed by the clone's branch names."""
-    result = fetch(repository, clone, NAMESPACE, watched, branch_prefix="x")
+    result = Git().fetch(repository, clone, NAMESPACE, watched, branch_prefix="x")
     return {branch.ref.removeprefix(NAMESPACE): branch for branch in result}
 
 
@@ -108,7 +108,7 @@ def test_fetch_keeps_different_instances_branches_separate(
     first = commit(clone, "feature", {"a": "1"})
     second = commit(other, "feature", {"a": "2"})
     for source, name in ((clone, "one"), (other, "two")):
-        fetch(repository, source, f"refs/devbox/{name}/", (), branch_prefix=name)
+        Git().fetch(repository, source, f"refs/devbox/{name}/", (), branch_prefix=name)
     # Pruning one instance's namespace leaves the other's refs alone.
     assert git(repository, "rev-parse", "refs/devbox/one/feature", "one/feature").split() == [first] * 2
     assert git(repository, "rev-parse", "refs/devbox/two/feature", "two/feature").split() == [second] * 2
@@ -195,50 +195,42 @@ def test_fetch_refuses_a_redirected_git_directory(repository: Path, tmp_path: Pa
     (directory / "repo/.git").symlink_to(repository / ".git")
     assert id not in store.clones()
     with pytest.raises(DevboxError, match="not a repository clone"):
-        fetch(repository, directory / "repo", NAMESPACE, (), branch_prefix="x")
+        Git().fetch(repository, directory / "repo", NAMESPACE, (), branch_prefix="x")
 
 
 # App.fetch: which repository, clone, refs and paths an instance is fetched with.
 
 
-def fetch_arguments(app: App, id: str, monkeypatch: pytest.MonkeyPatch) -> tuple:
-    calls = []
-
-    def record(*args: object, **kwargs: object) -> list[Fetched]:
-        calls.append((*args, kwargs))
-        return []
-
-    monkeypatch.setattr(devbox.repository, "fetch", record)
+def fetch_arguments(app: App, id: str) -> tuple[object, ...]:
+    assert isinstance(app.repository, FakeRepository)
     app.fetch(id)
-    (call,) = calls
+    (call,) = [call[1:] for call in app.repository.calls if call[0] == "fetch"]
     return call
 
 
-def test_app_fetch_watches_paths_from_the_host_manifest(
-    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())
+def test_app_fetch_watches_paths_from_the_host_manifest(project: Project, harness: Harness, tmp_path: Path) -> None:
+    app = App(FakeEngine(), Store(tmp_path / "state"), FakeRepository())
     id = app.new(project, harness, no_config=True)
     # Watched paths come from the host manifest, never the clone's copy.
     with (project.root / ".devbox.toml").open("a") as stream:
         stream.write('[review]\nwatch = ["hooks/**/*.sh"]\n')
-    assert fetch_arguments(app, id, monkeypatch) == (
+    assert fetch_arguments(app, id) == (
         project.root,
         app.store.directory(id) / "repo",
         f"refs/devbox/{id}/",
         [":(literal).devbox.toml", ":(literal).devbox/Containerfile", ":(literal).devbox", ":(glob)hooks/**/*.sh"],
-        {"branch_prefix": id.removeprefix("devbox-")},
+        id.removeprefix("devbox-"),
     )
 
 
 def test_app_fetch_from_a_worktree_watches_repository_relative_paths(
-    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    project: Project, harness: Harness, tmp_path: Path
 ) -> None:
     tree = project.root / ".worktrees/feature"
     git(project.root, "worktree", "add", "-q", "-b", "feature", str(tree))
-    app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())
+    app = App(FakeEngine(), Store(tmp_path / "state"), FakeRepository())
     id = app.new(Project.discover(tree), harness, no_config=True)
-    root, _, _, watched, _ = fetch_arguments(app, id, monkeypatch)
+    root, _, _, watched, _ = fetch_arguments(app, id)
     assert root == project.root
     assert watched == [":(literal).devbox.toml", ":(literal).devbox/Containerfile", ":(literal).devbox"]
 

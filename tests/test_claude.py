@@ -8,7 +8,7 @@ from devbox.app import App
 from devbox.config import ASSETS, Harness, Project
 from devbox.errors import DevboxError
 from devbox.state import Session, Store, seed_config, shared_config
-from tests.fakes import FakeEngine, FakeGit
+from tests.fakes import FakeEngine, FakeRepository
 
 
 @pytest.fixture
@@ -24,7 +24,7 @@ def claude(tmp_path: Path) -> Harness:
 @pytest.mark.parametrize("no_config", [False, True])
 def test_new_skips_permission_prompts(project: Project, claude: Harness, tmp_path: Path, no_config: bool) -> None:
     engine = FakeEngine()
-    App(engine, Store(tmp_path / "state"), FakeGit()).new(project, claude, no_config=no_config)
+    App(engine, Store(tmp_path / "state"), FakeRepository()).new(project, claude, no_config=no_config)
     assert engine.execs[-1].args[-4:] == (
         "claude",
         "--dangerously-skip-permissions",
@@ -88,7 +88,7 @@ def test_sessions_exclude_subagent_transcripts(tmp_path: Path, claude: Harness) 
 
 def test_resume_places_snapshot_by_id_and_forks(project: Project, claude: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    app = App(engine, Store(tmp_path / "state"), FakeRepository())
     original_id, original = app.store.create()
     (original / "metadata.json").write_text("{}")
     source = original / "home/source.jsonl"
@@ -110,7 +110,7 @@ def test_instances_share_a_devbox_only_login(project: Project, claude: Harness, 
     claude.seed_dir.mkdir()
     (claude.seed_dir / ".credentials.json").write_text('"host refresh token"')
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    app = App(engine, Store(tmp_path / "state"), FakeRepository())
     for _ in range(2):
         app.new(project, claude)
     shared = shared_config(claude)["auth"]
@@ -125,7 +125,7 @@ def test_instances_share_a_devbox_only_login(project: Project, claude: Harness, 
 
 def test_no_config_keeps_a_private_login(project: Project, claude: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
-    App(engine, Store(tmp_path / "state"), FakeGit()).new(project, claude, no_config=True)
+    App(engine, Store(tmp_path / "state"), FakeRepository()).new(project, claude, no_config=True)
     assert all("claude-auth" not in target for _, target in engine.runs[0].binds)
     assert not (tmp_path / "config/devbox/shared").exists()
 
@@ -134,7 +134,7 @@ def test_no_config_keeps_a_private_login(project: Project, claude: Harness, tmp_
 def test_new_trusts_project_and_skips_bypass_warning(
     project: Project, claude: Harness, tmp_path: Path, no_config: bool
 ) -> None:
-    app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())
+    app = App(FakeEngine(), Store(tmp_path / "state"), FakeRepository())
     claude.seed_dir.mkdir()
     (claude.seed_dir / "settings.json").write_text('{"model": "opus"}')
     id = app.new(project, claude, no_config=no_config)

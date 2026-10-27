@@ -15,7 +15,7 @@ from devbox.config import ASSETS, Harness, Project
 from devbox.engine import Container
 from devbox.errors import DevboxError
 from devbox.state import Store
-from tests.fakes import FakeEngine, FakeGit
+from tests.fakes import FakeEngine, FakeRepository
 
 
 class RecoverableEngine(FakeEngine):
@@ -41,7 +41,7 @@ def instance(
     project: Project, harness: Harness, tmp_path: Path, *, no_config: bool = True
 ) -> tuple[App, RecoverableEngine, Container]:
     engine = RecoverableEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    app = App(engine, Store(tmp_path / "state"), FakeRepository())
     id = app.new(project, harness, no_config=no_config)
     engine.execs.clear()
     return app, engine, Container(id, "running", "project", harness.name, "now")

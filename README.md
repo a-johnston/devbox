@@ -78,14 +78,14 @@ when the project dependencies or harness version change.
 Containers create local branches and `devbox fetch` copies them into the host repo. Container
 branches with commits not yet in the current host `HEAD` can then be referenced as local
 branches named `<id>/<branch>` (eg `orange/my-feature` from `devbox-orange`). Commit counts
-exclude work already in the host branch. Warnings are logged for changes to the config, Containerfile,
-build context, and configured `[review] watch` paths compared to each branch's merge base.
+exclude work already in the host branch, and branches without new commits are ignored. Warnings
+are logged for changes to the config, Containerfile, build context, and configured `[review] watch`
+paths compared to each branch's merge base.
 
 `devbox review [id] [branch]` fetches, picks a branch, and shows `git diff HEAD...<fetched-ref>`:
 only that branch's changes since its most recent shared ancestor with the host branch.
 Review and land use the **host checkout's current branch**, even if the instance started
-from another branch or worktree. Without an explicit branch, their picker omits branches
-with no new commits.
+from another branch or worktree.
 
 After reviewing a change, `devbox land [id] [branch]` locally rebases `<short-instance>/<branch>`
 onto the host's current branch and then fast-forward merges. After a successful merge, the
@@ -96,16 +96,14 @@ branch with new commits available from a given instance.
 
 `devbox sync [id ...] [-b branch ...]` delivers host branches to running instances (several
 IDs, or an fzf multi-picker without any) as `host/<branch>` refs and fast-forwards branches when
-possible. If no branch is passed, the branch each instance was started with is synced. Each moved branch is reported with its old tip, and the report is
-also left in the instance's `~/.devbox/sync.txt` for the agent. `--force` also replaces local
-branches that are diverged from or ahead of the host's (for example to undo a mistaken landing
-in the clones); uncommitted changes and in-progress Git operations are still never overridden,
+possible. If no branch is specified, the branch each instance was started with is synced. Each
+moved branch is reported with its old tip, and the report is also left in the instance's
+`~/.devbox/sync.txt` for the agent. `--force` also replaces container branches that are diverged
+from or ahead of the host's. Uncommitted changes and in-progress Git operations are never overridden,
 and replaced tips remain in the reflog.
 
-By default, `devbox land` automatically syncs the target branch with the landed changes in
-every running instance of the project. In a terminal it asks first, because a mistaken landing
-is easy to fix on the host but not once clones have it; declining leaves the landing in place.
-`--sync` skips the question and `--no-sync` skips the sync.
+By default, `devbox land` asks to sync the target branch with the landed changes in every running
+instance of the project. Accepts `--sync` or `--no-sync` to skip the question.
 
 ## Files
 

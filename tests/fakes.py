@@ -14,8 +14,9 @@ BASE = "0123456789abcdef" * 2 + "01234567"
 STARTED = Started("main", BASE, dirty=False)
 
 
-class FakeRepository(Repository):
-    """In-memory host Git: records what App asks for and answers with the configured results.
+class FakeGit:
+    """In-memory host Git for App: opens FakeRepository views that share this state, record
+    what App asks for (with the repository's path) and answer with the configured results.
     Instances start from an empty stand-in clone. Use Git itself to test Git behavior."""
 
     def __init__(self, started: Started = STARTED, identity: dict[str, str] | None = None) -> None:
@@ -27,35 +28,42 @@ class FakeRepository(Repository):
         self.delivery = Delivery("", {})
         self.calls: list[tuple[object, ...]] = []
 
-    def start(self, checkout: Path, target: Path) -> Started:
-        (target / ".git").mkdir(parents=True)
-        return self.started
+    def __call__(self, path: Path) -> "FakeRepository":
+        return FakeRepository(path, self)
 
-    def clone_instance(self, source: Path, target: Path) -> str:
+
+class FakeRepository(Repository):
+    def __init__(self, path: Path, state: FakeGit) -> None:
+        super().__init__(path)
+        self.state = state
+
+    def start(self, target: Path) -> Started:
+        (target / ".git").mkdir(parents=True)
+        return self.state.started
+
+    def fork(self, source: Path, target: Path) -> str:
         (target / ".git").mkdir(parents=True)
         return "copied"
 
-    def identity(self, directory: Path) -> dict[str, str]:
-        return self.author
+    def identity(self) -> dict[str, str]:
+        return self.state.author
 
-    def fetch(
-        self, repository: Path, clone: Path, namespace: str, watched: Sequence[str], *, branch_prefix: str
-    ) -> list[Fetched]:
-        self.calls.append(("fetch", repository, clone, namespace, list(watched), branch_prefix))
-        return list(self.fetched)
+    def fetch(self, clone: Path, namespace: str, watched: Sequence[str], *, branch_prefix: str) -> list[Fetched]:
+        self.state.calls.append(("fetch", self.path, clone, namespace, list(watched), branch_prefix))
+        return list(self.state.fetched)
 
-    def show_diff(self, repository: Path, ref: str, *options: str) -> None:
-        self.calls.append(("show_diff", repository, ref, *options))
+    def show_diff(self, ref: str, *options: str) -> None:
+        self.state.calls.append(("show_diff", self.path, ref, *options))
 
-    def land(self, repository: Path, fetched: Fetched) -> Landed:
-        self.calls.append(("land", repository, fetched))
-        if isinstance(self.landed, DevboxError):
-            raise self.landed
-        return self.landed
+    def land(self, fetched: Fetched) -> Landed:
+        self.state.calls.append(("land", self.path, fetched))
+        if isinstance(self.state.landed, DevboxError):
+            raise self.state.landed
+        return self.state.landed
 
-    def bundle(self, repository: Path, branches: Sequence[str], base: str) -> Delivery:
-        self.calls.append(("bundle", repository, list(branches), base))
-        return self.delivery
+    def bundle(self, branches: Sequence[str], base: str) -> Delivery:
+        self.state.calls.append(("bundle", self.path, list(branches), base))
+        return self.state.delivery
 
 
 @dataclass(frozen=True)

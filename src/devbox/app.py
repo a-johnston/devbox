@@ -11,7 +11,7 @@ import re
 import shutil
 import tempfile
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -132,11 +132,15 @@ class Landing:
 
 class App:
     def __init__(
-        self, engine: Engine | None = None, store: Store | None = None, repository: Repository | None = None
+        self,
+        engine: Engine | None = None,
+        store: Store | None = None,
+        git: Callable[[Path], Repository] = Git,
     ) -> None:
         self.engine = engine or select_engine()
         self.store = store or Store(backend=self.engine.name)
-        self.repository = repository or Git()
+        # Opens the host repository at a path.
+        self.git = git
         if self.store.backend != self.engine.name:
             raise DevboxError("The saved-state backend must match the container engine")
 
@@ -366,7 +370,7 @@ class App:
                 (str(home), "/home/agent"),
                 *shared_mounts,
             ),
-            env={**env, **self.repository.identity(project.cwd), "DEVBOX_INSTANCE": id},
+            env={**env, **self.git(project.cwd).identity(), "DEVBOX_INSTANCE": id},
         )
         started = time.monotonic()
         try:
@@ -476,10 +480,10 @@ class App:
         """Return the host branch and commit the work started from, and what is checked out."""
         if previous:
             metadata = self.store.metadata(previous)
-            start = self.repository.clone_instance(self.store.directory(previous) / "repo", target)
+            start = self.git(project.root).fork(self.store.directory(previous) / "repo", target)
             # Keep the original host starting point for provenance and sync bundles.
             return metadata.get("branch"), metadata["base"], start
-        started = self.repository.start(project.checkout, target)
+        started = self.git(project.checkout).start(target)
         if started.dirty:
             print(f"Uncommitted changes in {project.checkout} are not copied.", flush=True)
         return started.branch, started.base, started.branch or started.base[:12]
@@ -496,18 +500,14 @@ class App:
             for path in (project.config.resolve(), project.containerfile, project.context)
             if path.is_relative_to(project.checkout)
         ] + [f":(glob){pattern}" for pattern in project.watch]
-        return self.repository.fetch(
-            project.root,
-            clone,
-            f"refs/devbox/{id}/",
-            watched,
-            branch_prefix=id.removeprefix("devbox-"),
+        return self.git(project.root).fetch(
+            clone, f"refs/devbox/{id}/", watched, branch_prefix=id.removeprefix("devbox-")
         )
 
     def review(self, id: str, ref: str, *options: str) -> None:
         """Show a fetched branch's changes since its merge base with the current host HEAD."""
         metadata = self.store.metadata(id)
-        self.repository.show_diff(Path(metadata["root"]), ref, *options)
+        self.git(Path(metadata["root"])).show_diff(ref, *options)
 
     def land(self, id: str, branch: repository.Fetched) -> Landing:
         """Land a fetched branch in the instance's host repository's primary checkout, then
@@ -517,7 +517,7 @@ class App:
         to its rebased commits, so its history matches what was landed.
         """
         root = self.store.metadata(id)["root"]
-        landed = self.repository.land(Path(root), branch)
+        landed = self.git(Path(root)).land(branch)
         return Landing(landed, self._sync_landed(id, root, branch, landed))
 
     def _sync_landed(
@@ -566,7 +566,7 @@ class App:
         branches = branches or ([metadata["branch"]] if metadata.get("branch") else [])
         if not branches:
             raise DevboxError(f"{container.id} started from a detached HEAD; name branches to sync")
-        delivery = self.repository.bundle(Path(metadata["root"]), branches, metadata["base"])
+        delivery = self.git(Path(metadata["root"])).bundle(branches, metadata["base"])
         # Instances created before the workspace move mount their clone at the checkout.
         checkout = metadata.get("workspace", metadata["checkout"])
         arguments = sync.inspect_arguments(delivery, branches, rewrites)

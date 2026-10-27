@@ -233,59 +233,61 @@ class Delivery:
 
 
 class Repository(ABC):
-    """The Git that devbox runs on the host, for App. Git is the implementation; tests of
-    everything else use an in-memory fake."""
+    """A host repository, at its primary checkout or one of its worktrees, as App uses it.
+    Git is the implementation; tests of everything else use an in-memory fake."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
 
     @abstractmethod
-    def start(self, checkout: Path, target: Path) -> Started:
-        """Clone a host checkout's committed HEAD, detached in the clone if it is on the host."""
+    def start(self, target: Path) -> Started:
+        """Clone this checkout's committed HEAD, detached in the clone if it is here."""
 
     @abstractmethod
-    def clone_instance(self, source: Path, target: Path) -> str:
-        """Clone another instance's clone; return what it has checked out."""
+    def fork(self, source: Path, target: Path) -> str:
+        """Clone source, one of this repository's instance clones; return what it has checked out."""
 
     @abstractmethod
-    def identity(self, directory: Path) -> dict[str, str]:
+    def identity(self) -> dict[str, str]:
         """Only the author identity crosses over: no credential helpers, hooks or rewrites."""
 
     @abstractmethod
-    def fetch(
-        self, repository: Path, clone: Path, namespace: str, watched: Sequence[str], *, branch_prefix: str
-    ) -> list[Fetched]:
+    def fetch(self, clone: Path, namespace: str, watched: Sequence[str], *, branch_prefix: str) -> list[Fetched]:
         """Copy clone refs under namespace; publish new work under a concise local prefix."""
 
     @abstractmethod
-    def show_diff(self, repository: Path, ref: str, *options: str) -> None:
-        """Diff from the merge base with the current host HEAD, using the user's pager."""
+    def show_diff(self, ref: str, *options: str) -> None:
+        """Diff from the merge base with the current HEAD, using the user's pager."""
 
     @abstractmethod
-    def land(self, repository: Path, fetched: Fetched) -> Landed:
+    def land(self, fetched: Fetched) -> Landed:
         """Rebase and fast-forward merge a published branch, then delete the landed local branch."""
 
     @abstractmethod
-    def bundle(self, repository: Path, branches: Sequence[str], base: str) -> Delivery:
-        """Bundle host branches, omitting history the clone already has from base."""
+    def bundle(self, branches: Sequence[str], base: str) -> Delivery:
+        """Bundle branches, omitting history the clone already has from base."""
 
 
 class Git(Repository):
-    def start(self, checkout: Path, target: Path) -> Started:
-        if git_output(checkout, "rev-parse", "--verify", "HEAD^{commit}") is None:
-            raise DevboxError(f"{checkout} must be a Git repository with a commit")
-        dirty = bool(git_output(checkout, "status", "--porcelain", "--untracked-files=no"))
-        branch = git_output(checkout, "symbolic-ref", "--quiet", "--short", "HEAD")
+    def start(self, target: Path) -> Started:
+        if git_output(self.path, "rev-parse", "--verify", "HEAD^{commit}") is None:
+            raise DevboxError(f"{self.path} must be a Git repository with a commit")
+        dirty = bool(git_output(self.path, "status", "--porcelain", "--untracked-files=no"))
+        branch = git_output(self.path, "symbolic-ref", "--quiet", "--short", "HEAD")
         # Cloning the checkout, not the primary, transfers its HEAD even when it is detached.
-        _, head = clone(checkout, target)
+        _, head = clone(self.path, target)
         if branch is None:
             # Clone guesses a branch at the same commit; the host checkout is detached.
             git(target, "checkout", "--quiet", "--detach")
         return Started(branch, head, dirty)
 
-    def clone_instance(self, source: Path, target: Path) -> str:
+    def fork(self, source: Path, target: Path) -> str:
+        # Only upload-pack runs in the clone, never the host's Git on its files.
         branch, head = clone(git_directory(source), target)
         return branch or head[:12]
 
-    def identity(self, directory: Path) -> dict[str, str]:
-        output = git_output(directory, "config", "--null", "--get-regexp", r"^user\.(name|email)$") or ""
+    def identity(self) -> dict[str, str]:
+        output = git_output(self.path, "config", "--null", "--get-regexp", r"^user\.(name|email)$") or ""
         # The last value wins, as with git config --get.
         values = dict(entry.split("\n", 1) for entry in output.split("\0") if "\n" in entry)
         env = {}
@@ -294,12 +296,10 @@ class Git(Repository):
                 env[f"GIT_AUTHOR_{name}"] = env[f"GIT_COMMITTER_{name}"] = value
         return env
 
-    def fetch(
-        self, repository: Path, clone: Path, namespace: str, watched: Sequence[str], *, branch_prefix: str
-    ) -> list[Fetched]:
-        before = refs(repository, namespace)
+    def fetch(self, clone: Path, namespace: str, watched: Sequence[str], *, branch_prefix: str) -> list[Fetched]:
+        before = refs(self.path, namespace)
         git(
-            repository,
+            self.path,
             "-c",
             "transfer.fsckObjects=true",
             "fetch",
@@ -313,64 +313,64 @@ class Git(Repository):
         )
         # Snapshot the primary checkout's current HEAD, not the instance's creation base.
         # Triple-dot diffs use each branch's merge base and exclude host-only changes.
-        head = git(repository, "rev-parse", "--verify", "HEAD").strip()
-        local = LocalBranches.read(repository)
+        head = git(self.path, "rev-parse", "--verify", "HEAD").strip()
+        local = LocalBranches.read(self.path)
         result = []
-        for ref, new in refs(repository, namespace).items():
+        for ref, new in refs(self.path, namespace).items():
             fetched, expected = publish(
-                _compare(repository, head, ref, new, before.get(ref), watched), namespace, branch_prefix, local
+                _compare(self.path, head, ref, new, before.get(ref), watched), namespace, branch_prefix, local
             )
             # Compare-and-swap: do not clobber a branch created or moved since it was read.
             # Ref collisions (e.g. an existing <instance> branch) also leave host refs intact.
             if (
                 expected is not None
-                and git_output(repository, "update-ref", "--no-deref", f"refs/heads/{fetched.branch}", new, expected)
+                and git_output(self.path, "update-ref", "--no-deref", f"refs/heads/{fetched.branch}", new, expected)
                 is None
             ):
                 fetched = replace(fetched, branch_current=False)
             result.append(fetched)
         return result
 
-    def show_diff(self, repository: Path, ref: str, *options: str) -> None:
-        argv = ["git", "-C", str(repository), "diff", *options, f"HEAD...{ref}", "--"]
+    def show_diff(self, ref: str, *options: str) -> None:
+        argv = ["git", "-C", str(self.path), "diff", *options, f"HEAD...{ref}", "--"]
         os.execvpe("git", argv, git_environment())
 
-    def land(self, repository: Path, fetched: Fetched) -> Landed:
+    def land(self, fetched: Fetched) -> Landed:
         # A failed rebase deliberately stays in progress in the host checkout. Never run Git
         # in the instance clone, reset a locally modified branch, or stash the user's work.
-        checkout = HostCheckout.read(repository, fetched.ref)
+        checkout = HostCheckout.read(self.path, fetched.ref)
         target = landing_target(checkout, fetched)
         branch = str(fetched.branch)
         try:
-            git(repository, "rebase", "--no-autostash", "--no-update-refs", f"refs/heads/{target}", branch)
+            git(self.path, "rebase", "--no-autostash", "--no-update-refs", f"refs/heads/{target}", branch)
         except DevboxError as exc:
             raise DevboxError(
-                f"{exc}\nRebase failed in {repository}; any rebase state has been left intact. "
+                f"{exc}\nRebase failed in {self.path}; any rebase state has been left intact. "
                 f"Target branch: {target!r}; local branch: {branch!r}. "
                 "Resolve and run git rebase --continue, then check out the target branch "
                 "and git merge --ff-only the rebased local branch; or git rebase --abort, "
                 "check out the target branch and devbox sync it to fix it in the instance."
             ) from exc
-        git(repository, "checkout", "--quiet", target)
-        git(repository, "merge", "--ff-only", "--no-autostash", f"refs/heads/{branch}")
-        rebased = git(repository, "rev-parse", "--verify", f"refs/heads/{branch}").strip()
-        git(repository, "branch", "--delete", "--", branch)
+        git(self.path, "checkout", "--quiet", target)
+        git(self.path, "merge", "--ff-only", "--no-autostash", f"refs/heads/{branch}")
+        rebased = git(self.path, "rev-parse", "--verify", f"refs/heads/{branch}").strip()
+        git(self.path, "branch", "--delete", "--", branch)
         return Landed(target, str(checkout.tip), rebased)
 
-    def bundle(self, repository: Path, branches: Sequence[str], base: str) -> Delivery:
+    def bundle(self, branches: Sequence[str], base: str) -> Delivery:
         names = [f"refs/heads/{branch}" for branch in branches]
-        tips = refs(repository, *names)
+        tips = refs(self.path, *names)
         for name in names:
             if name not in tips:
-                raise DevboxError(f"No branch {name.removeprefix('refs/heads/')} in {repository}")
+                raise DevboxError(f"No branch {name.removeprefix('refs/heads/')} in {self.path}")
         # A bundle that excludes base drops refs at or behind it, so those are delivered by name.
-        merged = refs(repository, f"--merged={base}", *names)
+        merged = refs(self.path, f"--merged={base}", *names)
         known = {name.removeprefix("refs/heads/"): tips[name] for name in names if name in merged}
         beyond = [name for name in names if name not in merged]
         if not beyond:
             return Delivery("", known)
         result = subprocess.run(
-            ["git", "-C", str(repository), "bundle", "create", "--quiet", "-", *beyond, f"^{base}"],
+            ["git", "-C", str(self.path), "bundle", "create", "--quiet", "-", *beyond, f"^{base}"],
             capture_output=True,
             check=False,
             env=git_environment(),

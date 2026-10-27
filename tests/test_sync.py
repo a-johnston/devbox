@@ -13,7 +13,7 @@ from devbox.errors import DevboxError
 from devbox.repository import Delivery, Git, Started
 from devbox.state import Session, Store
 from devbox.sync import APPLY, INSPECT, MISSING, GuestBranch, GuestClone, Move, inspect_arguments, plan, report
-from tests.fakes import BASE, FakeEngine, FakeRepository
+from tests.fakes import BASE, FakeEngine, FakeGit
 from tests.repos import commit, git
 
 
@@ -169,7 +169,7 @@ def test_inspect_delivers_host_branches_and_reports_the_clone(repository: Path, 
     (clone / ".git/rebase-merge").mkdir()
     tip = advance(repository)
     branches(repository, same=base, ahead=base)
-    delivery = Git().bundle(repository, ["main", "same", "ahead"], base)
+    delivery = Git(repository).bundle(["main", "same", "ahead"], base)
     output = guest(
         INSPECT,
         clone,
@@ -232,19 +232,19 @@ def test_bundle_delivers_branches_at_or_behind_base_by_name(repository: Path, tm
     git(repository, "branch", "at-base")
     git(repository, "branch", "behind", root)
     advance(repository)
-    delivery = Git().bundle(repository, ["main", "at-base", "behind"], base)
+    delivery = Git(repository).bundle(["main", "at-base", "behind"], base)
     assert delivery.known == {"at-base": base, "behind": root}
     data = tmp_path / "data.bundle"
     data.write_bytes(base64.b64decode(delivery.data))
     heads = git(repository, "bundle", "list-heads", str(data)).splitlines()
     assert [line.split()[1] for line in heads] == ["refs/heads/main"]
     # Nothing beyond base: no bundle at all, rather than the branches' whole history.
-    assert Git().bundle(repository, ["at-base"], base) == Delivery("", {"at-base": base})
+    assert Git(repository).bundle(["at-base"], base) == Delivery("", {"at-base": base})
 
 
 def test_bundle_refuses_missing_branches(repository: Path) -> None:
     with pytest.raises(DevboxError, match="No branch missing"):
-        Git().bundle(repository, ["missing"], git(repository, "rev-parse", "main"))
+        Git(repository).bundle(["missing"], git(repository, "rev-parse", "main"))
 
 
 # Instances: what they are told, where forks start, and which branches App.sync delivers.
@@ -252,7 +252,7 @@ def test_bundle_refuses_missing_branches(repository: Path) -> None:
 
 def test_instance_learns_its_identity_and_constraints(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeRepository())
+    app = App(engine, Store(tmp_path / "state"), FakeGit())
     id = app.new(project, harness, no_config=True)
     assert engine.runs[0].env["DEVBOX_INSTANCE"] == id
     text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()
@@ -260,10 +260,12 @@ def test_instance_learns_its_identity_and_constraints(project: Project, harness:
     assert f"`devbox review {id}`" in text and f"`devbox sync {id} [branch ...]`" in text
 
 
-def test_clone_instance_continues_from_its_checked_out_branch(clone: Path, tmp_path: Path) -> None:
+def test_fork_continues_from_the_instance_clones_checked_out_branch(
+    repository: Path, clone: Path, tmp_path: Path
+) -> None:
     work = commit(clone, "work", {"a": "1"})
     target = tmp_path / "fork"
-    assert Git().clone_instance(clone, target) == "work"
+    assert Git(repository).fork(clone, target) == "work"
     assert git(target, "rev-parse", "HEAD") == work
     assert git(target, "symbolic-ref", "--short", "HEAD") == "work"
 
@@ -271,12 +273,12 @@ def test_clone_instance_continues_from_its_checked_out_branch(clone: Path, tmp_p
 def test_fork_from_instance_keeps_the_original_host_starting_point(
     project: Project, harness: Harness, tmp_path: Path
 ) -> None:
-    app = App(FakeEngine(), Store(tmp_path / "state"), FakeRepository(Started("release", BASE, dirty=False)))
+    app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit(Started("release", BASE, dirty=False)))
     first = app.new(project, harness, no_config=True)
     source = app.store.directory(first) / "home/source.jsonl"
     source.write_text('{"type":"session","id":"s"}\n')
     session = Session(f"{first}/s", first, "pi", str(project.cwd), source)
-    app.repository = FakeRepository(Started("main", "f" * 40, dirty=False))
+    app.git = FakeGit(Started("main", "f" * 40, dirty=False))
 
     resumed = app.new(project, harness, no_config=True, session=session, from_instance=True)
     metadata = app.store.metadata(resumed)
@@ -289,11 +291,11 @@ def test_fork_from_instance_keeps_the_original_host_starting_point(
 
 
 def test_sync_refusals(project: Project, harness: Harness, tmp_path: Path) -> None:
-    app = App(FakeEngine(), Store(tmp_path / "state"), FakeRepository())
+    app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())
     id = app.new(project, harness, no_config=True)
     with pytest.raises(DevboxError, match="stopped"):
         app.sync(replace(running(id), state="stopped"), [])
-    app.repository = FakeRepository(Started(None, BASE, dirty=False))
+    app.git = FakeGit(Started(None, BASE, dirty=False))
     detached = app.new(project, harness, no_config=True)
     with pytest.raises(DevboxError, match="name branches"):
         app.sync(running(detached), [])
@@ -301,7 +303,7 @@ def test_sync_refusals(project: Project, harness: Harness, tmp_path: Path) -> No
 
 def test_sync_inspects_plans_and_applies_in_the_guest(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
-    repository = FakeRepository()
+    repository = FakeGit()
     app = App(engine, Store(tmp_path / "state"), repository)
     id = app.new(project, harness, no_config=True)
     repository.delivery = Delivery("BUNDLE", {"release": BASE})

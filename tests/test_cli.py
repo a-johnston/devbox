@@ -19,7 +19,7 @@ from devbox.engine.engine import backend_name
 from devbox.errors import DevboxError
 from devbox.repository import Fetched, Git
 from devbox.state import Session, Store
-from tests.fakes import FakeEngine, FakeRepository
+from tests.fakes import FakeEngine, FakeGit
 from tests.test_utils import patch_input
 
 
@@ -308,9 +308,9 @@ def test_kill_all_yes_dispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.fixture
-def fetching(project: Project, harness: Harness, tmp_path: Path) -> tuple[App, str, FakeRepository]:
+def fetching(project: Project, harness: Harness, tmp_path: Path) -> tuple[App, str, FakeGit]:
     """An instance whose fetch finds main and one changed branch."""
-    repository = FakeRepository()
+    repository = FakeGit()
     app = App(FakeEngine(), Store(tmp_path / "state"), repository)
     id = app.new(project, harness, no_config=True)
     short = id.removeprefix("devbox-")
@@ -321,12 +321,12 @@ def fetching(project: Project, harness: Harness, tmp_path: Path) -> tuple[App, s
     return app, id, repository
 
 
-def diffs(repository: FakeRepository) -> list[tuple[object, ...]]:
+def diffs(repository: FakeGit) -> list[tuple[object, ...]]:
     return [call[1:] for call in repository.calls if call[0] == "show_diff"]
 
 
 def test_fetch_dispatch_prints_flagged_refs(
-    fetching: tuple[App, str, FakeRepository], capsys: pytest.CaptureFixture[str]
+    fetching: tuple[App, str, FakeGit], capsys: pytest.CaptureFixture[str]
 ) -> None:
     app, id, _ = fetching
     capsys.readouterr()
@@ -350,7 +350,7 @@ def test_fetched_label_warns_about_unpublished_and_rewritten_branches() -> None:
 
 
 def test_review_diffs_the_only_changed_branch(
-    fetching: tuple[App, str, FakeRepository],
+    fetching: tuple[App, str, FakeGit],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -361,14 +361,14 @@ def test_review_diffs_the_only_changed_branch(
     assert diffs(repository) == [(Path(app.store.metadata(id)["root"]), f"refs/devbox/{id}/feature/x")]
 
 
-def test_review_matches_named_branches_and_passes_stat(fetching: tuple[App, str, FakeRepository]) -> None:
+def test_review_matches_named_branches_and_passes_stat(fetching: tuple[App, str, FakeGit]) -> None:
     app, id, repository = fetching
     dispatch(parser().parse_args(["review", id, "main", "--stat"]), app)
     assert diffs(repository) == [(Path(app.store.metadata(id)["root"]), f"refs/devbox/{id}/main", "--stat")]
 
 
 def test_review_picks_among_changed_branches(
-    fetching: tuple[App, str, FakeRepository], monkeypatch: pytest.MonkeyPatch
+    fetching: tuple[App, str, FakeGit], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app, id, repository = fetching
     repository.fetched.append(replace(repository.fetched[1], ref=f"refs/devbox/{id}/two"))
@@ -387,7 +387,7 @@ def test_review_picks_among_changed_branches(
 def test_show_diff_runs_git_diff_from_the_merge_base(monkeypatch: pytest.MonkeyPatch) -> None:
     execs = []
     monkeypatch.setattr("devbox.repository.os.execvpe", lambda f, argv, env: execs.append((f, argv)))
-    Git().show_diff(Path("/host"), "refs/devbox/i/x", "--stat")
+    Git(Path("/host")).show_diff("refs/devbox/i/x", "--stat")
     assert execs == [("git", ["git", "-C", "/host", "diff", "--stat", "HEAD...refs/devbox/i/x", "--"])]
 
 

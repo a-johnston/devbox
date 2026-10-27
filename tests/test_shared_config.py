@@ -9,7 +9,7 @@ from devbox.app import App
 from devbox.config import Harness, Project
 from devbox.errors import DevboxError
 from devbox.state import Session, Store, shared_config
-from tests.fakes import FakeEngine, FakeRepository
+from tests.fakes import FakeEngine, FakeGit
 
 
 def test_shared_auth_is_empty_private_and_not_imported_from_host(harness: Harness, tmp_path: Path) -> None:
@@ -27,7 +27,7 @@ def test_instances_share_only_the_dedicated_auth_directory(project: Project, har
     harness.seed_dir.mkdir()
     (harness.seed_dir / "auth.json").write_text('"host refresh token"')
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeRepository())
+    app = App(engine, Store(tmp_path / "state"), FakeGit())
     first = app.new(project, harness)
     shared = shared_config(harness)["auth"]
     (shared / "auth.json").write_text('"guest refresh token"')
@@ -50,7 +50,7 @@ def test_instances_share_only_the_dedicated_auth_directory(project: Project, har
 
 def test_resumed_instances_keep_the_shared_auth_mount(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeRepository())
+    app = App(engine, Store(tmp_path / "state"), FakeGit())
     original = app.new(project, harness)
     source = app.store.directory(original) / "home/source.jsonl"
     source.write_text('{"type":"session","id":"saved"}\n')
@@ -66,7 +66,7 @@ def test_no_config_has_no_shared_mount_environment_or_host_auth(
     project: Project, harness: Harness, tmp_path: Path
 ) -> None:
     engine = FakeEngine()
-    app = App(engine, Store(tmp_path / "state"), FakeRepository())
+    app = App(engine, Store(tmp_path / "state"), FakeGit())
     id = app.new(replace(project, env={"DEVBOX_SHARED_AUTH": "/unexpected"}), harness, no_config=True)
     assert len(engine.runs[0].binds) == 2
     assert "DEVBOX_SHARED_AUTH" not in engine.runs[0].env
@@ -75,7 +75,7 @@ def test_no_config_has_no_shared_mount_environment_or_host_auth(
 
 
 def test_build_does_not_prepare_or_mount_shared_credentials(project: Project, harness: Harness, tmp_path: Path) -> None:
-    App(FakeEngine(), Store(tmp_path / "state"), FakeRepository()).build(project, harness)
+    App(FakeEngine(), Store(tmp_path / "state"), FakeGit()).build(project, harness)
     assert not (tmp_path / "config/devbox/shared").exists()
 
 
@@ -135,7 +135,7 @@ def test_shared_state_inside_project_is_rejected(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(project.root / "config"))
     engine = FakeEngine()
     with pytest.raises(DevboxError, match="shared harness state outside"):
-        App(engine, Store(tmp_path / "state"), FakeRepository()).new(project, harness)
+        App(engine, Store(tmp_path / "state"), FakeGit()).new(project, harness)
     assert not engine.runs
     assert not (project.root / "config").exists()
 

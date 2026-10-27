@@ -8,7 +8,7 @@ layer should be owned entirely by `App` instead of requiring the correct sequenc
 the CLI layer.
 
 Test each unit through its inputs and outputs: `Git` and the `repository` helpers against real
-repositories, guest scripts by running them directly, `App` methods with `FakeEngine`/`FakeRepository`
+repositories, guest scripts by running them directly, `App` methods with `FakeEngine`/`FakeGit`
 and stubs for the units they call, and CLI handlers with stubbed `App` results. A test of a composition checks that it
 calls its collaborators with the right arguments and handles their results and failures; it does
 not re-exercise behavior their own tests cover. Where a unit reads Git state and decides what to do

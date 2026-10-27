@@ -54,17 +54,15 @@ and [containerfile](.devbox/Containerfile)).
 The project Containerfile installs dependencies on a Debian/Ubuntu (apt, glibc) base; devbox adds the terminal
 runtime and harness on its own.
 
-`devbox fetch` always warns about branches that change the manifest, Containerfile or build context. To flag other
-paths, such as hooks or scripts that run on the host, list them as Git glob pathspecs relative to the repository root
-under `[review] watch`:
+`devbox fetch` always warns about branches that change the project config, Containerfile or build context. To flag other
+paths, such as hooks or scripts that run on the host, list them as paths relative to the repository root under `[review] watch`:
 
 ```toml
 [review]
 watch = ["prek.toml", "scripts/**"]
 ```
 
-The host checkout's manifest decides what is watched, so an instance cannot stop its own changes from being flagged by
-editing `watch`.
+This check always uses the host's config rather than the fetched config. Supports glob patterns.
 
 ## Creating Instances
 

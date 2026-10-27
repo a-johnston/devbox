@@ -24,6 +24,10 @@ def isolated_git_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterat
                 patch.delenv(key)
         patch.setenv("GIT_CONFIG_GLOBAL", str(config))
         patch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+        # Commits devbox makes itself (e.g. rebases) need an identity, but hosts without a
+        # resolvable domain can't auto-detect one. EMAIL is Git's last-resort fallback, so it
+        # leaves configured identities and Git.identity() untouched.
+        patch.setenv("EMAIL", "test@example.invalid")
         yield
 
 

@@ -4,6 +4,7 @@ Run Pi or Claude Code in disposable Linux environments with a clone of the targe
 
 ## Install
 
+- Requires python 3.12+
 - Recommended [uv](https://docs.astral.sh/uv/) for installation and development
 - Optionally [fzf](https://github.com/junegunn/fzf) for interactive commands
 - Container engine
@@ -169,8 +170,6 @@ state are copied to the new instance from the source session by default. Use `--
 This is not a container snapshot: uncommitted files and the old container's writable layer are not copied.
 
 ## Development
-
-Targets python >= 3.12
 
 ```sh
 uv sync --locked

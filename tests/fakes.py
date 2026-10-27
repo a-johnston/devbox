@@ -94,6 +94,8 @@ class FakeEngine(Engine):
         self.building_active = False
         # What every exec prints, as a guest script would.
         self.stdout = ""
+        # Per-call output instead, consumed in order.
+        self.replies: list[str] = []
 
     def call(self, *args: str, **kwargs: object) -> subprocess.CompletedProcess[str]:
         raise AssertionError("Application tests must not invoke backend CLI plumbing")
@@ -156,7 +158,7 @@ class FakeEngine(Engine):
         input: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         self.execs.append(ExecRequest(id, args, check, env, input))
-        return subprocess.CompletedProcess(args, 0, self.stdout, "")
+        return subprocess.CompletedProcess(args, 0, self.replies.pop(0) if self.replies else self.stdout, "")
 
     def pipe(self, id: str, *args: str, **kwargs: object) -> None:
         raise AssertionError("No guest configured for streamed exec")

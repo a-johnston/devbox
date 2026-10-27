@@ -16,7 +16,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from devbox import repository, transfer
+from devbox import repository, sync, transfer
 from devbox.config import ASSETS, Harness, Project, configured_secrets, relative
 from devbox.engine.engine import (
     IMAGE_BASE,
@@ -556,7 +556,8 @@ class App:
         local branches where that loses nothing; returns one report line per branch.
 
         The bundle is built in the host repository and unpacked by Git in the guest, which
-        also decides what is safe to move (see repository.RECEIVE). Each rewrite is a
+        reports the clone's state; the host decides what is safe to move, and the guest moves
+        it only while that state still holds (see devbox.sync). Each rewrite is a
         (branch, old, new) replacement that applies only while the branch is still at old.
         """
         if container.state != "running":
@@ -566,18 +567,16 @@ class App:
         if not branches:
             raise DevboxError(f"{container.id} started from a detached HEAD; name branches to sync")
         delivery = self.repository.bundle(Path(metadata["root"]), branches, metadata["base"])
-        result = self.engine.exec(
-            container.id,
-            "sh",
-            "-c",
-            repository.RECEIVE,
-            "sh",
-            # Instances created before the workspace move mount their clone at the checkout.
-            metadata.get("workspace", metadata["checkout"]),
-            *repository.receive_specs(delivery, branches, rewrites),
-            input=delivery.data,
+        # Instances created before the workspace move mount their clone at the checkout.
+        checkout = metadata.get("workspace", metadata["checkout"])
+        arguments = sync.inspect_arguments(delivery, branches, rewrites)
+        inspected = self.engine.exec(
+            container.id, "sh", "-c", sync.INSPECT, "sh", checkout, *arguments, input=delivery.data
         )
-        return result.stdout.splitlines()
+        steps = sync.plan(sync.GuestClone.parse(inspected.stdout), branches, rewrites)
+        moves = [step.argument for step in steps if isinstance(step, sync.Move)]
+        results = self.engine.exec(container.id, "sh", "-c", sync.APPLY, "sh", checkout, *moves) if moves else None
+        return sync.report(steps, results.stdout.splitlines() if results else [])
 
     def put(
         self,

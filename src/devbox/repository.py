@@ -2,7 +2,7 @@
 
 The host never runs Git on a clone's files directly: cloning or fetching from one only runs
 upload-pack there, which ignores repository settings that could run commands. Keeping a clone
-in step with the host is done by a script the guest runs as the agent (see RECEIVE).
+in step with the host is done in the guest, as the agent (see devbox.sync).
 """
 
 from __future__ import annotations
@@ -18,9 +18,6 @@ from pathlib import Path
 
 from devbox.config import git, git_environment, git_output
 from devbox.errors import DevboxError
-
-# Host branches delivered by sync, beside the origin/* snapshot taken at clone time.
-SYNCED = "refs/remotes/host/"
 
 
 @dataclass(frozen=True)
@@ -233,87 +230,6 @@ class Delivery:
     data: str
     # The other branches, by name: their commits are already in base's history.
     known: dict[str, str]
-
-
-def receive_specs(
-    delivery: Delivery, branches: Sequence[str], rewrites: Sequence[tuple[str, str, str]] = ()
-) -> list[str]:
-    """RECEIVE's arguments after the checkout: deliver, then rewrite, then fast-forward."""
-    specs = [f"host:{name}:{commit}" for name, commit in delivery.known.items()]
-    # Rewrites first: a rebased branch must not be reported as diverged from its target.
-    specs += [f"rewrite:{name}:{old}:{new}" for name, old, new in rewrites]
-    return specs + [f"ff:{branch}" for branch in branches]
-
-
-# Runs in the guest as the agent: unpack the bundle on stdin (if any) into host/* refs, then bring
-# local branches in step where that cannot lose work. Arguments: the checkout, then
-# "host:<branch>:<commit>" (set host/<branch> to a commit the clone already has; reports nothing),
-# "ff:<branch>" (fast-forward a local branch to host/<branch>) and "rewrite:<branch>:<old>:<new>"
-# (replace <branch> by its rebased <new> tip, only if it is still at <old>). A checked-out branch
-# moves only when the tree has no uncommitted changes to tracked files and no Git operation is
-# under way. One line is reported per ff or rewrite; anything not moved is left alone, with the reason.
-RECEIVE = f"""
-c=$1; shift
-b=$(mktemp) && base64 -d > "$b" || exit 1
-s=0; [ -s "$b" ] && {{ git -C "$c" fetch --quiet --no-tags "$b" "+refs/heads/*:{SYNCED}*"; s=$?; }}
-rm -f "$b"; [ $s -eq 0 ] || exit $s
-cd "$c" || exit 1
-
-move() {{ # branch old new description
-    ref=refs/heads/$1
-    if [ "$(git symbolic-ref -q HEAD)" = "$ref" ]; then
-        for op in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD sequencer; do
-            if [ -e "$(git rev-parse --git-path $op)" ]; then
-                echo "$1: left alone (a Git operation is in progress); see host/$1"; return
-            fi
-        done
-        if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-            echo "$1: left alone (uncommitted changes); see host/$1"; return
-        fi
-        git reset --keep --quiet "$3" && echo "$1: $4" \
-            || echo "$1: left alone (reset failed); see host/$1"
-    elif git worktree list --porcelain | grep -qx "branch $ref"; then
-        echo "$1: left alone (checked out in another worktree); see host/$1"
-    else
-        git update-ref "$ref" "$3" "$2" && echo "$1: $4" \
-            || echo "$1: left alone (changed meanwhile); see host/$1"
-    fi
-}}
-
-ff() {{ # branch
-    new=$(git rev-parse -q --verify "{SYNCED}$1^{{commit}}") || {{ echo "$1: not delivered"; return; }}
-    old=$(git rev-parse -q --verify "refs/heads/$1^{{commit}}") \
-        || {{ echo "$1: delivered as host/$1 (no local branch)"; return; }}
-    if [ "$old" = "$new" ]; then echo "$1: up to date"
-    elif git merge-base --is-ancestor "$new" "$old"; then
-        echo "$1: has commits beyond host/$1; left alone"
-    elif git merge-base --is-ancestor "$old" "$new"; then move "$1" "$old" "$new" "fast-forwarded"
-    else echo "$1: diverged from host/$1; left alone"
-    fi
-}}
-
-rewrite() {{ # branch expected-old new
-    cur=$(git rev-parse -q --verify "refs/heads/$1^{{commit}}") \
-        || {{ echo "$1: no longer exists; left alone"; return; }}
-    if [ "$cur" = "$3" ]; then echo "$1: matches the landed commits"
-    elif [ "$cur" != "$2" ]; then echo "$1: changed since it was fetched; left alone"
-    elif git cat-file -e "$3^{{commit}}" 2>/dev/null; then
-        move "$1" "$cur" "$3" "moved to the rebased commits"
-    else echo "$1: rebased commits not delivered; left alone"
-    fi
-}}
-
-for spec; do
-    case $spec in
-        # Fails, leaving host/<branch> unset, if the clone no longer has the commit.
-        host:*) rest=${{spec#host:}}; git update-ref "{SYNCED}${{rest%%:*}}" "${{rest#*:}}" 2>/dev/null ;;
-        ff:*) ff "${{spec#ff:}}" ;;
-        rewrite:*)
-            rest=${{spec#rewrite:}}; name=${{rest%%:*}}; rest=${{rest#*:}}
-            rewrite "$name" "${{rest%%:*}}" "${{rest#*:}}" ;;
-    esac
-done
-"""
 
 
 class Repository(ABC):

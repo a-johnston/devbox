@@ -1,7 +1,6 @@
 import base64
 import json
 import subprocess
-from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -11,8 +10,9 @@ from devbox.app import App
 from devbox.config import Harness, Project
 from devbox.engine import Container
 from devbox.errors import DevboxError
-from devbox.repository import RECEIVE, Delivery, Git, Started, receive_specs
+from devbox.repository import Delivery, Git, Started
 from devbox.state import Session, Store
+from devbox.sync import APPLY, INSPECT, MISSING, GuestBranch, GuestClone, Move, inspect_arguments, plan, report
 from tests.fakes import BASE, FakeEngine, FakeRepository
 from tests.repos import commit, git
 
@@ -21,22 +21,124 @@ def running(id: str) -> Container:
     return Container(id, "running", "project", "pi", "now")
 
 
-# The guest side of sync: RECEIVE unpacks a host bundle and moves only what loses nothing.
+# plan: what the host decides for each branch from the clone's reported state.
+
+LOCAL, HOST, NEW = "1" * 40, "2" * 40, "3" * 40
 
 
-def receive(
-    repository: Path, clone: Path, branches: Sequence[str], rewrites: Sequence[tuple[str, str, str]] = ()
-) -> list[str]:
-    """Deliver host branches to clone as App.sync does, running the guest script locally."""
-    delivery = Git().bundle(repository, branches, git(repository, "rev-list", "--max-parents=0", "main"))
-    return run_receive(clone, receive_specs(delivery, branches, rewrites), delivery.data)
+def state(
+    head: str | None = "refs/heads/work",
+    busy: bool = False,
+    dirty: bool = False,
+    checked_out: set[str] | None = None,
+    branches: dict[str, GuestBranch] | None = None,
+    commits: set[str] | None = None,
+) -> GuestClone:
+    return GuestClone(head, busy, dirty, checked_out or set(), branches or {}, commits or set())
 
 
-def run_receive(clone: Path, specs: Sequence[str], data: str = "") -> list[str]:
-    result = subprocess.run(
-        ["sh", "-c", RECEIVE, "sh", str(clone), *specs], input=data, text=True, check=True, capture_output=True
+@pytest.mark.parametrize(
+    ("branch", "line"),
+    [
+        (MISSING, "x: not delivered"),
+        (GuestBranch(None, HOST, False, False), "x: delivered as host/x (no local branch)"),
+        (GuestBranch(HOST, HOST, True, True), "x: up to date"),
+        (GuestBranch(LOCAL, HOST, True, False), "x: has commits beyond host/x; left alone"),
+        (GuestBranch(LOCAL, HOST, False, False), "x: diverged from host/x; left alone"),
+    ],
+)
+def test_plan_leaves_branches_that_cannot_fast_forward(branch: GuestBranch, line: str) -> None:
+    assert plan(state(branches={"x": branch}), ["x"]) == [line]
+
+
+def test_plan_fast_forwards_a_branch_behind_the_host() -> None:
+    clone = state(branches={"x": GuestBranch(LOCAL, HOST, False, True)})
+    assert plan(clone, ["x"]) == [Move("x", LOCAL, HOST, "fast-forwarded", reset=False)]
+
+
+@pytest.mark.parametrize(
+    ("local", "commits", "outcome"),
+    [
+        (None, {NEW}, "x: no longer exists; left alone"),
+        (NEW, {NEW}, "x: matches the landed commits"),
+        (HOST, {NEW}, "x: changed since it was fetched; left alone"),
+        (LOCAL, set(), "x: rebased commits not delivered; left alone"),
+        (LOCAL, {NEW}, Move("x", LOCAL, NEW, "moved to the rebased commits", reset=False)),
+    ],
+)
+def test_plan_rewrites_a_branch_only_while_it_is_unchanged(
+    local: str | None, commits: set[str], outcome: str | Move
+) -> None:
+    clone = state(branches={"x": GuestBranch(local, None, False, False)}, commits=commits)
+    assert plan(clone, [], [("x", LOCAL, NEW)]) == [outcome]
+
+
+@pytest.mark.parametrize(
+    ("clone", "outcome"),
+    [
+        (state(head="refs/heads/x"), Move("x", LOCAL, HOST, "fast-forwarded", reset=True)),
+        (state(head="refs/heads/x", dirty=True), "x: left alone (uncommitted changes); see host/x"),
+        (state(head="refs/heads/x", busy=True), "x: left alone (a Git operation is in progress); see host/x"),
+        (state(checked_out={"refs/heads/x"}), "x: left alone (checked out in another worktree); see host/x"),
+        # Uncommitted changes elsewhere do not stop a branch that is not checked out.
+        (state(dirty=True, busy=True, head=None), Move("x", LOCAL, HOST, "fast-forwarded", reset=False)),
+    ],
+)
+def test_plan_moves_only_what_loses_nothing(clone: GuestClone, outcome: str | Move) -> None:
+    clone = replace(clone, branches={"x": GuestBranch(LOCAL, HOST, False, True)})
+    assert plan(clone, ["x"]) == [outcome]
+
+
+def test_plan_decides_rewrites_before_fast_forwards() -> None:
+    # A rebased branch must not be reported as diverged from its target.
+    clone = state(branches={"x": GuestBranch(NEW, NEW, True, True), "y": GuestBranch(NEW, None, False, False)})
+    assert plan(clone, ["x"], [("y", LOCAL, NEW)]) == ["y: matches the landed commits", "x: up to date"]
+
+
+def test_inspect_arguments_deliver_and_report_every_branch_once() -> None:
+    delivery = Delivery("", {"release": HOST})
+    assert inspect_arguments(delivery, ["main", "feature"], [("feature", LOCAL, NEW)]) == [
+        f"host:release:{HOST}",
+        "branch:feature",
+        "branch:main",
+        f"commit:{NEW}",
+    ]
+
+
+def test_report_describes_each_applied_move() -> None:
+    steps: list[str | Move] = [
+        "a: up to date",
+        Move("b", LOCAL, HOST, "fast-forwarded", reset=False),
+        Move("c", LOCAL, HOST, "fast-forwarded", reset=False),
+        Move("d", LOCAL, NEW, "moved to the rebased commits", reset=True),
+        Move("e", LOCAL, NEW, "moved to the rebased commits", reset=True),
+    ]
+    assert report(steps, ["ok", "changed", "failed"]) == [
+        "a: up to date",
+        "b: fast-forwarded",
+        "c: left alone (changed meanwhile); see host/c",
+        "d: left alone (reset failed); see host/d",
+        "e: left alone (reset failed); see host/e",  # APPLY stopped before reporting it.
+    ]
+
+
+def test_guest_clone_parses_inspect_output() -> None:
+    output = (
+        "head refs/heads/work\nbusy 1\ndirty 0\nworktree refs/heads/work\nworktree refs/heads/linked\n"
+        f"branch main {LOCAL} {HOST} 0 1\nbranch gone - - 0 0\ncommit {NEW}\n"
     )
-    return result.stdout.splitlines()
+    assert GuestClone.parse(output) == GuestClone(
+        "refs/heads/work",
+        busy=True,
+        dirty=False,
+        checked_out={"refs/heads/work", "refs/heads/linked"},
+        branches={"main": GuestBranch(LOCAL, HOST, False, True), "gone": MISSING},
+        commits={NEW},
+    )
+    assert GuestClone.parse("head -\nbusy 0\ndirty 0\n").head is None
+
+
+# The guest scripts against a real clone: INSPECT reports, APPLY moves only while facts hold.
 
 
 def advance(repository: Path) -> str:
@@ -50,73 +152,78 @@ def branches(repository: Path, **targets: str) -> None:
     subprocess.run(["git", "-C", str(repository), "update-ref", "--stdin"], input=lines, text=True, check=True)
 
 
-def test_receive_reports_each_branch_independently(repository: Path, clone: Path) -> None:
-    # Nothing here is checked out in the clone, so every outcome depends only on the refs.
+def guest(script: str, clone: Path, *arguments: str, data: str = "") -> str:
+    result = subprocess.run(
+        ["sh", "-c", script, "sh", str(clone), *arguments], input=data, text=True, check=True, capture_output=True
+    )
+    return result.stdout
+
+
+def test_inspect_delivers_host_branches_and_reports_the_clone(repository: Path, clone: Path, tmp_path: Path) -> None:
     base = git(clone, "rev-parse", "HEAD")
     git(clone, "switch", "-qc", "work")
-    guest = git(clone, "commit-tree", "-m", "guest work", "-p", base, f"{base}^{{tree}}")
-    branches(clone, ahead=guest, diverged=guest, moved=guest, undelivered=guest, matches=base, changed=base, same=base)
+    ahead = git(clone, "commit-tree", "-m", "guest work", "-p", base, f"{base}^{{tree}}")
+    branches(clone, ahead=ahead, same=base, linked=base)
+    git(clone, "worktree", "add", "--quiet", str(tmp_path / "linked"), "linked")
+    (clone / ".devbox.toml").write_text("edited")
+    (clone / ".git/rebase-merge").mkdir()
     tip = advance(repository)
-    host = git(repository, "commit-tree", "-m", "host work", "-p", base, f"{base}^{{tree}}")
-    # Branches still at base travel by name beside the bundle of newer commits.
-    branches(repository, other=tip, diverged=host, same=base, ahead=base)
-    missing = "f" * 40
-    rewrites = [
-        ("moved", guest, tip),
-        ("matches", guest, base),
-        ("changed", guest, tip),
-        ("gone", guest, tip),
-        ("undelivered", guest, missing),
-    ]
-    assert receive(repository, clone, ["main", "other", "diverged", "same", "ahead"], rewrites) == [
-        "moved: moved to the rebased commits",
-        "matches: matches the landed commits",
-        "changed: changed since it was fetched; left alone",
-        "gone: no longer exists; left alone",
-        "undelivered: rebased commits not delivered; left alone",
-        "main: fast-forwarded",
-        "other: delivered as host/other (no local branch)",
-        "diverged: diverged from host/diverged; left alone",
-        "same: up to date",
-        "ahead: has commits beyond host/ahead; left alone",
-    ]
-    names = ("main", "moved", "changed", "undelivered", "ahead", "diverged", "host/other", "host/diverged", "host/same")
-    assert git(clone, "rev-parse", *names).split() == [tip, tip, base, guest, guest, guest, tip, host, base]
-    assert git(clone, "symbolic-ref", "--short", "HEAD") == "work"
+    branches(repository, same=base, ahead=base)
+    delivery = Git().bundle(repository, ["main", "same", "ahead"], base)
+    output = guest(
+        INSPECT,
+        clone,
+        *inspect_arguments(delivery, ["main", "same", "ahead", "nowhere"], [("work", base, ahead)]),
+        f"host:lost:{'f' * 40}",  # A known commit the clone no longer has.
+        "branch:lost",
+        f"commit:{'f' * 40}",
+        data=delivery.data,
+    )
+    assert GuestClone.parse(output) == GuestClone(
+        "refs/heads/work",
+        busy=True,
+        dirty=True,
+        checked_out={"refs/heads/work", "refs/heads/linked"},
+        branches={
+            "work": GuestBranch(base, None, False, False),
+            "main": GuestBranch(base, tip, False, True),
+            "same": GuestBranch(base, base, True, True),
+            "ahead": GuestBranch(ahead, base, True, False),
+            "nowhere": MISSING,
+            "lost": MISSING,
+        },
+        commits={ahead},
+    )
 
 
-def test_receive_reports_a_known_commit_the_clone_lacks(clone: Path) -> None:
-    assert run_receive(clone, [f"host:gone:{'f' * 40}", "ff:gone"]) == ["gone: not delivered"]
-
-
-def test_receive_moves_a_clean_checked_out_branch(repository: Path, clone: Path) -> None:
-    # The landing instance's own branch is usually checked out when it is rewritten.
+def test_apply_moves_branches_whose_facts_still_hold(clone: Path, tmp_path: Path) -> None:
+    base = git(clone, "rev-parse", "HEAD")
+    new = git(clone, "commit-tree", "-m", "rebased", "-p", base, f"{base}^{{tree}}")
     old = commit(clone, "feature", {"a": "1"})
+    branches(clone, idle=base, moved=new, linked=base)
+    git(clone, "worktree", "add", "--quiet", str(tmp_path / "linked"), "linked")
     (clone / "untracked").write_text("kept")
-    new = advance(repository)  # Stands in for the rebased commits, which main contains.
-    assert receive(repository, clone, ["main"], [("feature", old, new)]) == [
-        "feature: moved to the rebased commits",
-        "main: fast-forwarded",
-    ]
-    assert git(clone, "rev-parse", "HEAD", "feature").split() == [new, new]
+    moves = [f"reset:feature:{old}:{new}", f"update:idle:{base}:{new}", f"update:moved:{base}:{old}"]
+    assert guest(APPLY, clone, *moves, f"update:linked:{base}:{new}").split() == ["ok", "ok", "changed", "changed"]
+    assert git(clone, "rev-parse", "HEAD", "feature", "idle", "moved", "linked").split() == [new, new, new, new, base]
     assert git(clone, "symbolic-ref", "--short", "HEAD") == "feature"
     assert git(clone, "status", "--porcelain") == "?? untracked"
-    assert (clone / "untracked").read_text() == "kept"
 
 
-@pytest.mark.parametrize(("busy", "reason"), [("edit", "uncommitted changes"), ("rebase", "a Git operation")])
-def test_receive_leaves_a_busy_checked_out_branch(repository: Path, clone: Path, busy: str, reason: str) -> None:
+@pytest.mark.parametrize("change", ["edited", "rebasing", "switched", "moved"])
+def test_apply_leaves_a_checked_out_branch_that_changed(clone: Path, change: str) -> None:
     base = git(clone, "rev-parse", "HEAD")
-    if busy == "edit":
+    new = git(clone, "commit-tree", "-m", "rebased", "-p", base, f"{base}^{{tree}}")
+    if change == "edited":
         (clone / ".devbox.toml").write_text("edited")
-    else:
+    elif change == "rebasing":
         (clone / ".git/rebase-merge").mkdir()
-    tip = advance(repository)
-    (line,) = receive(repository, clone, ["main"])
-    assert line == f"main: left alone ({reason}{' is in progress' if busy == 'rebase' else ''}); see host/main"
-    assert git(clone, "rev-parse", "HEAD", "host/main").split() == [base, tip]
-    if busy == "edit":
-        assert (clone / ".devbox.toml").read_text() == "edited"
+    elif change == "switched":
+        git(clone, "switch", "-qc", "other")
+    else:
+        git(clone, "commit", "--allow-empty", "-qm", "more")
+    assert guest(APPLY, clone, f"reset:main:{base}:{new}").split() == ["changed"]
+    assert git(clone, "rev-parse", "main") != new
 
 
 def test_bundle_delivers_branches_at_or_behind_base_by_name(repository: Path, tmp_path: Path) -> None:
@@ -133,17 +240,6 @@ def test_bundle_delivers_branches_at_or_behind_base_by_name(repository: Path, tm
     assert [line.split()[1] for line in heads] == ["refs/heads/main"]
     # Nothing beyond base: no bundle at all, rather than the branches' whole history.
     assert Git().bundle(repository, ["at-base"], base) == Delivery("", {"at-base": base})
-
-
-def test_receive_specs_deliver_then_rewrite_then_fast_forward() -> None:
-    # A rebased branch must not be reported as diverged from its target.
-    delivery = Delivery("", {"release": "a" * 40})
-    assert receive_specs(delivery, ["main", "release"], [("feature", "old", "new")]) == [
-        f"host:release:{'a' * 40}",
-        "rewrite:feature:old:new",
-        "ff:main",
-        "ff:release",
-    ]
 
 
 def test_bundle_refuses_missing_branches(repository: Path) -> None:
@@ -203,26 +299,39 @@ def test_sync_refusals(project: Project, harness: Harness, tmp_path: Path) -> No
         app.sync(running(detached), [])
 
 
-def test_sync_bundles_host_branches_for_the_guest_script(project: Project, harness: Harness, tmp_path: Path) -> None:
+def test_sync_inspects_plans_and_applies_in_the_guest(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
     repository = FakeRepository()
     app = App(engine, Store(tmp_path / "state"), repository)
     id = app.new(project, harness, no_config=True)
     repository.delivery = Delivery("BUNDLE", {"release": BASE})
     engine.execs.clear()
-    engine.stdout = "one\ntwo\n"
-    assert app.sync(running(id), [], [("feature", "old", "new")]) == ["one", "two"]
+    engine.replies = [
+        f"head refs/heads/feature\nbusy 0\ndirty 0\nbranch feature {LOCAL} - 0 0\n"
+        f"branch main {LOCAL} {HOST} 0 1\ncommit {NEW}\n",
+        "ok\nchanged\n",
+    ]
+    rewrites = [("feature", LOCAL, NEW)]
+    assert app.sync(running(id), [], rewrites) == [
+        "feature: moved to the rebased commits",
+        "main: left alone (changed meanwhile); see host/main",
+    ]
     # Defaults to the branch the instance started from.
     assert repository.calls == [("bundle", project.root, ["main"], BASE)]
-    (request,) = engine.execs
-    specs = receive_specs(repository.delivery, ["main"], [("feature", "old", "new")])
-    assert request.args == ("sh", "-c", RECEIVE, "sh", str(project.workspace), *specs)
-    assert request.input == "BUNDLE"
+    inspect, apply = engine.execs
+    workspace = str(project.workspace)
+    arguments = inspect_arguments(repository.delivery, ["main"], rewrites)
+    assert (inspect.args, inspect.input) == (("sh", "-c", INSPECT, "sh", workspace, *arguments), "BUNDLE")
+    moves = (f"reset:feature:{LOCAL}:{NEW}", f"update:main:{LOCAL}:{HOST}")
+    assert apply.args == ("sh", "-c", APPLY, "sh", workspace, *moves)
 
-    # Instances created before the workspace move mount their clone at the host checkout.
+    # Nothing to move needs no second round. Instances created before the workspace move
+    # mount their clone at the host checkout.
     metadata = app.store.metadata(id)
     del metadata["workspace"]
     (app.store.directory(id) / "metadata.json").write_text(json.dumps(metadata))
-    app.sync(running(id), ["release", "main"])
-    assert repository.calls[-1] == ("bundle", project.root, ["release", "main"], BASE)
-    assert engine.execs[-1].args[4] == metadata["checkout"]
+    engine.execs.clear()
+    engine.replies = [f"head -\nbusy 0\ndirty 0\nbranch main {HOST} {HOST} 1 1\n"]
+    assert app.sync(running(id), ["main"]) == ["main: up to date"]
+    (inspect,) = engine.execs
+    assert inspect.args[4] == metadata["checkout"]

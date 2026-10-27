@@ -3,12 +3,11 @@ from pathlib import Path
 
 import pytest
 
-import devbox.repository
 from devbox.app import App
 from devbox.cli import printable
 from devbox.config import Harness, Project
 from devbox.errors import DevboxError
-from devbox.repository import Fetched, Git, LocalBranches, Tip, publish, refs
+from devbox.repository import Fetched, Git, LocalBranches, Tip, compare, publish, refs, update_branch
 from devbox.state import Store
 from tests.fakes import FakeEngine, FakeGit
 from tests.repos import commit, git
@@ -39,18 +38,30 @@ def test_fetch_namespaces_branches_and_flags_watched_paths(repository: Path, clo
     assert set(refs(repository, "refs/heads/")) == {"refs/heads/main", "refs/heads/x/plain", "refs/heads/x/risky"}
     assert git(repository, "rev-parse", "main") == host_main
     assert git(repository, "tag") == ""
+    # Prune tracking refs, never local branches that may hold reviewed or host work.
+    git(clone, "branch", "-D", "plain")
+    assert set(fetched(repository, clone)) == {"main", "risky"}
+    assert git(repository, "rev-parse", "x/plain") == plain
 
 
-def test_fetch_compares_with_the_current_host_head(repository: Path, clone: Path) -> None:
-    # The clone predates a landed ancestor; only the unlanded commit and its changes count.
+def test_compare_measures_a_tip_against_the_host_head(repository: Path, clone: Path) -> None:
+    # The clone predates a landed ancestor and a host-only commit; only unlanded work counts.
     landed = commit(clone, "main", {".devbox/Containerfile": "FROM prior\n"})
-    git(clone, "checkout", "--quiet", "-b", "feature")
-    git(clone, "commit", "--quiet", "--allow-empty", "-m", "unlanded")
-    git(repository, "fetch", "--quiet", str(clone), "main")
+    first = commit(clone, "feature", {"notes.txt": "1"})
+    git(clone, "commit", "--quiet", "--allow-empty", "-m", "more")
+    tip = git(clone, "rev-parse", "HEAD")
+    git(clone, "branch", "earlier")
+    rewritten = commit(clone, "feature", {"notes.txt": "2"})  # Recreated from main: not a descendant.
+    git(repository, "fetch", "--quiet", str(clone), "+refs/heads/*:refs/test/*")
     git(repository, "merge", "--quiet", "--ff-only", landed)
     commit(repository, "release", {"host-only": "not part of the review"})
-    feature = fetched(repository, clone, ":(literal).devbox/Containerfile")["feature"]
-    assert (feature.commits, feature.watched) == (1, ())
+    head = git(repository, "rev-parse", "HEAD")
+    watched = (":(literal).devbox/Containerfile", ":(glob)*.txt")
+    assert compare(repository, head, "refs/t", tip, first, watched) == Tip(
+        "refs/t", tip, first, 2, True, ("notes.txt",)
+    )
+    assert compare(repository, head, "refs/t", rewritten, tip, watched).descends is False
+    assert compare(repository, head, "refs/t", tip, None, watched).descends is True
 
 
 # publish: whether fetch moves, leaves or already has each fetched tip's local branch.
@@ -114,22 +125,6 @@ def test_fetch_keeps_different_instances_branches_separate(
     assert git(repository, "rev-parse", "refs/devbox/two/feature", "two/feature").split() == [second] * 2
 
 
-def test_fetch_reports_rewritten_and_pruned_branches(repository: Path, clone: Path) -> None:
-    commit(clone, "feature", {"a": "1"})
-    gone = commit(clone, "gone", {"b": "1"})
-    assert not any(branch.rewritten for branch in fetched(repository, clone).values())
-    rewritten = commit(clone, "feature", {"a": "2"})  # recreated from main: not a descendant
-    git(clone, "checkout", "--quiet", "main")
-    git(clone, "branch", "-D", "gone")
-    result = fetched(repository, clone)
-    assert set(result) == {"main", "feature"}
-    assert result["feature"].rewritten
-    assert result["feature"].branch_current
-    assert git(repository, "rev-parse", "x/feature") == rewritten
-    # Prune tracking refs, never local branches that may hold reviewed or host work.
-    assert git(repository, "rev-parse", "x/gone") == gone
-
-
 def test_local_branches_reads_symbolic_and_checked_out_branches(repository: Path, tmp_path: Path) -> None:
     main = git(repository, "rev-parse", "main")
     git(repository, "branch", "linked")
@@ -152,28 +147,18 @@ def test_fetch_leaves_a_colliding_host_branch_intact(repository: Path, clone: Pa
     assert git(repository, "rev-parse", "x", branch.ref).split() == [host_main, tip]
 
 
-@pytest.mark.parametrize("existing", [False, True])
-def test_fetch_does_not_overwrite_a_concurrently_created_or_moved_branch(
-    repository: Path, clone: Path, monkeypatch: pytest.MonkeyPatch, existing: bool
-) -> None:
-    tip = commit(clone, "feature", {"a": "1"})
-    if existing:
-        fetched(repository, clone)
-        tip = commit(clone, "feature", {"a": "2"})
-    local = "refs/heads/x/feature"
-    host_main = git(repository, "rev-parse", "main")
-    original = devbox.repository.git_output
-
-    def race(directory: Path, *args: str) -> str | None:
-        if args[:3] == ("update-ref", "--no-deref", local):
-            git(repository, "update-ref", local, host_main)
-        return original(directory, *args)
-
-    monkeypatch.setattr(devbox.repository, "git_output", race)
-    branch = fetched(repository, clone)["feature"]
-    assert not branch.branch_current
-    assert git(repository, "rev-parse", local) == host_main
-    assert git(repository, "rev-parse", branch.ref) == tip
+def test_update_branch_compares_and_swaps(repository: Path) -> None:
+    main = git(repository, "rev-parse", "main")
+    new = git(repository, "commit-tree", "-m", "new", "-p", main, "main^{tree}")
+    zero = "0" * 40
+    git(repository, "branch", "x/moved")
+    git(repository, "branch", "y")
+    assert update_branch(repository, "x/created", new, zero)
+    assert not update_branch(repository, "x/created", main, zero)  # Created since it was read.
+    assert not update_branch(repository, "x/moved", main, new)  # Moved since it was read.
+    assert not update_branch(repository, "y/feature", new, zero)  # Collides with the y branch.
+    assert update_branch(repository, "x/moved", new, main)
+    assert git(repository, "rev-parse", "x/created", "x/moved", "y").split() == [new, new, main]
 
 
 def test_fetch_never_runs_clone_configured_commands(repository: Path, clone: Path, tmp_path: Path) -> None:

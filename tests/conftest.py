@@ -29,8 +29,10 @@ def isolated_git_environment(tmp_path_factory: pytest.TempPathFactory) -> Iterat
 
 @pytest.fixture(autouse=True)
 def isolated_devbox_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Shared harness state must never touch the developer's actual credentials.
+    # Shared harness state must never touch the developer's actual credentials, and saved
+    # state must never be the developer's instances or another test's.
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
 
 
 @pytest.fixture(scope="session")

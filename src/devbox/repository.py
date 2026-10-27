@@ -163,7 +163,17 @@ def _branch_update(ref: str, tip: Tip, local: LocalBranches) -> tuple[bool, str 
     return True, have or "0" * len(tip.new)
 
 
-def _compare(repository: Path, head: str, ref: str, new: str, old: str | None, watched: Sequence[str]) -> Tip:
+def update_branch(repository: Path, name: str, new: str, expected: str) -> bool:
+    """Move a local branch to new only while it is still at expected (zeros: does not exist).
+
+    Compare-and-swap: never clobber a branch created or moved since it was read. Ref
+    collisions (e.g. an existing <instance> branch) also leave host refs intact.
+    """
+    return git_output(repository, "update-ref", "--no-deref", f"refs/heads/{name}", new, expected) is not None
+
+
+def compare(repository: Path, head: str, ref: str, new: str, old: str | None, watched: Sequence[str]) -> Tip:
+    """How a fetched tip relates to the host HEAD (watched paths per its merge base) and to old."""
     changed = git(repository, "diff", "--name-only", "-z", f"{head}...{new}", "--", *watched)
     commits = int(git(repository, "rev-list", "--count", f"{head}..{new}"))
     descends = old is None or old == new or git_output(repository, "merge-base", "--is-ancestor", old, new) is not None
@@ -318,15 +328,9 @@ class Git(Repository):
         result = []
         for ref, new in refs(self.path, namespace).items():
             fetched, expected = publish(
-                _compare(self.path, head, ref, new, before.get(ref), watched), namespace, branch_prefix, local
+                compare(self.path, head, ref, new, before.get(ref), watched), namespace, branch_prefix, local
             )
-            # Compare-and-swap: do not clobber a branch created or moved since it was read.
-            # Ref collisions (e.g. an existing <instance> branch) also leave host refs intact.
-            if (
-                expected is not None
-                and git_output(self.path, "update-ref", "--no-deref", f"refs/heads/{fetched.branch}", new, expected)
-                is None
-            ):
+            if expected is not None and not update_branch(self.path, str(fetched.branch), new, expected):
                 fetched = replace(fetched, branch_current=False)
             result.append(fetched)
         return result

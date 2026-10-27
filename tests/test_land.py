@@ -26,31 +26,26 @@ def publish(repository: Path, name: str, files: dict[str, str]) -> Fetched:
     return Fetched(f"refs/devbox/x/{name}", 1, False, (), f"x/{name}", True)
 
 
-def test_land_rebases_before_fast_forwarding(repository: Path) -> None:
+def test_land_rebases_onto_the_checked_out_branch_before_fast_forwarding(repository: Path) -> None:
     feature = publish(repository, "feature", {"guest": "new"})
     original = git(repository, "rev-parse", feature.ref)
-    host = commit(repository, "main", {"host": "new"})
+    main = git(repository, "rev-parse", "main")
+    host = commit(repository, "release", {"host": "new"})
     # Host configuration must not silently stash work or move other branches during rebase.
     git(repository, "config", "rebase.updateRefs", "true")
     git(repository, "branch", "keep", original)
-    assert Git(repository).land(feature) == Landed("main", original, git(repository, "rev-parse", "main"))
-    assert git(repository, "rev-parse", "main^") == host
-    assert git(repository, "rev-list", "--count", f"{host}..main") == "1"
-    assert git(repository, "rev-parse", "keep") == original
+    landed = Git(repository).land(feature)
+    assert landed == Landed("release", original, git(repository, "rev-parse", "release"))
+    assert git(repository, "branch", "--show-current") == "release"
+    assert git(repository, "rev-parse", "release^", "main", "keep", feature.ref).split() == [
+        host,
+        main,
+        original,
+        original,
+    ]
     assert "refs/heads/x/feature" not in refs(repository, "refs/heads/")
-    assert git(repository, "rev-parse", feature.ref) == original
     assert (repository / "guest").read_text() == "new"
     assert (repository / "host").read_text() == "new"
-
-
-def test_land_targets_the_current_host_branch(repository: Path) -> None:
-    feature = publish(repository, "feature", {"guest": "new"})
-    main = git(repository, "rev-parse", "main")
-    host = commit(repository, "release", {"host": "new"})
-    assert Git(repository).land(feature).target == "release"
-    assert git(repository, "branch", "--show-current") == "release"
-    assert git(repository, "rev-parse", "release^") == host
-    assert git(repository, "rev-parse", "main") == main
 
 
 def test_land_leaves_conflicting_rebase_for_the_user(repository: Path) -> None:

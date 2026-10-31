@@ -106,6 +106,409 @@ def size_estimate(sizes: dict[str, int | None]) -> str:
     return (">" if len(known) < len(sizes) else "~") + format_size(sum(known))
 
 
+def match[T](
+    items: Sequence[T],
+    value: str | None,
+    prompt: str,
+    key: Callable[[T], str],
+    label: Callable[[T], str],
+) -> T:
+    if value is None:
+        return select(items, prompt, label)
+    exact = [item for item in items if key(item) == value]
+    candidates = exact or [item for item in items if key(item).removeprefix("devbox-").startswith(value)]
+    if len(candidates) != 1:
+        raise DevboxError(f"{value!r} matches {len(candidates)} {prompt.lower()}; use a full ID")
+    return candidates[0]
+
+
+def complete_ids(*, clones: bool = False) -> Callable[..., list[str]]:
+    """Argcomplete completer for instance IDs, read from saved state without the engine.
+
+    Offers the short form ("blue"), and the full ID once something is typed, matching
+    what `match` accepts. Completion must never print or raise, so failures yield nothing.
+    """
+
+    def complete(prefix: str, parsed_args: argparse.Namespace, **_: object) -> list[str]:
+        try:
+            store = Store(parsed_args.state_dir)
+            ids = store.clones() if clones else store.saved()
+        except (DevboxError, OSError):
+            return []
+        short = [id.removeprefix("devbox-") for id in ids]
+        return short + ids if prefix else short
+
+    return complete
+
+
+def complete_guest_paths(prefix: str, parsed_args: argparse.Namespace, **_: object) -> list[str]:
+    """Complete guest paths from a running instance: relative ones within the outbox."""
+    try:
+        app = App(store=Store(parsed_args.state_dir))
+        saved = app.store.saved()
+        # As `match` resolves IDs, without its picker or errors.
+        ids = [id for id in saved if id == parsed_args.id] or [
+            id for id in saved if id.removeprefix("devbox-").startswith(parsed_args.id)
+        ]
+        if len(ids) != 1:
+            return []
+        head, slash, _rest = prefix.rpartition("/")
+        directory = (head or "/") if prefix.startswith("/") else str(transfer.OUTBOX / head)
+        return [head + slash + name for name in app.guest_entries(ids[0], directory)]
+    except (DevboxError, OSError):
+        return []
+
+
+def container_label(container: Container) -> str:
+    return f"{container.id}  {container.harness}  {container.state}  {container.project}  {container.created}"
+
+
+def session_label(session: Session) -> str:
+    return f"{session.id}  {session.harness}  {session.project}"
+
+
+cli = CliCommands()
+
+
+@cli.command("new", help="New project/harness environment")
+@arg("harness", nargs="?")
+@arg("--project", type=Path, default=Path("."))
+@arg("--no-config", action="store_true", help="Do not import host config/packages/credentials or mount shared harness state")
+@arg("--detach", action="store_true", help="Create without attaching")
+def _new(app: App, *, harness: str | None, project: Path, no_config: bool, detach: bool) -> None:
+    selected_harness = get_harness(harness)
+    selected_project = Project.discover(project)
+    if not detach:
+        require_terminal()
+    id = app.new(selected_project, selected_harness, no_config=no_config)
+    if not detach:
+        app.attach(next(c for c in app.engine.containers() if c.id == id))
+
+
+@cli.command("build", help="Build project/harness environment")
+@arg("harness", nargs="?")
+@arg("--project", type=Path, default=Path("."))
+@arg("--no-config", action="store_true", help="Do not import host config/packages/credentials or mount shared harness state")
+def _build(app: App, *, harness: str | None, project: Path, no_config: bool) -> None:
+    print(app.build(Project.discover(project), get_harness(harness), no_config=no_config))
+
+
+def _containers(app: App, *, running: bool = False) -> list[Container]:
+    app.engine.require_running()
+    containers = app.engine.containers()
+    return [c for c in containers if c.state == "running"] if running else containers
+
+
+@cli.command("attach")
+@arg("id", nargs="?", help="Container ID", completer=complete_ids())
+def _attach(app: App, *, id: str | None) -> None:
+    containers = _containers(app, running=id is None)
+    if id and not any(c.id == id or c.id.removeprefix("devbox-").startswith(id) for c in containers):
+        saved = [s for s in app.store.saved() if s == id or s.removeprefix("devbox-").startswith(id)]
+        if len(saved) == 1:
+            raise DevboxError(f"{saved[0]} has been removed; use devbox fork to continue its saved conversation")
+    container = match(containers, id, "Containers", lambda c: c.id, container_label)
+    require_terminal()
+    app.attach(container)
+
+
+@cli.command("shell")
+@arg("id", nargs="?", help="Container ID", completer=complete_ids())
+def _shell(app: App, *, id: str | None) -> None:
+    container = match(_containers(app, running=True), id, "Containers", lambda c: c.id, container_label)
+    require_terminal()
+    app.shell(container)
+
+
+def _selected_containers(app: App, ids: list[str]) -> list[Container]:
+    containers = _containers(app)
+    if not ids:
+        return select_many(containers, "Containers", container_label)
+    selected = [match(containers, id, "Containers", lambda c: c.id, container_label) for id in ids]
+    return list({c.id: c for c in selected}.values())
+
+
+@cli.command("rm", help="Remove containers, retaining saved history and clones")
+@arg("ids", nargs="*", help="Container IDs", completer=complete_ids())
+def _rm(app: App, *, ids: list[str]) -> None:
+    for container in _selected_containers(app, ids):
+        app.engine.remove(container.id)
+        print(f"Removed {container.id}. Saved conversations and repository clone retained.")
+
+
+@cli.command("ls")
+@arg("--json", dest="json_output", action="store_true")
+def _ls(app: App, *, json_output: bool) -> None:
+    containers = _containers(app)
+    if json_output:
+        print(json.dumps([asdict(c) for c in containers], indent=2))
+    else:
+        for container in containers:
+            print(container_label(container))
+
+
+@cli.command("sessions")
+@arg("--json", dest="json_output", action="store_true")
+def _sessions(app: App, *, json_output: bool) -> None:
+    sessions = app.store.sessions()
+    if json_output:
+        print(json.dumps([asdict(s) for s in sessions], default=str, indent=2))
+    else:
+        for session in sessions:
+            print(session_label(session))
+
+
+@cli.command("fork", help="Fork a saved conversation into a new container")
+@arg("session", nargs="?")
+@arg("--project", type=Path, help="Override the saved project's working directory")
+@arg(
+    "--from",
+    dest="source",
+    choices=("instance", "host"),
+    help="Clone the session's instance (default when it has a clone) or the host checkout",
+)
+@arg("--detach", action="store_true")
+@arg("--no-config", action="store_true")
+def _fork(
+    app: App,
+    *,
+    session: str | None,
+    project: Path | None,
+    source: str | None,
+    detach: bool,
+    no_config: bool,
+) -> None:
+    selected = match(app.store.sessions(), session, "Sessions", lambda s: s.id, session_label)
+    has_clone = selected.instance in app.store.clones()
+    if source == "instance" and not has_clone:
+        raise DevboxError(f"{selected.instance} has no repository clone; use --from host")
+    from_instance = source != "host" and has_clone
+    print(
+        f"Cloning {selected.instance}'s repository." if from_instance else "Cloning the host checkout.",
+        flush=True,
+    )
+    if not detach:
+        require_terminal()
+    id = app.new(
+        Project.discover(project or Path(selected.project)),
+        get_harness(selected.harness),
+        no_config=no_config,
+        session=selected,
+        from_instance=from_instance,
+    )
+    if not detach:
+        app.attach(next(c for c in app.engine.containers() if c.id == id))
+
+
+def printable(value: str) -> str:
+    """Branch and file names come from the guest: never let them drive the terminal."""
+    return "".join(c if c.isprintable() else repr(c)[1:-1] for c in value)
+
+
+def _fetched(app: App, id: str | None) -> tuple[str, list[Fetched]]:
+    def label(instance: str) -> str:
+        metadata = app.store.metadata(instance)
+        return f"{instance}  {metadata.get('harness')}  {metadata.get('project')}"
+
+    instance = match(app.store.clones(), id, "Instances", lambda i: i, label)
+    fetched = app.fetch(instance)
+    if not fetched:
+        print(f"{instance} has no branches.")
+    return instance, fetched
+
+
+def fetched_label(branch: Fetched) -> str:
+    notes = [f"{branch.commits} new commit{'' if branch.commits == 1 else 's'}"]
+    if branch.rewritten:
+        notes.append("REWRITTEN since the last fetch")
+    if branch.watched:
+        notes.append("CHANGES " + ", ".join(printable(path) for path in branch.watched))
+    if branch.branch is not None:
+        if branch.branch_current:
+            notes.append("local branch " + printable(branch.branch))
+        else:
+            notes.append(
+                f"WARNING: local branch {printable(branch.branch)} not updated "
+                f"(checked out, changed locally, or could not be created); use {printable(branch.ref)}"
+            )
+    return f"{printable(branch.ref)}  {'  '.join(notes)}"
+
+
+@cli.command("fetch", help="Fetch new work as local <short-instance>/<branch> branches")
+@arg("id", nargs="?", help="Instance ID, including removed containers", completer=complete_ids(clones=True))
+def _fetch(app: App, *, id: str | None) -> None:
+    instance, fetched = _fetched(app, id)
+    for branch in fetched:
+        print(fetched_label(branch))
+    if fetched:
+        print("Compared with the current host HEAD (merge base per branch); see devbox review.")
+
+
+def _selected_branch(instance: str, fetched: list[Fetched], branch: str | None) -> Fetched:
+    """Share review/land selection, including the single changed branch shortcut."""
+    changed = [b for b in fetched if b.commits]
+    if branch is None and not changed:
+        raise DevboxError("No branches have new commits relative to the current host HEAD")
+    namespace = f"refs/devbox/{instance}/"
+    return (
+        changed[0]
+        if branch is None and len(changed) == 1
+        else match(
+            changed if branch is None else fetched,
+            branch,
+            "Branches",
+            lambda b: b.ref.removeprefix(namespace),
+            fetched_label,
+        )
+    )
+
+
+@cli.command("review", help="Fetch an instance's branches and show one's changes with git diff")
+@arg("id", nargs="?", help="Instance ID, including removed containers", completer=complete_ids(clones=True))
+@arg("branch", nargs="?", help="Branch (omit for a picker)")
+@arg("--stat", action="store_true", help="Summarize changed files")
+def _review(app: App, *, id: str | None, branch: str | None, stat: bool) -> None:
+    instance, fetched = _fetched(app, id)
+    if not fetched:
+        return
+    selected = _selected_branch(instance, fetched, branch)
+    print(fetched_label(selected), flush=True)
+    app.review(instance, selected.ref, *(["--stat"] if stat else []))
+
+
+@cli.command("land", help="Fetch, rebase onto the current host branch and fast-forward merge")
+@arg("id", nargs="?", help="Instance ID, including removed containers", completer=complete_ids(clones=True))
+@arg("branch", nargs="?", help="Branch (omit for a picker)")
+@arg("--sync", action="store_true", help="Sync instances without confirming, as if not a tty", exclusive_group="sync")
+@arg("--no-sync", action="store_true", help="Do not sync instances after landing", exclusive_group="sync")
+def _land(app: App, *, id: str | None, branch: str | None, sync: bool, no_sync: bool) -> None:
+    instance, fetched = _fetched(app, id)
+    if not fetched:
+        return
+    selected = _selected_branch(instance, fetched, branch)
+    print(fetched_label(selected), flush=True)
+    announced = False
+
+    def announce(target: str) -> None:
+        nonlocal announced
+        if not announced:
+            print(f"Landed {printable(selected.branch or selected.ref)} onto {printable(target)}.", flush=True)
+            announced = True
+
+    def confirm(target: str, containers: list[Container]) -> bool:
+        if no_sync:
+            return False
+        if sync or not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return True
+        # Mistaken landings are easy to fix on the host, but not once clones have them.
+        announce(target)
+        names = ", ".join(c.id for c in containers)
+        return query(f"Sync {printable(target)} to {names}? Their local branches may move.", default_yes=True)
+
+    landing = app.land(instance, selected, confirm)
+    announce(landing.landed.target)
+    if landing.synced is None:
+        print("Not synced; devbox sync updates an instance later.")
+        return
+    for container, lines in landing.synced:
+        for line in lines:
+            print(f"{container}: {printable(line)}")
+
+
+@cli.command("sync", help="Deliver host branches to a running instance as host/<branch>")
+@arg("id", nargs="*", help="Container IDs (omit for a picker)", completer=complete_ids())
+@arg(
+    "-b",
+    "--branch",
+    action="append",
+    default=[],
+    help="Host branch to deliver, repeatable (default: the one each instance started from)",
+)
+@arg(
+    "--force",
+    action="store_true",
+    help="Also replace local branches that are diverged from or ahead of the host's "
+    "(old tips are reported; uncommitted changes are never discarded)",
+)
+def _sync(app: App, *, id: list[str], branch: list[str], force: bool) -> None:
+    running = _containers(app, running=True)
+    if id:
+        containers = list(dict.fromkeys(match(running, value, "Containers", lambda c: c.id, container_label) for value in id))
+    else:
+        containers = select_many(running, "Containers", container_label)
+    failed = 0
+    for container in containers:
+        try:
+            lines = app.sync(container, branch, force=force)
+        except DevboxError as exc:
+            failed += 1
+            lines = [f"not synced: {exc}"]
+        for line in lines:
+            print(f"{container.id}: {printable(line)}")
+    if failed:
+        raise DevboxError(f"{failed} of {len(containers)} instances not synced")
+
+
+@cli.command("put", help=f"Copy host files into a running instance's {transfer.INBOX}")
+@arg("id", help="Container ID", completer=complete_ids())
+@arg("paths", nargs="+", help="Host files or directories; quote ** globs")
+@arg("--dir", dest="directory", help=f"Directory within {transfer.INBOX} to put them in")
+@arg("--force", action="store_true", help="Replace existing names")
+def _put(app: App, *, id: str, paths: list[str], directory: str | None, force: bool) -> None:
+    container = match(_containers(app, running=True), id, "Containers", lambda c: c.id, container_label)
+    named = transfer.uploads(transfer.expand(paths))
+    target = transfer.INBOX / relative(directory) if directory else transfer.INBOX
+    files, size = transfer.measure(list(named.values()))
+    print(
+        f"Sending {files} file{'' if files == 1 else 's'} ({format_size(size)}) to {container.id}:{target}",
+        flush=True,
+    )
+    app.put(container, named, target, force=force)
+    print(f"Put {', '.join(printable(name) for name in named)} in {target}")
+
+
+@cli.command("get", help=f"Copy files out of a running instance, such as from its {transfer.OUTBOX}")
+@arg("id", help="Container ID", completer=complete_ids())
+@arg(
+    "paths",
+    nargs="*",
+    help=f"Guest paths or quoted globs, relative to {transfer.OUTBOX} (omit for a picker)",
+    completer=complete_guest_paths,
+)
+@arg("--to", type=Path, default=Path("."), help="Host directory (default: current)")
+@arg("--force", action="store_true", help="Replace existing names")
+def _get(app: App, *, id: str, paths: list[str], to: Path, force: bool) -> None:
+    container = match(_containers(app, running=True), id, "Containers", lambda c: c.id, container_label)
+    if not paths:
+        entries = app.guest_entries(container.id, str(transfer.OUTBOX))
+        if not entries:
+            raise DevboxError(f"{container.id}:{transfer.OUTBOX} is empty")
+        paths = [entry.rstrip("/") for entry in select_many(entries, "Outbox", printable)]
+        if not paths:
+            print("Nothing selected.")
+            return
+    named = app.guest_matches(container, paths)
+    app.get(container, named, to, force=force)
+    print(f"Got {', '.join(printable(name) for name in named)} in {to}")
+
+
+@cli.command("rm-all", help="Stop/remove only managed containers; retain saved history")
+@arg("--yes", action="store_true", help="Skip confirmation")
+def _rm_all(app: App, *, yes: bool) -> None:
+    containers = _containers(app)
+    if not containers:
+        print("No managed containers.")
+        return
+    if not yes:
+        require_terminal()
+        if not query(f"Stop/remove {len(containers)} containers? Saved history is retained."):
+            return
+    print(f"Removed {app.kill_all()} containers. Saved conversations retained.")
+
+
+@cli.command("cleanup", help="Delete orphaned saved instances and unused Devbox images")
+@arg("--select", action="store_true", help="Choose instances, then images, with fzf before confirming")
+@arg("--only", choices=("instances", "images"), help="Clean up only orphaned instances or only unused images")
 def cleanup(app: App, *, select: bool, only: str | None = None) -> None:
     require_terminal("Cleanup requires a terminal for confirmation")
     with_instances, with_images = only != "images", only != "instances"
@@ -174,359 +577,14 @@ def cleanup(app: App, *, select: bool, only: str | None = None) -> None:
         print("Image estimates exclude base images; shared layers and build caches may reduce recovery.")
 
 
-def match[T](
-    items: Sequence[T],
-    value: str | None,
-    prompt: str,
-    key: Callable[[T], str],
-    label: Callable[[T], str],
-) -> T:
-    if value is None:
-        return select(items, prompt, label)
-    exact = [item for item in items if key(item) == value]
-    candidates = exact or [item for item in items if key(item).removeprefix("devbox-").startswith(value)]
-    if len(candidates) != 1:
-        raise DevboxError(f"{value!r} matches {len(candidates)} {prompt.lower()}; use a full ID")
-    return candidates[0]
-
-
-def complete_ids(*, clones: bool = False) -> Callable[..., list[str]]:
-    """Argcomplete completer for instance IDs, read from saved state without the engine.
-
-    Offers the short form ("blue"), and the full ID once something is typed, matching
-    what `match` accepts. Completion must never print or raise, so failures yield nothing.
-    """
-
-    def complete(prefix: str, parsed_args: argparse.Namespace, **_: object) -> list[str]:
-        try:
-            store = Store(parsed_args.state_dir)
-            ids = store.clones() if clones else store.saved()
-        except (DevboxError, OSError):
-            return []
-        short = [id.removeprefix("devbox-") for id in ids]
-        return short + ids if prefix else short
-
-    return complete
-
-
-def complete_guest_paths(prefix: str, parsed_args: argparse.Namespace, **_: object) -> list[str]:
-    """Complete guest paths from a running instance: relative ones within the outbox."""
-    try:
-        app = App(store=Store(parsed_args.state_dir))
-        saved = app.store.saved()
-        # As `match` resolves IDs, without its picker or errors.
-        ids = [id for id in saved if id == parsed_args.id] or [
-            id for id in saved if id.removeprefix("devbox-").startswith(parsed_args.id)
-        ]
-        if len(ids) != 1:
-            return []
-        head, slash, _rest = prefix.rpartition("/")
-        directory = (head or "/") if prefix.startswith("/") else str(transfer.OUTBOX / head)
-        return [head + slash + name for name in app.guest_entries(ids[0], directory)]
-    except (DevboxError, OSError):
-        return []
-
-
-def id_argument(
-    command: argparse.ArgumentParser,
-    name: str,
-    nargs: str | None,
-    help: str,
-    *,
-    clones: bool = False,
-) -> None:
-    # argcomplete reads `completer` off the action; argparse does not declare it.
-    action = command.add_argument(name, nargs=nargs, help=help)
-    action.completer = complete_ids(clones=clones)  # ty: ignore[unresolved-attribute]
-
-
-def container_label(container: Container) -> str:
-    return f"{container.id}  {container.harness}  {container.state}  {container.project}  {container.created}"
-
-
-def session_label(session: Session) -> str:
-    return f"{session.id}  {session.harness}  {session.project}"
-
-
-cli = CliCommands()
-
-
-@cli.command("new")
-@arg("harness", nargs="?")
-@arg("--project", type=Path, default=Path("."))
-@arg("--no-config", action="store_true", help="Do not import host config/packages/credentials or mount shared harness state")
-@arg("--detach", action="store_true", help="Create without attaching")
-def _new(app: App, *, harness: str | None, project: Path, no_config: bool, detach: bool) -> None:
-    selected_harness = get_harness(harness)
-    selected_project = Project.discover(project)
-    if not detach:
-        require_terminal()
-    id = app.new(selected_project, selected_harness, no_config=no_config)
-    if not detach:
-        app.attach(next(c for c in app.engine.containers() if c.id == id))
-
-
-@cli.command("build")
-@arg("harness", nargs="?")
-@arg("--project", type=Path, default=Path("."))
-@arg("--no-config", action="store_true", help="Do not import host config/packages/credentials or mount shared harness state")
-def _build(app: App, *, harness: str | None, project: Path, no_config: bool) -> None:
-    print(app.build(Project.discover(project), get_harness(harness), no_config=no_config))
-
-
-def _containers(app: App, *, running: bool = False) -> list[Container]:
-    app.engine.require_running()
-    containers = app.engine.containers()
-    return [c for c in containers if c.state == "running"] if running else containers
-
-
-def _attach(app: App, *, id: str | None) -> None:
-    containers = _containers(app, running=id is None)
-    if id and not any(c.id == id or c.id.removeprefix("devbox-").startswith(id) for c in containers):
-        saved = [s for s in app.store.saved() if s == id or s.removeprefix("devbox-").startswith(id)]
-        if len(saved) == 1:
-            raise DevboxError(f"{saved[0]} has been removed; use devbox fork to continue its saved conversation")
-    container = match(containers, id, "Containers", lambda c: c.id, container_label)
-    require_terminal()
-    app.attach(container)
-
-
-def _shell(app: App, *, id: str | None) -> None:
-    container = match(_containers(app, running=True), id, "Containers", lambda c: c.id, container_label)
-    require_terminal()
-    app.shell(container)
-
-
-def _selected_containers(app: App, ids: list[str]) -> list[Container]:
-    containers = _containers(app)
-    if not ids:
-        return select_many(containers, "Containers", container_label)
-    selected = [match(containers, id, "Containers", lambda c: c.id, container_label) for id in ids]
-    return list({c.id: c for c in selected}.values())
-
-
-def _rm(app: App, *, ids: list[str]) -> None:
-    for container in _selected_containers(app, ids):
-        app.engine.remove(container.id)
-        print(f"Removed {container.id}. Saved conversations and repository clone retained.")
-
-
-def _ls(app: App, *, json_output: bool) -> None:
-    containers = _containers(app)
-    if json_output:
-        print(json.dumps([asdict(c) for c in containers], indent=2))
-    else:
-        for container in containers:
-            print(container_label(container))
-
-
-def _sessions(app: App, *, json_output: bool) -> None:
-    sessions = app.store.sessions()
-    if json_output:
-        print(json.dumps([asdict(s) for s in sessions], default=str, indent=2))
-    else:
-        for session in sessions:
-            print(session_label(session))
-
-
-def _fork(
-    app: App,
-    *,
-    session: str | None,
-    project: Path | None,
-    source: str | None,
-    detach: bool,
-    no_config: bool,
-) -> None:
-    selected = match(app.store.sessions(), session, "Sessions", lambda s: s.id, session_label)
-    has_clone = selected.instance in app.store.clones()
-    if source == "instance" and not has_clone:
-        raise DevboxError(f"{selected.instance} has no repository clone; use --from host")
-    from_instance = source != "host" and has_clone
-    print(
-        f"Cloning {selected.instance}'s repository." if from_instance else "Cloning the host checkout.",
-        flush=True,
-    )
-    if not detach:
-        require_terminal()
-    id = app.new(
-        Project.discover(project or Path(selected.project)),
-        get_harness(selected.harness),
-        no_config=no_config,
-        session=selected,
-        from_instance=from_instance,
-    )
-    if not detach:
-        app.attach(next(c for c in app.engine.containers() if c.id == id))
-
-
-def printable(value: str) -> str:
-    """Branch and file names come from the guest: never let them drive the terminal."""
-    return "".join(c if c.isprintable() else repr(c)[1:-1] for c in value)
-
-
-def _fetched(app: App, id: str | None) -> tuple[str, list[Fetched]]:
-    def label(instance: str) -> str:
-        metadata = app.store.metadata(instance)
-        return f"{instance}  {metadata.get('harness')}  {metadata.get('project')}"
-
-    instance = match(app.store.clones(), id, "Instances", lambda i: i, label)
-    fetched = app.fetch(instance)
-    if not fetched:
-        print(f"{instance} has no branches.")
-    return instance, fetched
-
-
-def fetched_label(branch: Fetched) -> str:
-    notes = [f"{branch.commits} new commit{'' if branch.commits == 1 else 's'}"]
-    if branch.rewritten:
-        notes.append("REWRITTEN since the last fetch")
-    if branch.watched:
-        notes.append("CHANGES " + ", ".join(printable(path) for path in branch.watched))
-    if branch.branch is not None:
-        if branch.branch_current:
-            notes.append("local branch " + printable(branch.branch))
-        else:
-            notes.append(
-                f"WARNING: local branch {printable(branch.branch)} not updated "
-                f"(checked out, changed locally, or could not be created); use {printable(branch.ref)}"
-            )
-    return f"{printable(branch.ref)}  {'  '.join(notes)}"
-
-
-def _fetch(app: App, *, id: str | None) -> None:
-    instance, fetched = _fetched(app, id)
-    for branch in fetched:
-        print(fetched_label(branch))
-    if fetched:
-        print("Compared with the current host HEAD (merge base per branch); see devbox review.")
-
-
-def _selected_branch(instance: str, fetched: list[Fetched], branch: str | None) -> Fetched:
-    """Share review/land selection, including the single changed branch shortcut."""
-    changed = [b for b in fetched if b.commits]
-    if branch is None and not changed:
-        raise DevboxError("No branches have new commits relative to the current host HEAD")
-    namespace = f"refs/devbox/{instance}/"
-    return (
-        changed[0]
-        if branch is None and len(changed) == 1
-        else match(
-            changed if branch is None else fetched,
-            branch,
-            "Branches",
-            lambda b: b.ref.removeprefix(namespace),
-            fetched_label,
-        )
-    )
-
-
-def _review(app: App, *, id: str | None, branch: str | None, stat: bool) -> None:
-    instance, fetched = _fetched(app, id)
-    if not fetched:
-        return
-    selected = _selected_branch(instance, fetched, branch)
-    print(fetched_label(selected), flush=True)
-    app.review(instance, selected.ref, *(["--stat"] if stat else []))
-
-
-def _land(app: App, *, id: str | None, branch: str | None, sync: bool, no_sync: bool) -> None:
-    instance, fetched = _fetched(app, id)
-    if not fetched:
-        return
-    selected = _selected_branch(instance, fetched, branch)
-    print(fetched_label(selected), flush=True)
-    announced = False
-
-    def announce(target: str) -> None:
-        nonlocal announced
-        if not announced:
-            print(f"Landed {printable(selected.branch or selected.ref)} onto {printable(target)}.", flush=True)
-            announced = True
-
-    def confirm(target: str, containers: list[Container]) -> bool:
-        if no_sync:
-            return False
-        if sync or not (sys.stdin.isatty() and sys.stdout.isatty()):
-            return True
-        # Mistaken landings are easy to fix on the host, but not once clones have them.
-        announce(target)
-        names = ", ".join(c.id for c in containers)
-        return query(f"Sync {printable(target)} to {names}? Their local branches may move.", default_yes=True)
-
-    landing = app.land(instance, selected, confirm)
-    announce(landing.landed.target)
-    if landing.synced is None:
-        print("Not synced; devbox sync updates an instance later.")
-        return
-    for container, lines in landing.synced:
-        for line in lines:
-            print(f"{container}: {printable(line)}")
-
-
-def _sync(app: App, *, id: list[str], branch: list[str], force: bool) -> None:
-    running = _containers(app, running=True)
-    if id:
-        containers = list(dict.fromkeys(match(running, value, "Containers", lambda c: c.id, container_label) for value in id))
-    else:
-        containers = select_many(running, "Containers", container_label)
-    failed = 0
-    for container in containers:
-        try:
-            lines = app.sync(container, branch, force=force)
-        except DevboxError as exc:
-            failed += 1
-            lines = [f"not synced: {exc}"]
-        for line in lines:
-            print(f"{container.id}: {printable(line)}")
-    if failed:
-        raise DevboxError(f"{failed} of {len(containers)} instances not synced")
-
-
-def _put(app: App, *, id: str, paths: list[str], directory: str | None, force: bool) -> None:
-    container = match(_containers(app, running=True), id, "Containers", lambda c: c.id, container_label)
-    named = transfer.uploads(transfer.expand(paths))
-    target = transfer.INBOX / relative(directory) if directory else transfer.INBOX
-    files, size = transfer.measure(list(named.values()))
-    print(
-        f"Sending {files} file{'' if files == 1 else 's'} ({format_size(size)}) to {container.id}:{target}",
-        flush=True,
-    )
-    app.put(container, named, target, force=force)
-    print(f"Put {', '.join(printable(name) for name in named)} in {target}")
-
-
-def _get(app: App, *, id: str, paths: list[str], to: Path, force: bool) -> None:
-    container = match(_containers(app, running=True), id, "Containers", lambda c: c.id, container_label)
-    if not paths:
-        entries = app.guest_entries(container.id, str(transfer.OUTBOX))
-        if not entries:
-            raise DevboxError(f"{container.id}:{transfer.OUTBOX} is empty")
-        paths = [entry.rstrip("/") for entry in select_many(entries, "Outbox", printable)]
-        if not paths:
-            print("Nothing selected.")
-            return
-    named = app.guest_matches(container, paths)
-    app.get(container, named, to, force=force)
-    print(f"Got {', '.join(printable(name) for name in named)} in {to}")
-
-
-def _rm_all(app: App, *, yes: bool) -> None:
-    containers = _containers(app)
-    if not containers:
-        print("No managed containers.")
-        return
-    if not yes:
-        require_terminal()
-        if not query(f"Stop/remove {len(containers)} containers? Saved history is retained."):
-            return
-    print(f"Removed {app.kill_all()} containers. Saved conversations retained.")
-
-
+@cli.command("completion", help="Print shell completion setup")
+@arg("shell", choices=("bash", "zsh", "fish"))
 def _completion(*, shell: str) -> None:
     print(argcomplete.shellcode(["devbox"], shell=shell))
 
 
+@cli.command("init", help="Create a template .devbox.toml and .devbox/Containerfile if missing")
+@arg("--project", type=Path, default=Path("."))
 def _init(*, project: Path) -> None:
     for path, created in init(project).items():
         print(f"{'Created' if created else 'Kept existing'} {path}")
@@ -541,114 +599,7 @@ def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Containerized coding harnesses")
     p.add_argument("--version", action="version", version=__version__)
     p.add_argument("--state-dir", type=Path, help="Custom state directory")
-    commands = p.add_subparsers(required=True)
-    for name, func in (("new", _new), ("build", _build)):
-        command = commands.add_parser(name, help=f"{name.capitalize()} project/harness environment")
-        command.set_defaults(func=func)
-        command.add_argument("harness", nargs="?")
-        command.add_argument("--project", type=Path, default=Path("."))
-        command.add_argument(
-            "--no-config",
-            action="store_true",
-            help="Do not import host config/packages/credentials or mount shared harness state",
-        )
-        if name == "new":
-            command.add_argument("--detach", action="store_true", help="Create without attaching")
-    for name, func in (("attach", _attach), ("shell", _shell)):
-        command = commands.add_parser(name)
-        command.set_defaults(func=func)
-        id_argument(command, "id", "?", "Container ID")
-    command = commands.add_parser("rm", help="Remove containers, retaining saved history and clones")
-    command.set_defaults(func=_rm)
-    id_argument(command, "ids", "*", "Container IDs")
-    for name, func in (("ls", _ls), ("sessions", _sessions)):
-        command = commands.add_parser(name)
-        command.set_defaults(func=func)
-        command.add_argument("--json", dest="json_output", action="store_true")
-
-    command = commands.add_parser("fetch", help="Fetch new work as local <short-instance>/<branch> branches")
-    command.set_defaults(func=_fetch)
-    id_argument(command, "id", "?", "Instance ID, including removed containers", clones=True)
-
-    command = commands.add_parser("review", help="Fetch an instance's branches and show one's changes with git diff")
-    command.set_defaults(func=_review)
-    id_argument(command, "id", "?", "Instance ID, including removed containers", clones=True)
-    command.add_argument("branch", nargs="?", help="Branch (omit for a picker)")
-    command.add_argument("--stat", action="store_true", help="Summarize changed files")
-    command = commands.add_parser("land", help="Fetch, rebase onto the current host branch and fast-forward merge")
-    command.set_defaults(func=_land)
-    id_argument(command, "id", "?", "Instance ID, including removed containers", clones=True)
-    command.add_argument("branch", nargs="?", help="Branch (omit for a picker)")
-    choice = command.add_mutually_exclusive_group()
-    choice.add_argument("--sync", action="store_true", help="Sync instances without confirming, as if not a tty")
-    choice.add_argument("--no-sync", action="store_true", help="Do not sync instances after landing")
-    command = commands.add_parser("sync", help="Deliver host branches to a running instance as host/<branch>")
-    command.set_defaults(func=_sync)
-    id_argument(command, "id", "*", "Container IDs (omit for a picker)")
-    command.add_argument(
-        "-b",
-        "--branch",
-        action="append",
-        default=[],
-        help="Host branch to deliver, repeatable (default: the one each instance started from)",
-    )
-    command.add_argument(
-        "--force",
-        action="store_true",
-        help="Also replace local branches that are diverged from or ahead of the host's "
-        "(old tips are reported; uncommitted changes are never discarded)",
-    )
-    command = commands.add_parser("put", help=f"Copy host files into a running instance's {transfer.INBOX}")
-    command.set_defaults(func=_put)
-    id_argument(command, "id", None, "Container ID")
-    command.add_argument("paths", nargs="+", help="Host files or directories; quote ** globs")
-    command.add_argument("--dir", dest="directory", help=f"Directory within {transfer.INBOX} to put them in")
-    command.add_argument("--force", action="store_true", help="Replace existing names")
-    command = commands.add_parser("get", help=f"Copy files out of a running instance, such as from its {transfer.OUTBOX}")
-    command.set_defaults(func=_get)
-    id_argument(command, "id", None, "Container ID")
-    action = command.add_argument(
-        "paths",
-        nargs="*",
-        help=f"Guest paths or quoted globs, relative to {transfer.OUTBOX} (omit for a picker)",
-    )
-    action.completer = complete_guest_paths  # ty: ignore[unresolved-attribute]
-    command.add_argument("--to", type=Path, default=Path("."), help="Host directory (default: current)")
-    command.add_argument("--force", action="store_true", help="Replace existing names")
-    command = commands.add_parser("fork", help="Fork a saved conversation into a new container")
-    command.set_defaults(func=_fork)
-    command.add_argument("session", nargs="?")
-    command.add_argument("--project", type=Path, help="Override the saved project's working directory")
-    command.add_argument(
-        "--from",
-        dest="source",
-        choices=("instance", "host"),
-        help="Clone the session's instance (default when it has a clone) or the host checkout",
-    )
-    command.add_argument("--detach", action="store_true")
-    command.add_argument("--no-config", action="store_true")
-
-    command = commands.add_parser("rm-all", help="Stop/remove only managed containers; retain saved history")
-    command.set_defaults(func=_rm_all)
-    command.add_argument("--yes", action="store_true", help="Skip confirmation")
-    command = commands.add_parser("cleanup", help="Delete orphaned saved instances and unused Devbox images")
-    command.set_defaults(func=cleanup)
-    command.add_argument(
-        "--select",
-        action="store_true",
-        help="Choose instances, then images, with fzf before confirming",
-    )
-    command.add_argument(
-        "--only",
-        choices=("instances", "images"),
-        help="Clean up only orphaned instances or only unused images",
-    )
-    command = commands.add_parser("init", help="Create a template .devbox.toml and .devbox/Containerfile if missing")
-    command.set_defaults(func=_init)
-    command.add_argument("--project", type=Path, default=Path("."))
-    command = commands.add_parser("completion", help="Print shell completion setup")
-    command.set_defaults(func=_completion)
-    command.add_argument("shell", choices=("bash", "zsh", "fish"))
+    cli.build_subcommands(p)
     return p
 
 

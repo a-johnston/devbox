@@ -50,6 +50,56 @@ def test_installed_devbox_entry_point() -> None:
     assert "devbox" in result.stdout
 
 
+@pytest.mark.parametrize(
+    ("argv", "handler", "expected"),
+    [
+        (["new"], "_new", dict(harness=None, project=Path("."), no_config=False, detach=False)),
+        (["build"], "_build", dict(harness=None, project=Path("."), no_config=False)),
+        (["attach"], "_attach", dict(id=None)),
+        (["shell"], "_shell", dict(id=None)),
+        (["rm"], "_rm", dict(ids=[])),
+        (["ls"], "_ls", dict(json_output=False)),
+        (["sessions"], "_sessions", dict(json_output=False)),
+        (["fetch"], "_fetch", dict(id=None)),
+        (["review"], "_review", dict(id=None, branch=None, stat=False)),
+        (["land"], "_land", dict(id=None, branch=None, sync=False, no_sync=False)),
+        (["sync"], "_sync", dict(id=[], branch=[], force=False)),
+        (["put", "box", "file"], "_put", dict(id="box", paths=["file"], directory=None, force=False)),
+        (["get", "box"], "_get", dict(id="box", paths=[], to=Path("."), force=False)),
+        (["fork"], "_fork", dict(session=None, project=None, source=None, detach=False, no_config=False)),
+        (["rm-all"], "_rm_all", dict(yes=False)),
+        (["cleanup"], "cleanup", dict(select=False, only=None)),
+        (["init"], "_init", dict(project=Path("."))),
+        (["completion", "bash"], "_completion", dict(shell="bash")),
+    ],
+)
+def test_subcommand_defaults_and_handlers(argv: list[str], handler: str, expected: dict[str, object]) -> None:
+    values = vars(parser().parse_args(argv))
+    assert values.pop("func") is getattr(cli, handler)
+    assert values.pop("state_dir") is None
+    assert values == expected
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        [],
+        ["put"],
+        ["put", "box"],
+        ["get"],
+        ["completion"],
+        ["completion", "unknown"],
+        ["fork", "--from", "unknown"],
+        ["cleanup", "--only", "unknown"],
+        ["land", "box", "--sync", "--no-sync"],
+    ],
+)
+def test_subcommand_constraints(argv: list[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        parser().parse_args(argv)
+    assert exc.value.code == 2
+
+
 def test_new_defaults_to_current_project() -> None:
     args = parser().parse_args(["new", "pi", "--detach"])
     assert args.project == Path(".")
@@ -625,9 +675,14 @@ def saved_instances(tmp_path: Path) -> Path:
         ("devbox attach ", {"blue", "1a2b3c4d"}, {"devbox-blue"}),
         ("devbox attach b", {"blue"}, {"1a2b3c4d"}),
         ("devbox attach devbox-b", {"devbox-blue"}, {"blue"}),
+        ("devbox shell ", {"blue", "1a2b3c4d"}, {"devbox-blue"}),
         ("devbox rm blue ", {"1a2b3c4d"}, set()),
+        ("devbox sync ", {"blue", "1a2b3c4d"}, {"devbox-blue"}),
+        ("devbox put ", {"blue", "1a2b3c4d"}, {"devbox-blue"}),
+        ("devbox get ", {"blue", "1a2b3c4d"}, {"devbox-blue"}),
         ("devbox fetch ", {"blue"}, {"1a2b3c4d"}),
         ("devbox review ", {"blue"}, {"1a2b3c4d"}),
+        ("devbox land ", {"blue"}, {"1a2b3c4d"}),
     ],
 )
 def test_instance_id_completion(

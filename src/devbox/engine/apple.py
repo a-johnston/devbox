@@ -32,6 +32,7 @@ class AppleEngine(Engine):
     name = "apple"
     executable = "container"
     install_hint = "Apple's container CLI is required: https://github.com/apple/container"
+    supports_root = True
 
     def require_running(self) -> None:
         result = self.call("system", "status", check=False)

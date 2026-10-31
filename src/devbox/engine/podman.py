@@ -25,22 +25,38 @@ from devbox.errors import DevboxError
 # Map the host user onto the guest's agent user, so files it writes stay owned by the host user.
 AGENT_USERNS = "keep-id:uid=10001,gid=10001"
 
+# Bounded guest-root operations for sudo and ordinary Debian/Ubuntu package management.
+# No SYS_ADMIN, namespace/network administration, device creation or host privilege flags.
+ROOT_CAPABILITIES = (
+    "CHOWN",  # Install files with their package-declared ownership.
+    "DAC_OVERRIDE",  # Read/write system files regardless of their mode bits.
+    "FOWNER",  # Set modes and timestamps on files owned by another guest user.
+    "FSETID",  # Preserve setuid/setgid bits while installing files.
+    "SETGID",  # sudo and package scripts switch groups/users (e.g. apt's _apt sandbox).
+    "SETUID",
+    "SETFCAP",  # Install package-declared file capabilities, still bounded at exec.
+)
+
 
 class PodmanEngine(Engine):
     name = "podman"
     executable = "podman"
     install_hint = "Podman is required: https://podman.io/docs/installation"
-    run_options = (
-        "--userns",
-        AGENT_USERNS,
-        "--security-opt",
-        "no-new-privileges",
-        # Devbox only ever runs the guest as the unprivileged agent.
-        "--cap-drop",
-        "all",
-    )
+    supports_root = True
     # Rootless cgroupfs cannot delegate controllers, so Podman silently drops --cpus/--memory.
     limits_ignored = False
+
+    def run_options(self, spec: RunSpec) -> tuple[str, ...]:
+        return (
+            "--userns",
+            AGENT_USERNS,
+            "--security-opt",
+            # Explicit false also overrides a containers.conf default of true.
+            "no-new-privileges=false" if spec.allow_root else "no-new-privileges",
+            "--cap-drop",
+            "all",
+            *(flag for cap in ROOT_CAPABILITIES if spec.allow_root for flag in ("--cap-add", cap)),
+        )
 
     def require_running(self) -> None:
         result = self.call("info", "--format", "json", check=False)
@@ -154,6 +170,13 @@ class PodmanEngine(Engine):
         self.call("image", "rm", "--", reference)
 
     def run(self, spec: RunSpec) -> None:
+        if spec.allow_root:
+            print(
+                "Warning: --allow-root on rootless Podman shares the host kernel (no VM isolation) "
+                "and relaxes no-new-privileges/capability restrictions.",
+                file=sys.stderr,
+                flush=True,
+            )
         if self.limits_ignored:
             print(
                 "Warning: CPU and memory limits are not enforced with Podman's cgroupfs manager;"

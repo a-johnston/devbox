@@ -95,6 +95,7 @@ class FakeEngine(Engine):
         self.execs: list[ExecRequest] = []
         self.connections: list[tuple[str, tuple[str, ...], str | None]] = []
         self.removed: list[str] = []
+        self.root_enabled: list[str] = []
         self.rows: list[Container] = []
         self.built_images: set[str] = set()
         self.image_checks: list[str] = []
@@ -156,6 +157,10 @@ class FakeEngine(Engine):
 
     def run(self, spec: RunSpec) -> None:
         self.runs.append(spec)
+
+    def enable_root(self, id: str) -> None:
+        self.require_root_support()
+        self.root_enabled.append(id)
 
     def exec(
         self,

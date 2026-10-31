@@ -20,7 +20,7 @@ uv tool install --editable .
 ## Use
 
 ```sh
-devbox new [{pi,claude}] [--project project]      # create a new devbox container. project defaults to .
+devbox new [{pi,claude}] [--project project] [--allow-root]  # create a container. project defaults to .
 devbox review [id] [branch]                       # fetch, pick a branch, and show its diff
 devbox land [id] [branch]                         # fetch, rebase onto the current host branch, ff-merge
 
@@ -33,7 +33,7 @@ devbox shell [id]                                 # attach to an existing instan
 
 devbox ls                                         # list running and stopped managed containers
 devbox sessions                                   # list saved conversations, including removed containers
-devbox fork [session-id]                          # fork a conversation into a new container
+devbox fork [session-id] [--allow-root]           # fork a conversation into a new container
 devbox rm [id ...]                                # remove container, keeping history and clone
 devbox rm-all                                     # remove all managed containers
 devbox cleanup [--only {instances,images}]        # remove orphaned state and unused images
@@ -73,6 +73,67 @@ at `/workspace/<name>`. Uncommitted changes are not copied. The clone has no rem
 checkout with `devbox sync`. Agents learn these constraints from devbox's [instructions](src/devbox/assets/runtime/environment.md),
 which every harness appends to its system prompt. Container images are reused when possible and only require rebuilding
 when the project dependencies or harness version change.
+
+### Optional guest root access
+
+Instances do not have passwordless root access by default. For experiments that need system packages,
+explicitly opt in when creating an instance:
+
+```sh
+devbox new pi --allow-root
+devbox fork blue/session-id --allow-root
+```
+
+The harness and `devbox shell` still run as the unprivileged `agent` user, but can use `sudo apt-get update`,
+`sudo apt-get install ...`, or `sudo -i` without a password. Devbox records the permission in instance metadata
+and tells the agent whether sudo is available. The permission remains in that container across attach,
+harness recovery and container stop/start. It is **not inherited by a fork**: every new container requires
+its own `--allow-root`. No `--privileged` flag, extra mounts or host container sockets are added.
+
+Both backends support this option, with different isolation boundaries:
+
+- **Apple `container`:** each container, including commands started with exec, runs inside its own Linux VM.
+- **Rootless Podman with crun/runc:** guest root is a user-namespace identity, not host root, but shares the
+  host Linux kernel. Devbox retains the `keep-id` mapping, default seccomp/LSM confinement and a bounded
+  capability set for sudo and ordinary package management. It explicitly disables no-new-privileges for
+  opted-in instances so setuid sudo can work. Default instances still have no-new-privileges and drop all
+  capabilities. Rootful Podman remains unsupported.
+
+Podman prints an additional shared-kernel/reduced-hardening warning for `--allow-root`. Guest root does not
+mean every privileged operation is available: packages or install scripts requiring extra capabilities,
+mounts or device access may fail. Do not work around this with `--privileged` or unconfined settings; prefer
+installing those dependencies during the image build.
+
+Devbox still rejects Podman's krun runtime because exec does not run inside its microVM. Once both run and
+exec reliably stay inside krun's VM, it could become the recommended Podman mode for guest-root workloads.
+Do not select krun for Devbox until that support is implemented and tested.
+
+Use this for temporary experimentation; put permanent dependencies in the project's Containerfile.
+Installed packages and other changes to the container's writable layer disappear when it is removed,
+are not included in a fork, and are not saved to the reusable image.
+
+**Security tradeoffs:**
+
+- Passwordless sudo gives the agent, its subprocesses, dependencies and prompt-injected commands guest root,
+  subject to the runtime's remaining restrictions, not just permission to install packages. It can replace system
+  tools, inspect other guest processes and credentials, disable guest-level protections or break the instance.
+- Neither a VM nor a user namespace isolates bind-mounted data from the guest. Root can modify or delete the instance's saved home and clone,
+  and any mounted shared harness state (including authentication). Shared-state changes can affect other
+  instances. Ownership/permission changes can also interfere with host access and cleanup. Do not run recursive
+  chown/chmod on these mounts.
+- Forwarded tokens and shared logins remain available to a compromised guest, and network access can be used
+  to exfiltrate them or attack reachable services. `--no-config` avoids Devbox's settings/credential import and
+  shared-state mounts, but does not disable networking or remove credentials you supply yourself.
+- VM, hypervisor and filesystem-sharing vulnerabilities remain possible; VM isolation is not a guarantee
+  against a host escape. Root broadens the guest attack surface. Disk exhaustion, destructive commands and
+  malicious artifacts later fetched or copied to the host are still risks. Review changes before running them.
+
+For rootless Podman, allowing setuid escalation and additional namespaced capabilities increases the attack
+surface exposed to the shared host kernel. A kernel vulnerability may permit an escape despite the user namespace.
+Keep the host kernel and runtime patched. Prefer VM isolation or a disposable dedicated machine for potentially
+hostile workloads or sensitive hosts. Guest root does not gain general access to unmounted host files or host-root
+privileges; it can still damage mounted files accessible to the mapped host account, and chown can leave files
+owned by subordinate UIDs that complicate cleanup.
 
 ## Fetch, Review, and Land
 

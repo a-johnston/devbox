@@ -175,12 +175,13 @@ cli = CliCommands()
 @arg("--project", type=Path, default=Path("."))
 @arg("--no-config", action="store_true", help="Do not import host config/packages/credentials or mount shared harness state")
 @arg("--detach", action="store_true", help="Create without attaching")
-def _new(app: App, *, harness: str | None, project: Path, no_config: bool, detach: bool) -> None:
+@arg("--allow-root", action="store_true", help="Allow guest sudo (Podman: shared kernel, reduced hardening)")
+def _new(app: App, *, harness: str | None, project: Path, no_config: bool, detach: bool, allow_root: bool) -> None:
     selected_harness = get_harness(harness)
     selected_project = Project.discover(project)
     if not detach:
         require_terminal()
-    id = app.new(selected_project, selected_harness, no_config=no_config)
+    id = app.new(selected_project, selected_harness, no_config=no_config, allow_root=allow_root)
     if not detach:
         app.attach(next(c for c in app.engine.containers() if c.id == id))
 
@@ -269,6 +270,7 @@ def _sessions(app: App, *, json_output: bool) -> None:
 )
 @arg("--detach", action="store_true")
 @arg("--no-config", action="store_true")
+@arg("--allow-root", action="store_true", help="Allow guest sudo (Podman: shared kernel, reduced hardening)")
 def _fork(
     app: App,
     *,
@@ -277,6 +279,7 @@ def _fork(
     source: str | None,
     detach: bool,
     no_config: bool,
+    allow_root: bool,
 ) -> None:
     selected = match(app.store.sessions(), session, "Sessions", lambda s: s.id, session_label)
     has_clone = selected.instance in app.store.clones()
@@ -295,6 +298,7 @@ def _fork(
         no_config=no_config,
         session=selected,
         from_instance=from_instance,
+        allow_root=allow_root,
     )
     if not detach:
         app.attach(next(c for c in app.engine.containers() if c.id == id))

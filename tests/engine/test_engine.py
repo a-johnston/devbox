@@ -4,6 +4,7 @@ import subprocess
 
 import pytest
 
+from devbox.config import ASSETS
 from devbox.engine import MANAGED, RunSpec, host_platform, select_engine
 from devbox.engine.apple import AppleEngine, builder_memory
 from devbox.engine.engine import TERMINAL
@@ -47,6 +48,56 @@ def test_exec_input_is_piped_interactively(engine, monkeypatch: pytest.MonkeyPat
         ([engine.executable, "exec", "--user", "agent", "--interactive", "box", "cat"], "data"),
         ([engine.executable, "exec", "--user", "agent", "box", "true"], None),
     ]
+
+
+@pytest.mark.parametrize("backend", [AppleEngine, PodmanEngine])
+def test_enables_root_using_only_the_trusted_setup_script(monkeypatch: pytest.MonkeyPatch, backend: type) -> None:
+    calls = []
+    engine = backend()
+    assert engine.supports_root
+    monkeypatch.setattr(engine, "call", lambda *a, **kw: calls.append((a, kw)))
+    engine.enable_root("box")
+    assert calls == [
+        (
+            ("exec", "--user", "root", "--interactive", "box", "sh", "-s", "--", "/etc/sudoers.d"),
+            {"input": (ASSETS / "runtime/allow-root.sh").read_text()},
+        ),
+        (("exec", "--user", "agent", "box", "sudo", "-n", "--", "true"), {"check": True, "env": None, "input": None}),
+    ]
+
+
+@pytest.mark.parametrize("backend", [AppleEngine, PodmanEngine])
+@pytest.mark.parametrize("failed_call", [1, 2])
+def test_root_setup_and_sudo_probe_fail_closed(monkeypatch: pytest.MonkeyPatch, backend: type, failed_call: int) -> None:
+    calls = []
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 1 if len(calls) == failed_call else 0, "", "sudo unavailable")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(DevboxError, match="sudo unavailable"):
+        backend().enable_root("box")
+    assert len(calls) == failed_call
+
+
+@pytest.mark.parametrize("operation", ["run", "enable_root"])
+def test_unsupported_backend_refuses_guest_root_without_calling_the_runtime(
+    monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    class UnsupportedEngine(AppleEngine):
+        name = "unsupported"
+        supports_root = False
+
+    engine = UnsupportedEngine()
+    calls = []
+    monkeypatch.setattr(engine, "call", lambda *a, **kw: calls.append(a))
+    with pytest.raises(DevboxError, match="--allow-root is not supported by the unsupported backend"):
+        if operation == "run":
+            engine.run(RunSpec("box", "img", 1, "1G", {}, (), {}, allow_root=True))
+        else:
+            engine.enable_root("box")
+    assert not calls
 
 
 def test_stopped_service_message(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,7 +193,8 @@ def test_builder_memory_is_validated(monkeypatch: pytest.MonkeyPatch) -> None:
         builder_memory()
 
 
-def test_apple_run_translates_spec(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("allow_root", [False, True])
+def test_apple_run_translates_spec(monkeypatch: pytest.MonkeyPatch, allow_root: bool) -> None:
     calls = []
     engine = AppleEngine()
     monkeypatch.setattr(engine, "call", lambda *a, **kw: calls.append(a))
@@ -155,6 +207,7 @@ def test_apple_run_translates_spec(monkeypatch: pytest.MonkeyPatch) -> None:
             labels={MANAGED: "1"},
             binds=(("/src", "/src"),),
             env={"A": "b"},
+            allow_root=allow_root,
         )
     )
     assert calls == [

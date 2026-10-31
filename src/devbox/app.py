@@ -10,6 +10,7 @@ import os
 import random
 import re
 import shutil
+import sys
 import tempfile
 import time
 from collections.abc import Callable, Sequence
@@ -162,6 +163,7 @@ class App:
         inputs = json.dumps(
             {
                 "files": files,
+                "runtime": (ASSETS / "runtime/Containerfile").read_text(),
                 "args": args,
                 "platform": host_platform(),
                 "ownership": self.image_owner,
@@ -261,8 +263,15 @@ class App:
         no_config: bool = False,
         session: Session | None = None,
         from_instance: bool = False,
+        allow_root: bool = False,
     ) -> str:
-        """from_instance clones the forked session's instance instead of the host checkout."""
+        """from_instance clones the forked session's instance instead of the host checkout.
+
+        allow_root grants passwordless sudo on supporting backends.
+        It is an explicit instance policy, never inherited from a forked session.
+        """
+        if allow_root:
+            self.engine.require_root_support()
         if self.store.root.is_relative_to(project.root):
             raise DevboxError("Keep devbox state outside the shared project directory")
         if session and not harness.resume_args:
@@ -327,6 +336,16 @@ class App:
                 architecture=architecture,
                 checkout=project.workspace,
                 start=start,
+                root_access=(
+                    "Passwordless `sudo` is enabled in this container. You may install software with `sudo apt-get` or use "
+                    "`sudo -i` for a root shell. Container runtime restrictions still apply. "
+                    "Keep permanent dependencies in the project's Containerfile. "
+                    "System changes are lost when this container is removed and are not copied by a fork. "
+                    "Do not chown or change permissions on mounted repository, home or shared state directories."
+                    if allow_root
+                    else "Root access is not enabled. Put system dependencies in the project's Containerfile and ask "
+                    "the user to rebuild the environment."
+                ),
             )
         )
         (home / ".devbox/tmux.conf").write_text(tmux_config(id, project.root.name, harness.name))
@@ -345,6 +364,7 @@ class App:
             "session_glob": harness.session_glob,
             "image": image,
             "forked_from": session.id if session else None,
+            "allow_root": allow_root,
             # Public launch policy only: credentials are reacquired on recovery.
             "launch": {
                 "command": list(harness.command),
@@ -371,10 +391,19 @@ class App:
                 *shared_mounts,
             ),
             env={**env, **self.git(project.cwd).identity(), "DEVBOX_INSTANCE": id},
+            allow_root=allow_root,
         )
         started = time.monotonic()
         try:
             self.engine.run(spec)
+            if allow_root:
+                print(
+                    "Warning: enabling passwordless sudo in this container. Root can modify mounted files "
+                    "and access guest credentials, including shared harness state.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                self.engine.enable_root(id)
             self._start_harness(
                 id,
                 str(project.workdir),

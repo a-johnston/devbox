@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
+from devbox.config import ASSETS
 from devbox.errors import DevboxError
 
 MANAGED = "dev.devbox.managed"
@@ -116,14 +117,42 @@ class RunSpec:
     # (host source, guest target), in mount order.
     binds: tuple[tuple[str, str], ...]
     env: dict[str, str]
+    allow_root: bool = False
 
 
 class Engine(ABC):
     name: str
     executable: str
     install_hint: str
-    # Backend-specific `run` flags, placed before the shared ones.
-    run_options: tuple[str, ...] = ()
+    # Backends must explicitly support instance-local sudo and document its isolation.
+    supports_root = False
+
+    def run_options(self, spec: RunSpec) -> tuple[str, ...]:
+        """Backend-specific run flags, including the instance's privilege policy."""
+        return ()
+
+    def require_root_support(self) -> None:
+        if not self.supports_root:
+            raise DevboxError(f"--allow-root is not supported by the {self.name} backend")
+
+    def enable_root(self, id: str) -> None:
+        """Grant agent passwordless sudo in this instance, never in its reusable image."""
+        self.require_root_support()
+        self.call(
+            "exec",
+            "--user",
+            "root",
+            "--interactive",
+            id,
+            "sh",
+            "-s",
+            "--",
+            "/etc/sudoers.d",
+            input=(ASSETS / "runtime/allow-root.sh").read_text(),
+        )
+        # Do not announce a usable root-enabled instance if runtime restrictions
+        # (e.g. no-new-privileges) prevent the agent from actually using sudo.
+        self.exec(id, "sudo", "-n", "--", "true")
 
     def call(
         self,
@@ -197,6 +226,8 @@ class Engine(ABC):
         """Delete a container, even if it never started."""
 
     def run(self, spec: RunSpec) -> None:
+        if spec.allow_root:
+            self.require_root_support()
         flags = [
             *(flag for key, value in spec.labels.items() for flag in ("--label", f"{key}={value}")),
             *(flag for source, target in spec.binds for flag in mount(source, target)),
@@ -208,7 +239,7 @@ class Engine(ABC):
             "--init",
             "--name",
             spec.name,
-            *self.run_options,
+            *self.run_options(spec),
             "--cpus",
             str(spec.cpus),
             "--memory",

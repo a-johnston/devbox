@@ -53,7 +53,7 @@ def test_installed_devbox_entry_point() -> None:
 @pytest.mark.parametrize(
     ("argv", "handler", "expected"),
     [
-        (["new"], "_new", dict(harness=None, project=Path("."), no_config=False, detach=False)),
+        (["new"], "_new", dict(harness=None, project=Path("."), no_config=False, detach=False, allow_root=False)),
         (["build"], "_build", dict(harness=None, project=Path("."), no_config=False)),
         (["attach"], "_attach", dict(id=None)),
         (["shell"], "_shell", dict(id=None)),
@@ -66,7 +66,7 @@ def test_installed_devbox_entry_point() -> None:
         (["sync"], "_sync", dict(id=[], branch=[], force=False)),
         (["put", "box", "file"], "_put", dict(id="box", paths=["file"], directory=None, force=False)),
         (["get", "box"], "_get", dict(id="box", paths=[], to=Path("."), force=False)),
-        (["fork"], "_fork", dict(session=None, project=None, source=None, detach=False, no_config=False)),
+        (["fork"], "_fork", dict(session=None, project=None, source=None, detach=False, no_config=False, allow_root=False)),
         (["rm-all"], "_rm_all", dict(yes=False)),
         (["cleanup"], "cleanup", dict(select=False, only=None)),
         (["init"], "_init", dict(project=Path("."))),
@@ -129,8 +129,10 @@ def test_dispatch_initializes_app_with_custom_state(tmp_path: Path, monkeypatch:
 
 
 @pytest.mark.parametrize("detach", [False, True])
+@pytest.mark.parametrize("allow_root", [False, True])
 def test_new_dispatch_creates_and_optionally_attaches(
     detach: bool,
+    allow_root: bool,
     project: Project,
     harness: Harness,
     tmp_path: Path,
@@ -148,8 +150,10 @@ def test_new_dispatch_creates_and_optionally_attaches(
     monkeypatch.setattr(cli, "require_terminal", terminal)
     monkeypatch.setattr(cli, "get_harness", lambda name: harness)
     argv = ["new", "pi", "--project", str(project.cwd), "--no-config"]
+    if allow_root:
+        argv.append("--allow-root")
     dispatch(parser().parse_args([*argv, *(["--detach"] if detach else [])]), app)
-    create.assert_called_once_with(project, harness, no_config=True)
+    create.assert_called_once_with(project, harness, no_config=True, allow_root=allow_root)
     assert terminal.call_count == (0 if detach else 1)
     assert attach.call_args_list == ([] if detach else [((container,), {})])
 
@@ -171,9 +175,11 @@ def test_build_dispatch(
 
 
 @pytest.mark.parametrize(("detach", "override"), [(False, False), (True, True)])
+@pytest.mark.parametrize("allow_root", [False, True])
 def test_fork_dispatch(
     detach: bool,
     override: bool,
+    allow_root: bool,
     project: Project,
     harness: Harness,
     tmp_path: Path,
@@ -203,8 +209,10 @@ def test_fork_dispatch(
         argv.extend(["--project", str(project.cwd)])
     if detach:
         argv.append("--detach")
+    if allow_root:
+        argv.append("--allow-root")
     dispatch(parser().parse_args(argv), app)
-    create.assert_called_once_with(project, harness, no_config=True, session=session, from_instance=False)
+    create.assert_called_once_with(project, harness, no_config=True, session=session, from_instance=False, allow_root=allow_root)
     assert terminal.call_count == (0 if detach else 1)
     assert attach.call_args_list == ([] if detach else [((container,), {})])
 
@@ -524,6 +532,8 @@ def test_init_creates_missing_templates_without_engine_or_state(
         ("bash", "devbox ", "completion"),
         ("bash", "devbox --st", "--state-dir"),
         ("bash", "devbox new --", "--detach"),
+        ("bash", "devbox new --allow", "--allow-root"),
+        ("bash", "devbox fork --allow", "--allow-root"),
         ("bash", "devbox completion ", "fish"),
         # Shell-specific formatting needs a smoke test, not the full parser matrix.
         ("zsh", "devbox n", "new"),

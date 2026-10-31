@@ -164,8 +164,11 @@ def test_podman_build_argv(monkeypatch: pytest.MonkeyPatch) -> None:
     assert recorder.kwargs == [{"capture": False}]
 
 
-def test_podman_run_drops_capabilities_and_keeps_id(
+@pytest.mark.parametrize("allow_root", [False, True])
+def test_podman_run_keeps_id_and_applies_instance_privilege_policy(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    allow_root: bool,
 ) -> None:
     engine, recorder = engine_with(monkeypatch)
     engine.run(
@@ -177,6 +180,7 @@ def test_podman_run_drops_capabilities_and_keeps_id(
             labels={MANAGED: "1", "dev.devbox.harness": "pi"},
             binds=(("/src", "/src"), ("/state/home", "/home/agent")),
             env={"A": "b"},
+            allow_root=allow_root,
         )
     )
     assert recorder.calls == [
@@ -189,9 +193,15 @@ def test_podman_run_drops_capabilities_and_keeps_id(
             "--userns",
             AGENT_USERNS,
             "--security-opt",
-            "no-new-privileges",
+            "no-new-privileges=false" if allow_root else "no-new-privileges",
             "--cap-drop",
             "all",
+            *(
+                flag
+                for cap in ("CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "SETGID", "SETUID", "SETFCAP")
+                if allow_root
+                for flag in ("--cap-add", cap)
+            ),
             "--cpus",
             "2",
             "--memory",
@@ -210,6 +220,19 @@ def test_podman_run_drops_capabilities_and_keeps_id(
         ),
     ]
     assert AGENT_USERNS == "keep-id:uid=10001,gid=10001"
+    assert ("shares the host kernel (no VM isolation)" in capsys.readouterr().err) is allow_root
+
+
+def test_root_privileges_do_not_leak_to_subsequent_launches(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine, recorder = engine_with(monkeypatch)
+    engine.run(RunSpec("with-root", "img", 1, "1G", {}, (), {}, allow_root=True))
+    engine.run(RunSpec("without-root", "img", 1, "1G", {}, (), {}))
+    root, normal = recorder.calls
+    assert "--cap-add" in root
+    assert "no-new-privileges=false" in root
+    assert "--cap-add" not in normal
+    assert "no-new-privileges" in normal
+    assert "no-new-privileges=false" not in normal
 
 
 def row(name: str, state: str, labels: dict[str, str] | None, created: int = 0) -> dict:

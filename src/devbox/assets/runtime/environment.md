@@ -32,6 +32,7 @@ user's working tree: they see your work only after fetching it.
 
 ## Environment
 
+- {root_access}
 - Any previous session's processes, temporary files and OS assumptions do not carry over.
 - There is no host shell bridge. Do not assume host tools or the host editor are available.
 - Paths named by `DEVBOX_SHARED_*` contain intentionally shared harness state. Changes affect

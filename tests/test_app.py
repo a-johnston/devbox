@@ -4,6 +4,7 @@ import subprocess
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -45,6 +46,107 @@ def test_new_composes_images_and_mounts_only_selected_paths(project: Project, ha
     home = app.store.directory(id) / "home"
     assert (home / ".pi/agent/npm").readlink() == Path("/opt/devbox/prepared/.pi/agent/npm")
     assert "prefix C-a" in (home / ".devbox/tmux.conf").read_text()
+
+
+@pytest.mark.parametrize("allow_root", [False, True])
+@pytest.mark.parametrize("no_config", [False, True])
+def test_root_access_is_explicit_instance_policy(
+    project: Project,
+    harness: Harness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    allow_root: bool,
+    no_config: bool,
+) -> None:
+    engine = FakeEngine()
+    engine.supports_root = True
+    enable = engine.enable_root
+
+    def enable_before_harness(id: str) -> None:
+        assert engine.runs[-1].name == id
+        assert not engine.execs
+        enable(id)
+
+    monkeypatch.setattr(engine, "enable_root", enable_before_harness)
+    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    id = app.new(project, harness, no_config=no_config, allow_root=allow_root)
+    assert engine.root_enabled == ([id] if allow_root else [])
+    assert engine.runs[0].allow_root is allow_root
+    assert app.store.metadata(id)["allow_root"] is allow_root
+    text = (app.store.directory(id) / "home/.devbox/environment.md").read_text()
+    assert "as a non-root user" in text
+    assert ("Passwordless `sudo` is enabled" in text) is allow_root
+    assert ("Root access is not enabled" in text) is not allow_root
+    assert ("Warning: enabling passwordless sudo" in capsys.readouterr().err) is allow_root
+
+
+def test_root_access_is_rejected_before_preparing_or_creating_an_instance(
+    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = FakeEngine()
+    assert not engine.supports_root
+    service = Mock()
+    monkeypatch.setattr(engine, "require_running", service)
+    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    with pytest.raises(DevboxError, match="--allow-root is not supported"):
+        app.new(project, harness, allow_root=True)
+    service.assert_not_called()
+    assert not engine.builds and not engine.runs and not engine.execs
+    assert not app.store.instances.exists()
+
+
+def test_root_access_still_requires_runtime_preflight_before_building(
+    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = FakeEngine()
+    engine.supports_root = True
+    preflight = Mock(side_effect=DevboxError("runtime configuration rejected"))
+    monkeypatch.setattr(engine, "require_running", preflight)
+    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    with pytest.raises(DevboxError, match="runtime configuration rejected"):
+        app.new(project, harness, allow_root=True)
+    preflight.assert_called_once_with()
+    assert not engine.builds and not engine.runs and not engine.execs
+    assert not engine.image_checks and not app.store.instances.exists()
+
+
+@pytest.mark.parametrize("failure", [DevboxError("sudo setup failed"), KeyboardInterrupt()])
+def test_root_setup_failure_removes_the_container_without_starting_the_harness(
+    project: Project,
+    harness: Harness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: BaseException,
+) -> None:
+    engine = FakeEngine()
+    engine.supports_root = True
+    monkeypatch.setattr(engine, "enable_root", Mock(side_effect=failure))
+    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    with pytest.raises(type(failure)):
+        app.new(project, harness, no_config=True, allow_root=True)
+    assert engine.removed == [engine.runs[0].name]
+    assert not engine.execs
+    assert len(list(app.store.instances.glob("*/metadata.json"))) == 1
+
+
+@pytest.mark.parametrize("from_instance", [False, True])
+def test_root_access_does_not_leak_through_the_image_or_a_fork(
+    project: Project, harness: Harness, tmp_path: Path, from_instance: bool
+) -> None:
+    engine = FakeEngine()
+    engine.supports_root = True
+    app = App(engine, Store(tmp_path / "state"), FakeGit())
+    original = app.new(project, harness, no_config=True, allow_root=True)
+    source = app.store.directory(original) / "home/source.jsonl"
+    source.write_text('{"type":"session","id":"original"}\n')
+    session = Session(f"{original}/original", original, harness.name, str(project.cwd), source)
+    forked = app.new(project, harness, no_config=True, session=session, from_instance=from_instance)
+    assert engine.root_enabled == [original]
+    assert app.store.metadata(forked)["allow_root"] is False
+    assert [spec.allow_root for spec in engine.runs] == [True, False]
+    assert len(engine.builds) == 3
+    assert engine.runs[0].image == engine.runs[1].image
 
 
 def test_start_clones_committed_branch_without_host_links(project: Project, tmp_path: Path) -> None:

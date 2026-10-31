@@ -22,6 +22,8 @@ def test_built_in_harnesses_share_vim_runtime(name: str, project: Project, tmp_p
     assert runtime.file == ASSETS / "runtime/Containerfile"
     containerfile = runtime.file.read_text()
     assert "vim" in containerfile.split("apt-get install", 1)[1].split("&&", 1)[0].split()
+    assert "sudo" in containerfile.split("apt-get install", 1)[1].split("&&", 1)[0].split()
+    assert "NOPASSWD" not in containerfile
     assert "ENV EDITOR=vim VISUAL=vim" in containerfile.splitlines()
     assert prepared.args["RUNTIME_IMAGE"] == runtime.tag
     assert "FROM ${RUNTIME_IMAGE}" in (harness.directory / "Containerfile").read_text()
@@ -176,6 +178,21 @@ def test_architecture_is_an_image_variant(
     arm = app._prepared_image(project, harness, {}, {})
     monkeypatch.setattr("platform.machine", lambda: "x86_64")
     assert app._prepared_image(project, harness, {}, {}) != arm
+
+
+def test_runtime_changes_invalidate_the_prepared_image(
+    project: Project, harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assets = tmp_path / "assets"
+    (assets / "runtime").mkdir(parents=True)
+    containerfile = assets / "runtime/Containerfile"
+    containerfile.write_text("FROM base\n")
+    monkeypatch.setattr("devbox.app.ASSETS", assets)
+    app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())
+    first = app._prepared_image(project, harness, {}, {})
+    assert first == app._prepared_image(project, harness, {}, {})
+    containerfile.write_text("FROM base\nRUN apt-get install -y sudo\n")
+    assert first != app._prepared_image(project, harness, {}, {})
 
 
 def test_unsupported_host_fails_before_building(

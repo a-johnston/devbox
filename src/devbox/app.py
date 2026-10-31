@@ -312,9 +312,7 @@ class App:
         if session:
             session_id = session.id.split("/", 1)[1]
             # Harnesses that resume by ID choose where their snapshot must live.
-            target = relative(
-                run_hook(harness, "resume_file", session_id, str(project.workdir)) or ".devbox/resume.jsonl"
-            )
+            target = relative(run_hook(harness, "resume_file", session_id, str(project.workdir)) or ".devbox/resume.jsonl")
             snapshot_session(session.path, home / target, root=self.store.directory(session.instance) / "home")
             initial_session = {"path": target, "id": session_id}
             command.extend(session_args(harness.resume_args, target, session_id))
@@ -458,8 +456,7 @@ class App:
                 raise DevboxError("Cannot read the saved conversation; use shell to inspect") from exc
             if not launch["continue_args"]:
                 raise DevboxError(
-                    f"{metadata['harness']} cannot continue a conversation in place; "
-                    "use devbox fork or shell to inspect"
+                    f"{metadata['harness']} cannot continue a conversation in place; use devbox fork or shell to inspect"
                 )
             command.extend(session_args(launch["continue_args"], session["path"], session["id"]))
         names = () if launch["no_config"] else launch["secrets"]
@@ -502,9 +499,7 @@ class App:
             for path in (project.config.resolve(), project.containerfile, project.context)
             if path.is_relative_to(project.checkout)
         ] + [f":(glob){pattern}" for pattern in project.watch]
-        return self.git(project.root).fetch(
-            clone, f"refs/devbox/{id}/", watched, branch_prefix=id.removeprefix("devbox-")
-        )
+        return self.git(project.root).fetch(clone, f"refs/devbox/{id}/", watched, branch_prefix=id.removeprefix("devbox-"))
 
     def review(self, id: str, ref: str, *options: str) -> None:
         """Show a fetched branch's changes since its merge base with the current host HEAD."""
@@ -589,9 +584,7 @@ class App:
         # Instances created before the workspace move mount their clone at the checkout.
         checkout = metadata.get("workspace", metadata["checkout"])
         arguments = sync.inspect_arguments(delivery, branches, rewrites)
-        inspected = self.engine.exec(
-            container.id, "sh", "-c", sync.INSPECT, "sh", checkout, *arguments, input=delivery.data
-        )
+        inspected = self.engine.exec(container.id, "sh", "-c", sync.INSPECT, "sh", checkout, *arguments, input=delivery.data)
         steps = sync.plan(sync.GuestClone.parse(inspected.stdout), branches, rewrites, force=force)
         moves = [step.argument for step in steps if isinstance(step, sync.Move)]
         results = self.engine.exec(container.id, "sh", "-c", sync.APPLY, "sh", checkout, *moves) if moves else None

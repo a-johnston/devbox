@@ -53,9 +53,7 @@ def retain(app: App, image: str) -> str:
     return id
 
 
-def test_new_builds_label_every_stage_and_scope_to_state_directory(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_new_builds_label_every_stage_and_scope_to_state_directory(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"))
     app.build(project, harness)
@@ -264,9 +262,7 @@ def test_apple_image_inventory_uses_oci_labels_and_variant_digests(
     # Descriptor annotations are not the image's OCI config ownership labels.
     row["configuration"]["descriptor"]["annotations"] = {"unrelated": "yes"}
     calls = reply(monkeypatch, engine, [row])
-    assert engine.images() == [
-        Image("docker.io/library/ours:latest", "sha256:index", labels, ("sha256:manifest",), 2048)
-    ]
+    assert engine.images() == [Image("docker.io/library/ours:latest", "sha256:index", labels, ("sha256:manifest",), 2048)]
     assert calls == [("image", "list", "--format", "json")]
 
 
@@ -353,9 +349,7 @@ def test_podman_container_images_include_unmanaged_stopped_containers(
 
 @pytest.mark.parametrize("payload", [None, {}, [None], [{}], [{"Id": ""}]])
 @pytest.mark.parametrize("method", ["images", "container_images"])
-def test_podman_cleanup_rejects_unknown_inventory(
-    monkeypatch: pytest.MonkeyPatch, payload: object, method: str
-) -> None:
+def test_podman_cleanup_rejects_unknown_inventory(monkeypatch: pytest.MonkeyPatch, payload: object, method: str) -> None:
     engine = PodmanEngine()
     reply(monkeypatch, engine, payload)
     with pytest.raises(DevboxError, match="refusing cleanup"):
@@ -460,9 +454,7 @@ def test_apple_image_size_includes_all_variants(monkeypatch: pytest.MonkeyPatch)
 
 @pytest.mark.parametrize("value", [None, -1, True, "4096", 1.5, {}])
 @pytest.mark.parametrize("backend", ["apple", "podman"])
-def test_optional_image_size_metadata_can_be_unavailable(
-    monkeypatch: pytest.MonkeyPatch, backend: str, value: object
-) -> None:
+def test_optional_image_size_metadata_can_be_unavailable(monkeypatch: pytest.MonkeyPatch, backend: str, value: object) -> None:
     engine: AppleEngine | PodmanEngine
     if backend == "apple":
         engine = AppleEngine()

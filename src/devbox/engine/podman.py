@@ -146,9 +146,7 @@ class PodmanEngine(Engine):
 
     def container_images(self) -> set[str]:
         try:
-            return set(
-                image_strings([value for row in self._rows("--no-trunc") for value in (row["Image"], row["ImageID"])])
-            )
+            return set(image_strings([value for row in self._rows("--no-trunc") for value in (row["Image"], row["ImageID"])]))
         except (ValueError, KeyError, TypeError) as exc:
             raise DevboxError("Cannot safely determine container images; refusing cleanup") from exc
 

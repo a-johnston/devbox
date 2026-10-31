@@ -17,9 +17,7 @@ def service(monkeypatch: pytest.MonkeyPatch) -> list[tuple[list[str], dict]]:
         calls.append((args, kwargs))
         if args == ["container", "system", "status"]:
             running = any(argv == ["container", "system", "start"] for argv, _ in calls)
-            return subprocess.CompletedProcess(
-                args, 0, "apiserver is running" if running else "apiserver is not running", ""
-            )
+            return subprocess.CompletedProcess(args, 0, "apiserver is running" if running else "apiserver is not running", "")
         assert args == ["container", "system", "start"]
         return subprocess.CompletedProcess(args, 0, None, None)
 

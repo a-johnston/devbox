@@ -65,9 +65,7 @@ def image_identity(reference: str) -> str:
 
 def image_strings(values: object) -> tuple[str, ...]:
     """Inventory must fail closed, never silently drop an unrecognizable reference."""
-    if not isinstance(values, list) or any(
-        not isinstance(value, str) or not value or value.startswith("-") for value in values
-    ):
+    if not isinstance(values, list) or any(not isinstance(value, str) or not value or value.startswith("-") for value in values):
         raise ValueError("Expected image references")
     return tuple(values)
 

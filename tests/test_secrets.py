@@ -74,9 +74,7 @@ def test_no_config_skips_secrets(
 
 
 @pytest.mark.parametrize("value", [None, ""])
-def test_unset_or_empty_secrets_are_skipped(
-    secretive: Harness, monkeypatch: pytest.MonkeyPatch, value: str | None
-) -> None:
+def test_unset_or_empty_secrets_are_skipped(secretive: Harness, monkeypatch: pytest.MonkeyPatch, value: str | None) -> None:
     if value is None:
         monkeypatch.delenv("HARNESS_TOKEN", raising=False)
     else:
@@ -147,9 +145,7 @@ def test_config_location(secretive: Harness, tmp_path: Path, monkeypatch: pytest
         '[secrets]\n"not valid" = "s3cret"',
     ],
 )
-def test_invalid_secrets_config_fails_without_revealing_values(
-    secretive: Harness, secrets_config: Path, content: str
-) -> None:
+def test_invalid_secrets_config_fails_without_revealing_values(secretive: Harness, secrets_config: Path, content: str) -> None:
     secrets_config.write_text(content)
     with pytest.raises(DevboxError) as error:
         environment_secrets(secretive.secrets)
@@ -179,9 +175,7 @@ def test_harness_without_secrets_does_not_read_config(harness: Harness, secrets_
 def test_claude_reads_its_oauth_token_from_config(secrets_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
     secrets_config.write_text('[secrets]\nCLAUDE_CODE_OAUTH_TOKEN = "claude-token"\n')
-    assert environment_secrets(Harness.load(ASSETS / "harnesses/claude").secrets) == {
-        "CLAUDE_CODE_OAUTH_TOKEN": "claude-token"
-    }
+    assert environment_secrets(Harness.load(ASSETS / "harnesses/claude").secrets) == {"CLAUDE_CODE_OAUTH_TOKEN": "claude-token"}
 
 
 def test_secret_command_is_gone() -> None:

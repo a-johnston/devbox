@@ -84,9 +84,7 @@ def test_plan_fast_forwards_a_branch_behind_the_host() -> None:
         (LOCAL, {NEW}, Move("x", LOCAL, NEW, "moved to the rebased commits", reset=False)),
     ],
 )
-def test_plan_rewrites_a_branch_only_while_it_is_unchanged(
-    local: str | None, commits: set[str], outcome: str | Move
-) -> None:
+def test_plan_rewrites_a_branch_only_while_it_is_unchanged(local: str | None, commits: set[str], outcome: str | Move) -> None:
     clone = state(branches={"x": GuestBranch(local, None, False, False)}, commits=commits)
     assert plan(clone, [], [("x", LOCAL, NEW)]) == [outcome]
 
@@ -278,9 +276,7 @@ def test_instance_learns_its_identity_and_constraints(project: Project, harness:
     assert f"`devbox review {id}`" in text and f"`devbox sync {id} [-b branch ...]`" in text
 
 
-def test_fork_continues_from_the_instance_clones_checked_out_branch(
-    repository: Path, clone: Path, tmp_path: Path
-) -> None:
+def test_fork_continues_from_the_instance_clones_checked_out_branch(repository: Path, clone: Path, tmp_path: Path) -> None:
     work = commit(clone, "work", {"a": "1"})
     target = tmp_path / "fork"
     assert Git(repository).fork(clone, target) == "work"
@@ -288,9 +284,7 @@ def test_fork_continues_from_the_instance_clones_checked_out_branch(
     assert git(target, "symbolic-ref", "--short", "HEAD") == "work"
 
 
-def test_fork_from_instance_keeps_the_original_host_starting_point(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_fork_from_instance_keeps_the_original_host_starting_point(project: Project, harness: Harness, tmp_path: Path) -> None:
     app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit(Started("release", BASE, dirty=False)))
     first = app.new(project, harness, no_config=True)
     source = app.store.directory(first) / "home/source.jsonl"
@@ -327,8 +321,7 @@ def test_sync_inspects_plans_and_applies_in_the_guest(project: Project, harness:
     repository.delivery = Delivery("BUNDLE", {"release": BASE})
     engine.execs.clear()
     engine.replies = [
-        f"head refs/heads/feature\nbusy 0\ndirty 0\nbranch feature {LOCAL} - 0 0\n"
-        f"branch main {LOCAL} {HOST} 0 1\ncommit {NEW}\n",
+        f"head refs/heads/feature\nbusy 0\ndirty 0\nbranch feature {LOCAL} - 0 0\nbranch main {LOCAL} {HOST} 0 1\ncommit {NEW}\n",
         "ok\nchanged\n",
     ]
     rewrites = [("feature", LOCAL, NEW)]

@@ -10,9 +10,7 @@ from devbox.state import Store
 
 
 @pytest.mark.parametrize("engine_type", [AppleEngine, PodmanEngine])
-def test_default_store_follows_injected_engine(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, engine_type: type
-) -> None:
+def test_default_store_follows_injected_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, engine_type: type) -> None:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     app = App(engine_type())
     assert app.store.root == tmp_path / "devbox" / app.engine.name

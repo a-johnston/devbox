@@ -15,9 +15,7 @@ from tests.fakes import FakeEngine, FakeGit
 def test_catalog_does_not_follow_home_symlinks(tmp_path: Path) -> None:
     store = Store(tmp_path / "state")
     _, directory = store.create()
-    (directory / "metadata.json").write_text(
-        json.dumps({"harness": "pi", "project": "/project", "session_dir": "sessions"})
-    )
+    (directory / "metadata.json").write_text(json.dumps({"harness": "pi", "project": "/project", "session_dir": "sessions"}))
     outside = tmp_path / "host-secret"
     outside.mkdir()
     (outside / "secret.jsonl").write_text('{"type":"session","id":"private"}\n')

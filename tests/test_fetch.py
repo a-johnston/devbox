@@ -57,9 +57,7 @@ def test_compare_measures_a_tip_against_the_host_head(repository: Path, clone: P
     commit(repository, "release", {"host-only": "not part of the review"})
     head = git(repository, "rev-parse", "HEAD")
     watched = (":(literal).devbox/Containerfile", ":(glob)*.txt")
-    assert compare(repository, head, "refs/t", tip, first, watched) == Tip(
-        "refs/t", tip, first, 2, True, ("notes.txt",)
-    )
+    assert compare(repository, head, "refs/t", tip, first, watched) == Tip("refs/t", tip, first, 2, True, ("notes.txt",))
     assert compare(repository, head, "refs/t", rewritten, tip, watched).descends is False
     assert compare(repository, head, "refs/t", tip, None, watched).descends is True
 
@@ -208,9 +206,7 @@ def test_app_fetch_watches_paths_from_the_host_manifest(project: Project, harnes
     )
 
 
-def test_app_fetch_from_a_worktree_watches_repository_relative_paths(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_app_fetch_from_a_worktree_watches_repository_relative_paths(project: Project, harness: Harness, tmp_path: Path) -> None:
     tree = project.root / ".worktrees/feature"
     git(project.root, "worktree", "add", "-q", "-b", "feature", str(tree))
     app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())

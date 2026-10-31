@@ -10,9 +10,7 @@ from devbox.state import Store, seed_config, snapshot_session
 
 
 @pytest.mark.parametrize("platform,backend", [("darwin", "apple"), ("linux", "podman")])
-def test_store_uses_devbox_namespace(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str, backend: str
-) -> None:
+def test_store_uses_devbox_namespace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str, backend: str) -> None:
     monkeypatch.setattr("sys.platform", platform)
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     store = Store()
@@ -127,9 +125,7 @@ def test_catalog_reads_only_headers_without_loading_profiles(tmp_path: Path, mon
     monkeypatch.setattr(Harness, "hook", unexpected)
     store = Store(tmp_path)
     id, directory = store.create()
-    (directory / "metadata.json").write_text(
-        json.dumps({"harness": "unknown", "project": "/project", "session_dir": "sessions"})
-    )
+    (directory / "metadata.json").write_text(json.dumps({"harness": "unknown", "project": "/project", "session_dir": "sessions"}))
     sessions = directory / "home/sessions"
     sessions.mkdir()
     (sessions / "valid.jsonl").write_bytes(b'{"type":"session","id":"conversation"}\n' + b"\xff" * 100_000)
@@ -141,9 +137,7 @@ def test_catalog_reads_only_headers_without_loading_profiles(tmp_path: Path, mon
 def test_catalog_does_not_follow_session_symlinks(tmp_path: Path) -> None:
     store = Store(tmp_path / "state")
     _, directory = store.create()
-    (directory / "metadata.json").write_text(
-        json.dumps({"harness": "pi", "project": "/project", "session_dir": "sessions"})
-    )
+    (directory / "metadata.json").write_text(json.dumps({"harness": "pi", "project": "/project", "session_dir": "sessions"}))
     sessions = directory / "home/sessions"
     sessions.mkdir()
     outside = tmp_path / "outside.jsonl"

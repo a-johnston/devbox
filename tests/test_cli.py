@@ -356,9 +356,7 @@ def diffs(repository: FakeGit) -> list[tuple[object, ...]]:
     return [call[1:] for call in repository.calls if call[0] == "show_diff"]
 
 
-def test_fetch_dispatch_prints_flagged_refs(
-    fetching: tuple[App, str, FakeGit], capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_fetch_dispatch_prints_flagged_refs(fetching: tuple[App, str, FakeGit], capsys: pytest.CaptureFixture[str]) -> None:
     app, id, _ = fetching
     capsys.readouterr()
     dispatch(parser().parse_args(["fetch", id.removeprefix("devbox-")[:6]]), app)
@@ -398,9 +396,7 @@ def test_review_matches_named_branches_and_passes_stat(fetching: tuple[App, str,
     assert diffs(repository) == [(Path(app.store.metadata(id)["root"]), f"refs/devbox/{id}/main", "--stat")]
 
 
-def test_review_picks_among_changed_branches(
-    fetching: tuple[App, str, FakeGit], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_review_picks_among_changed_branches(fetching: tuple[App, str, FakeGit], monkeypatch: pytest.MonkeyPatch) -> None:
     app, id, repository = fetching
     repository.fetched.append(replace(repository.fetched[1], ref=f"refs/devbox/{id}/two"))
     offered = []
@@ -484,9 +480,7 @@ def test_init_creates_missing_templates_without_engine_or_state(
         ("fish", "devbox n", "new"),
     ],
 )
-def test_shell_completion(
-    line: str, expected: str, tmp_path: Path, shell: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_shell_completion(line: str, expected: str, tmp_path: Path, shell: str, monkeypatch: pytest.MonkeyPatch) -> None:
     assert expected in complete(line, tmp_path, monkeypatch, shell=shell)
 
 

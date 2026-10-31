@@ -131,9 +131,7 @@ def test_no_config_keeps_a_private_login(project: Project, claude: Harness, tmp_
 
 
 @pytest.mark.parametrize("no_config", [False, True])
-def test_new_trusts_project_and_skips_bypass_warning(
-    project: Project, claude: Harness, tmp_path: Path, no_config: bool
-) -> None:
+def test_new_trusts_project_and_skips_bypass_warning(project: Project, claude: Harness, tmp_path: Path, no_config: bool) -> None:
     app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())
     claude.seed_dir.mkdir()
     (claude.seed_dir / "settings.json").write_text('{"model": "opus"}')

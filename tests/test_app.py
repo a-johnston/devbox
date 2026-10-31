@@ -196,9 +196,7 @@ def test_accent_is_stable_and_status_cannot_inject_tmux_commands() -> None:
     assert "' p | pi | id '" in tmux_config("id", "p", "pi")
 
 
-def test_instances_are_named_after_free_colors_then_fall_back(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_instances_are_named_after_free_colors_then_fall_back(project: Project, harness: Harness, tmp_path: Path) -> None:
     app = App(FakeEngine(), Store(tmp_path / "state"), FakeGit())
     first = app.new(project, harness, no_config=True)
     second = app.new(project, harness, no_config=True)
@@ -247,9 +245,7 @@ def test_builds_and_describes_the_host_architecture(
     assert "Do not assume host tools" in text
 
 
-def test_clone_seeds_lfs_objects_from_the_source(
-    project: Project, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_clone_seeds_lfs_objects_from_the_source(project: Project, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     oid = "ab" + "cd" * 31
     # A stand-in for git-lfs: only the listing, as the clone has no remote to download from.
     tool = tmp_path / "bin/git-lfs"

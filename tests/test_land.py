@@ -109,9 +109,7 @@ def test_landing_target_is_the_checked_out_branch() -> None:
         (checkout(branches=LocalBranches({SOURCE: TIP}, set(), {SOURCE})), FEATURE, "checked out in a worktree"),
     ],
 )
-def test_landing_target_refuses_anything_that_could_lose_work(
-    state: HostCheckout, fetched: Fetched, reason: str
-) -> None:
+def test_landing_target_refuses_anything_that_could_lose_work(state: HostCheckout, fetched: Fetched, reason: str) -> None:
     with pytest.raises(DevboxError, match=f"Cannot land.*{reason}"):
         landing_target(state, fetched)
 
@@ -205,9 +203,7 @@ def test_land_uses_pickers_and_prints_the_landing(
     assert f"{id}: main: fast-forwarded\n{id}: \\x1b[2J\n" in out
 
 
-def test_land_selects_named_branches_without_a_picker(
-    selecting: tuple[App, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_land_selects_named_branches_without_a_picker(selecting: tuple[App, str], monkeypatch: pytest.MonkeyPatch) -> None:
     app, id = selecting
     landed = landings(app, monkeypatch)
     monkeypatch.setattr(cli, "select", lambda *a: pytest.fail("no picker needed"))

@@ -91,9 +91,7 @@ def test_podman_preflight_rejects_unsupported_setup(
         (None, False),
     ],
 )
-def test_podman_refuses_krun_default_runtime(
-    monkeypatch: pytest.MonkeyPatch, runtime: dict | None, refused: bool
-) -> None:
+def test_podman_refuses_krun_default_runtime(monkeypatch: pytest.MonkeyPatch, runtime: dict | None, refused: bool) -> None:
     host = {"security": {"rootless": True}, "cgroupManager": "systemd", "cgroupVersion": "v2"}
     if runtime is not None:
         host["ociRuntime"] = runtime

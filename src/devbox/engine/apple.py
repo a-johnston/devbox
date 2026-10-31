@@ -51,8 +51,7 @@ class AppleEngine(Engine):
         if result.returncode or "not running" in result.stdout:
             detail = (result.stderr or result.stdout).strip()
             raise DevboxError(
-                "Apple's container service is still unavailable after container system start"
-                + (f": {detail}" if detail else "")
+                "Apple's container service is still unavailable after container system start" + (f": {detail}" if detail else "")
             )
 
     def image_exists(self, reference: str) -> bool:
@@ -131,9 +130,7 @@ class AppleEngine(Engine):
                 image_strings(aliases)
                 if not labels:
                     raise ValueError("Expected runnable image variant")
-                common = {
-                    key: value for key, value in labels[0].items() if all(label.get(key) == value for label in labels)
-                }
+                common = {key: value for key, value in labels[0].items() if all(label.get(key) == value for label in labels)}
                 sizes = [image_size(variant.get("size")) for variant in variants]
                 size = None if None in sizes else sum(value for value in sizes if value is not None)
                 images.append(Image(reference, id, common, tuple(aliases), size))

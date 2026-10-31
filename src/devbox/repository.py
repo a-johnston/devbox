@@ -196,9 +196,7 @@ class HostCheckout:
 
     @classmethod
     def read(cls, repository: Path, ref: str) -> HostCheckout:
-        paths = git(
-            repository, "rev-parse", "--path-format=absolute", *(a for s in IN_PROGRESS for a in ("--git-path", s))
-        )
+        paths = git(repository, "rev-parse", "--path-format=absolute", *(a for s in IN_PROGRESS for a in ("--git-path", s)))
         return cls(
             repository,
             any(Path(path).exists() for path in paths.splitlines()),

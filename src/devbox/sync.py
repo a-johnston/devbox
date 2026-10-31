@@ -151,9 +151,7 @@ class Move:
         return f"{'reset' if self.reset else 'update'}:{self.branch}:{self.old}:{self.new}"
 
 
-def inspect_arguments(
-    delivery: Delivery, branches: Sequence[str], rewrites: Sequence[tuple[str, str, str]]
-) -> list[str]:
+def inspect_arguments(delivery: Delivery, branches: Sequence[str], rewrites: Sequence[tuple[str, str, str]]) -> list[str]:
     """INSPECT's arguments after the checkout, for syncing branches and rewrites."""
     names = dict.fromkeys([*(name for name, _, _ in rewrites), *branches])
     return [

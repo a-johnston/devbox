@@ -127,9 +127,7 @@ def test_put_expands_quoted_globs_into_a_directory(
         run(app, "put", "aabb", "logs", "--dir", "../escape")
 
 
-def test_put_checks_every_name_before_sending(
-    app: App, guest: Guest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_put_checks_every_name_before_sending(app: App, guest: Guest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for path in ("a/x.log", "b/x.log", "new.txt"):
         (tmp_path / path).parent.mkdir(exist_ok=True)
         (tmp_path / path).write_text(path)

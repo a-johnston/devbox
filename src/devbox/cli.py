@@ -18,6 +18,7 @@ import argcomplete
 
 from devbox import __version__, transfer
 from devbox.app import App
+from devbox.cli_builder import CliCommands, arg
 from devbox.config import Harness, Project, harnesses, init, relative
 from devbox.engine import Container, Image
 from devbox.engine.engine import image_identity
@@ -247,7 +248,15 @@ def session_label(session: Session) -> str:
     return f"{session.id}  {session.harness}  {session.project}"
 
 
-def _run(app: App, *, harness: str | None, project: Path, no_config: bool, detach: bool) -> None:
+cli = CliCommands()
+
+
+@cli.command("new")
+@arg("harness", nargs="?")
+@arg("--project", type=Path, default=Path("."))
+@arg("--no-config", action="store_true", help="Do not import host config/packages/credentials or mount shared harness state")
+@arg("--detach", action="store_true", help="Create without attaching")
+def _new(app: App, *, harness: str | None, project: Path, no_config: bool, detach: bool) -> None:
     selected_harness = get_harness(harness)
     selected_project = Project.discover(project)
     if not detach:
@@ -257,6 +266,10 @@ def _run(app: App, *, harness: str | None, project: Path, no_config: bool, detac
         app.attach(next(c for c in app.engine.containers() if c.id == id))
 
 
+@cli.command("build")
+@arg("harness", nargs="?")
+@arg("--project", type=Path, default=Path("."))
+@arg("--no-config", action="store_true", help="Do not import host config/packages/credentials or mount shared harness state")
 def _build(app: App, *, harness: str | None, project: Path, no_config: bool) -> None:
     print(app.build(Project.discover(project), get_harness(harness), no_config=no_config))
 
@@ -454,9 +467,7 @@ def _land(app: App, *, id: str | None, branch: str | None, sync: bool, no_sync: 
 def _sync(app: App, *, id: list[str], branch: list[str], force: bool) -> None:
     running = _containers(app, running=True)
     if id:
-        containers = list(
-            dict.fromkeys(match(running, value, "Containers", lambda c: c.id, container_label) for value in id)
-        )
+        containers = list(dict.fromkeys(match(running, value, "Containers", lambda c: c.id, container_label) for value in id))
     else:
         containers = select_many(running, "Containers", container_label)
     failed = 0
@@ -531,7 +542,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=__version__)
     p.add_argument("--state-dir", type=Path, help="Custom state directory")
     commands = p.add_subparsers(required=True)
-    for name, func in (("new", _run), ("build", _build)):
+    for name, func in (("new", _new), ("build", _build)):
         command = commands.add_parser(name, help=f"{name.capitalize()} project/harness environment")
         command.set_defaults(func=func)
         command.add_argument("harness", nargs="?")
@@ -593,9 +604,7 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("paths", nargs="+", help="Host files or directories; quote ** globs")
     command.add_argument("--dir", dest="directory", help=f"Directory within {transfer.INBOX} to put them in")
     command.add_argument("--force", action="store_true", help="Replace existing names")
-    command = commands.add_parser(
-        "get", help=f"Copy files out of a running instance, such as from its {transfer.OUTBOX}"
-    )
+    command = commands.add_parser("get", help=f"Copy files out of a running instance, such as from its {transfer.OUTBOX}")
     command.set_defaults(func=_get)
     id_argument(command, "id", None, "Container ID")
     action = command.add_argument(

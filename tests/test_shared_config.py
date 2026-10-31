@@ -62,9 +62,7 @@ def test_resumed_instances_keep_the_shared_auth_mount(project: Project, harness:
     assert (app.store.directory(resumed) / "home/.devbox/resume.jsonl").read_text() == source.read_text()
 
 
-def test_no_config_has_no_shared_mount_environment_or_host_auth(
-    project: Project, harness: Harness, tmp_path: Path
-) -> None:
+def test_no_config_has_no_shared_mount_environment_or_host_auth(project: Project, harness: Harness, tmp_path: Path) -> None:
     engine = FakeEngine()
     app = App(engine, Store(tmp_path / "state"), FakeGit())
     id = app.new(replace(project, env={"DEVBOX_SHARED_AUTH": "/unexpected"}), harness, no_config=True)
@@ -121,9 +119,7 @@ def test_shared_auth_contents_are_not_followed_or_modified(harness: Harness, tmp
     assert (path / "auth.json.lock").is_dir()
 
 
-def test_shared_auth_defaults_to_user_config_directory(
-    harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_shared_auth_defaults_to_user_config_directory(harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("XDG_CONFIG_HOME")
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     assert shared_config(harness)["auth"] == tmp_path / "home/.config/devbox/shared/pi/auth"
@@ -153,9 +149,7 @@ def test_shared_state_inside_symlinked_project_is_rejected(
     assert not (project / "config").exists()
 
 
-def test_shared_config_resolves_a_relative_config_base(
-    harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_shared_config_resolves_a_relative_config_base(harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("XDG_CONFIG_HOME", "relative-config")
     assert shared_config(harness)["auth"] == tmp_path / "relative-config/devbox/shared/pi/auth"

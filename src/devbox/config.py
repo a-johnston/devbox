@@ -174,9 +174,7 @@ class Project:
         container = table(data.get("container", {}), "container")
         review = table(data.get("review", {}), "review")
         context = (config.parent / text(image.get("context", "."), "image.context")).resolve()
-        containerfile = (
-            config.parent / text(image.get("containerfile", "Containerfile"), "image.containerfile")
-        ).resolve()
+        containerfile = (config.parent / text(image.get("containerfile", "Containerfile"), "image.containerfile")).resolve()
         if not context.is_dir() or not containerfile.is_file():
             raise DevboxError(f"Image context or Containerfile missing in {config}")
         # Builds read these from the host; the guest can edit the manifest that names them.

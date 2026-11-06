@@ -170,15 +170,27 @@ def session_label(session: Session) -> str:
 cli = CliCommands()
 
 
-@cli.command("new", help="New project/harness environment")
-@arg("harness", nargs="?")
+@cli.command("new", help="New harness or shell environment")
+@arg("harness", nargs="?", metavar="target", help="Harness name, or shell for Bash without a harness")
+@arg("--environment", help="Named environment preset instead of the project config")
+@arg("--no-workspace", action="store_true", help="Start with an empty working directory instead of cloning Git")
 @arg("--project", type=Path, default=Path("."))
 @arg("--no-config", action="store_true", help="Do not import host config/packages/credentials or mount shared harness state")
 @arg("--detach", action="store_true", help="Create without attaching")
 @arg("--allow-root", action="store_true", help="Allow guest sudo (Podman: shared kernel, reduced hardening)")
-def _new(app: App, *, harness: str | None, project: Path, no_config: bool, detach: bool, allow_root: bool) -> None:
-    selected_harness = get_harness(harness)
-    selected_project = Project.discover(project)
+def _new(
+    app: App,
+    *,
+    harness: str | None,
+    project: Path,
+    no_config: bool,
+    detach: bool,
+    allow_root: bool,
+    environment: str | None,
+    no_workspace: bool,
+) -> None:
+    selected_harness = None if harness == "shell" else get_harness(harness)
+    selected_project = Project.discover(project, workspace=not no_workspace, environment_name=environment)
     if not detach:
         require_terminal()
     id = app.new(selected_project, selected_harness, no_config=no_config, allow_root=allow_root)
@@ -186,12 +198,14 @@ def _new(app: App, *, harness: str | None, project: Path, no_config: bool, detac
         app.attach(next(c for c in app.engine.containers() if c.id == id))
 
 
-@cli.command("build", help="Build project/harness environment")
-@arg("harness", nargs="?")
+@cli.command("build", help="Build harness or shell environment")
+@arg("harness", nargs="?", metavar="target", help="Harness name, or shell for the runtime only")
+@arg("--environment", help="Named environment preset instead of the project config")
 @arg("--project", type=Path, default=Path("."))
 @arg("--no-config", action="store_true", help="Do not import host config/packages/credentials or mount shared harness state")
-def _build(app: App, *, harness: str | None, project: Path, no_config: bool) -> None:
-    print(app.build(Project.discover(project), get_harness(harness), no_config=no_config))
+def _build(app: App, *, harness: str | None, project: Path, no_config: bool, environment: str | None) -> None:
+    selected = None if harness == "shell" else get_harness(harness)
+    print(app.build(Project.discover(project, environment_name=environment), selected, no_config=no_config))
 
 
 def _containers(app: App, *, running: bool = False) -> list[Container]:
@@ -234,7 +248,7 @@ def _selected_containers(app: App, ids: list[str]) -> list[Container]:
 def _rm(app: App, *, ids: list[str]) -> None:
     for container in _selected_containers(app, ids):
         app.engine.remove(container.id)
-        print(f"Removed {container.id}. Saved conversations and repository clone retained.")
+        print(f"Removed {container.id}. Saved instance state retained.")
 
 
 @cli.command("ls")
@@ -286,14 +300,25 @@ def _fork(
     if source == "instance" and not has_clone:
         raise DevboxError(f"{selected.instance} has no repository clone; use --from host")
     from_instance = source != "host" and has_clone
+    metadata = app.store.metadata(selected.instance)
+    workspace = project is not None or source == "host" or metadata.get("checkout", "legacy") is not None
+    selected_project = Project.discover(
+        project or Path(selected.project),
+        workspace=workspace,
+        environment_name=metadata.get("environment"),
+    )
     print(
-        f"Cloning {selected.instance}'s repository." if from_instance else "Cloning the host checkout.",
+        f"Cloning {selected.instance}'s repository."
+        if from_instance
+        else "Cloning the host checkout."
+        if selected_project.checkout
+        else "Starting with an empty working directory; only the conversation is copied.",
         flush=True,
     )
     if not detach:
         require_terminal()
     id = app.new(
-        Project.discover(project or Path(selected.project)),
+        selected_project,
         get_harness(selected.harness),
         no_config=no_config,
         session=selected,
@@ -314,7 +339,13 @@ def _fetched(app: App, id: str | None) -> tuple[str, list[Fetched]]:
         metadata = app.store.metadata(instance)
         return f"{instance}  {metadata.get('harness')}  {metadata.get('project')}"
 
-    instance = match(app.store.clones(), id, "Instances", lambda i: i, label)
+    clones = app.store.clones()
+    if id:
+        saved = app.store.saved()
+        matches = [i for i in saved if i == id] or [i for i in saved if i.removeprefix("devbox-").startswith(id)]
+        if len(matches) == 1 and matches[0] not in clones:
+            raise DevboxError(f"{matches[0]} has no repository clone")
+    instance = match(clones, id, "Instances", lambda i: i, label)
     fetched = app.fetch(instance)
     if not fetched:
         print(f"{instance} has no branches.")

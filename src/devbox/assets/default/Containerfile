@@ -1,0 +1,2 @@
+# Stock project layer; devbox adds its runtime and optional harness separately.
+FROM ubuntu:24.04

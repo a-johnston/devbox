@@ -1,6 +1,7 @@
 # devbox
 
-Run Pi or Claude Code in disposable Linux environments with a clone of the target project.
+Run Pi or Claude Code in disposable Linux environments with a clone of the target project,
+or launch a managed shell with or without a repository.
 
 ## Install
 
@@ -20,7 +21,8 @@ uv tool install --editable .
 ## Use
 
 ```sh
-devbox new [{pi,claude}] [--project project] [--allow-root]  # create a container. project defaults to .
+devbox new [{pi,claude,shell}] [--project project] [--allow-root]  # project defaults to .
+# Optional: --environment <preset> --no-workspace --no-config --detach
 devbox review [id] [branch]                       # fetch, pick a branch, and show its diff
 devbox land [id] [branch]                         # fetch, rebase onto the current host branch, ff-merge
 
@@ -28,22 +30,23 @@ devbox fetch [id]                                 # fetch new work as local <ins
 devbox sync [id ...] [-b branch ...] [--force]    # deliver host branches to instances as host/<branch>
 devbox put id path ...                            # copy host files into the instance's /devbox/inbox
 devbox get id [path ...]                          # copy files from its /devbox/outbox (or any path)
-devbox attach [id]                                # attach to an existing instance's harness, recreating it if killed
+devbox attach [id]                                # attach to the harness (recovering it if needed), or open a shell
 devbox shell [id]                                 # attach to an existing instance in a non-root bash shell
 
 devbox ls                                         # list running and stopped managed containers
 devbox sessions                                   # list saved conversations, including removed containers
 devbox fork [session-id] [--allow-root]           # fork a conversation into a new container
-devbox rm [id ...]                                # remove container, keeping history and clone
+devbox rm [id ...]                                # remove container, retaining saved instance state
 devbox rm-all                                     # remove all managed containers
 devbox cleanup [--only {instances,images}]        # remove orphaned state and unused images
 
 devbox init                                       # default template .devbox.toml and .devbox/Containerfile
-devbox build [harness]                            # rebuild the project/runtime/harness image
+devbox build [harness|shell] [--environment preset] # rebuild the project/runtime/optional harness image
 devbox completion {bash,zsh,fish} | source        # install completions 
 ```
 
-New instances run the selected harness in tmux within the container - `C+a` then `d` detaches without stopping the harness.
+Harness instances run the selected harness in tmux within the container - `C+a` then `d` detaches without stopping it.
+Shell-only instances open Bash directly; exiting the shell leaves the container running.
 Instance IDs accept unique shorthand, e.g. `g` instead of `devbox-green`.
 
 ## Project setup
@@ -53,7 +56,9 @@ already exist. The templates can be found [here](src/devbox/assets/example) (see
 and [containerfile](.devbox/Containerfile)).
 
 The project Containerfile installs dependencies on a Debian/Ubuntu (apt, glibc) base; devbox adds the terminal
-runtime and harness on its own.
+runtime and optional harness on its own. Without a `.devbox.toml`, devbox uses its stock Ubuntu 24.04 environment
+with the usual resource defaults (4 CPUs, 8G memory); no project files need to be generated. An invalid manifest or
+missing configured Containerfile is an error, not a reason to fall back.
 
 `devbox fetch` always warns about branches that change the project config, Containerfile or build context. To flag other
 paths, such as hooks or scripts that run on the host, list them as paths relative to the repository root under `[review] watch`:
@@ -68,11 +73,59 @@ This check always uses the host's config rather than the fetched config. Support
 ## Creating Instances
 
 `devbox new` creates a new container with the selected harness for a given project path, defaulting to the current
-directory. Each instance clones the committed `HEAD` of the active checkout into its saved state, and mounts the clone
+directory. When a Git checkout is available, the instance clones its committed `HEAD` into saved state and mounts the clone
 at `/workspace/<name>`. Uncommitted changes are not copied. The clone has no remote and must be resynced with the host
 checkout with `devbox sync`. Agents learn these constraints from devbox's [instructions](src/devbox/assets/runtime/environment.md),
 which every harness appends to its system prompt. Container images are reused when possible and only require rebuilding
 when the project dependencies or harness version change.
+
+### Shells and workspace-free instances
+
+`devbox new shell` creates the same managed environment without installing a harness, importing harness settings or
+credentials, mounting shared authentication, or recording conversations. It clones the checkout if one is present.
+`devbox attach` and `devbox shell` both open Bash for these instances; `--detach` creates without opening a shell.
+Omitting the launch target preserves the usual harness selection.
+
+Outside a Git checkout, devbox starts with an empty, instance-owned `/workspace`; it does not copy or mount the host
+working directory. Use `--no-workspace` to request the same behavior even inside a checkout. A project manifest, if
+present, still controls the image and environment. The scratch workspace and home are retained after `devbox rm`
+until `devbox cleanup`; the inbox/outbox and the container's writable layer are not.
+
+```sh
+devbox new shell --allow-root                 # shell + checkout, with optional sudo
+devbox new pi --no-workspace --no-config      # fresh workspace without imported harness credentials
+devbox new shell --no-workspace --detach      # create now, connect with devbox shell later
+```
+
+Lifecycle commands, shell access and `put`/`get` work in every mode. `fetch`, `review`, `land` and `sync` require a
+repository clone. Shell-only instances do not appear in `sessions`. Forking a workspace-free conversation copies
+its conversation, not its scratch files, and starts with another empty workspace; `--from host` or `--project` can
+explicitly select a host checkout instead. Forks retain the selected environment preset.
+
+No checkout does not mean no credentials or no networking: harness authentication may still be shared unless
+`--no-config` is used. A container is not a guarantee that untrusted downloads are safe; review artifacts before
+opening or running them on the host.
+
+### Named environment presets
+
+Environment presets are independent of launch targets and instance names. Select one with
+`devbox new shell --environment ubuntu` or `devbox build pi --environment ubuntu`. A preset replaces the project's
+image, resource and environment settings; it does not change which checkout is cloned or choose a harness.
+
+Presets live under `$XDG_CONFIG_HOME/devbox/environments/<name>/` (normally `~/.config/devbox/environments/<name>/`).
+Each contains a `.devbox.toml` using the project manifest format, plus its Containerfile and build context. Image
+inputs must stay inside the preset directory. Names use lowercase letters, digits and hyphens, starting with a letter.
+A missing or invalid selected preset is an error. Presets still require a compatible Debian/Ubuntu (apt, glibc) base,
+not an arbitrary OS image.
+
+For example, create a preset using the existing template and then customize its files:
+
+```sh
+mkdir -p ~/.config/devbox/environments/ubuntu
+devbox init --project ~/.config/devbox/environments/ubuntu
+# Edit .devbox.toml and .devbox/Containerfile in that directory.
+devbox new shell --environment ubuntu --no-workspace --allow-root
+```
 
 New containers use the host's timezone (including daylight-saving rules), detected when the instance is created.
 The host's `TZ` environment variable takes precedence over system timezone detection; a project or harness `TZ`

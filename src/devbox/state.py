@@ -139,6 +139,8 @@ class Store:
             if not (directory / "metadata.json").is_file():
                 continue
             metadata = self.metadata(directory.name)
+            if metadata.get("session_dir", "legacy") is None:
+                continue  # Shell-only instances have no conversation state.
             home = directory / "home"
             glob = metadata.get("session_glob", "**/*.jsonl")
             for path in sorted((home / metadata["session_dir"]).glob(glob)):

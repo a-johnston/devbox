@@ -152,6 +152,7 @@ def test_root_access_does_not_leak_through_the_image_or_a_fork(
 def test_start_clones_committed_branch_without_host_links(project: Project, tmp_path: Path) -> None:
     (project.root / ".devbox.toml").write_text("dirty")
     clone = tmp_path / "clone"
+    assert project.checkout is not None
     started = Git(project.checkout).start(clone)
     assert started == repository.Started("main", git(project.root, "rev-parse", "HEAD"), dirty=True)
     assert git(clone, "symbolic-ref", "HEAD") == "refs/heads/main"

@@ -123,11 +123,11 @@ def init(directory: Path) -> dict[Path, bool]:
 
 @dataclass(frozen=True)
 class Project:
-    config: Path
+    config: Path | None
     root: Path
     cwd: Path
-    # The top level of cwd's worktree: what each instance clones and mounts in its place.
-    checkout: Path
+    # The worktree to clone, or None for an empty instance-owned working directory.
+    checkout: Path | None
     containerfile: Path
     context: Path
     env: dict[str, str]
@@ -135,24 +135,25 @@ class Project:
     memory: str = "8G"
     # Paths that fetch flags when an instance's branches change them, beyond the image inputs.
     watch: tuple[str, ...] = ()
+    environment_name: str | None = None
 
     @property
     def workspace(self) -> PurePosixPath:
-        """The clone's guest path, named after the primary checkout even from a worktree."""
-        return WORKSPACE / self.root.name
+        """The clone's guest path (named after the primary checkout), or the scratch workspace."""
+        return WORKSPACE / self.root.name if self.checkout else WORKSPACE
 
     @property
     def workdir(self) -> PurePosixPath:
-        """cwd's counterpart in the guest."""
-        return self.workspace / self.cwd.relative_to(self.checkout).as_posix()
+        """cwd's counterpart in the clone, or the scratch workspace when there is no clone."""
+        return self.workspace / self.cwd.relative_to(self.checkout).as_posix() if self.checkout else self.workspace
 
     @classmethod
-    def discover(cls, directory: Path) -> Project:
+    def discover(cls, directory: Path, *, workspace: bool = True, environment_name: str | None = None) -> Project:
         cwd = directory.expanduser().resolve()
         if not cwd.is_dir():
             raise DevboxError(f"Project directory does not exist: {cwd}")
-        # Fails outside a work tree (a bare repository or inside .git), where no checkout is found
-        # and the config search below reaches the same primary checkout from cwd's parents.
+        # Outside a work tree (including bare repositories and .git), launch without a clone.
+        # Manifest discovery is independent: non-Git directories may still configure an image.
         found = git_output(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel")
         common, toplevel = found.split("\n") if found else (None, None)
         # Only a normal repository's .git directory identifies a primary checkout.
@@ -162,11 +163,17 @@ class Project:
         if primary:
             candidates.append(primary / ".devbox.toml")
         config = next((p for p in candidates if p.is_file()), None)
-        if config is None:
-            raise DevboxError(f"No .devbox.toml found for {cwd}")
-        root = primary or config.parent
+        root = primary or (config.parent if config else Path(toplevel) if toplevel else cwd)
         if not cwd.is_relative_to(root):
             raise DevboxError("Worktrees must live inside the primary checkout (e.g. .worktrees/)")
+        checkout = Path(toplevel).resolve() if toplevel and workspace else None
+        if environment_name is not None:
+            if not re.fullmatch(r"[a-z][a-z0-9-]*", environment_name):
+                raise DevboxError(f"Invalid environment name: {environment_name!r}")
+            base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config").expanduser()
+            config = base / "devbox/environments" / environment_name / ".devbox.toml"
+        if config is None:
+            return cls(None, root, cwd, checkout, ASSETS / "default/Containerfile", ASSETS / "default", {})
         data = load_toml(config)
         if data.get("version") != 1:
             raise DevboxError(f"{config}: expected version = 1")
@@ -178,11 +185,10 @@ class Project:
         if not context.is_dir() or not containerfile.is_file():
             raise DevboxError(f"Image context or Containerfile missing in {config}")
         # Builds read these from the host; the guest can edit the manifest that names them.
-        real = root.resolve()
+        real = config.parent.resolve() if environment_name else root.resolve()
         for path in (context, containerfile):
             if not path.is_relative_to(real) or path.is_relative_to(real / ".git"):
-                raise DevboxError(f"{path} must be inside {root} and outside .git")
-        checkout = Path(toplevel).resolve() if toplevel else root
+                raise DevboxError(f"{path} must be inside {real} and outside .git")
         cpus = container.get("cpus", 4)
         if type(cpus) is not int or cpus < 1:
             raise DevboxError("container.cpus must be a positive integer")
@@ -197,6 +203,7 @@ class Project:
             cpus,
             size(container.get("memory", "8G"), "container.memory"),
             tuple(relative(v) for v in strings(review.get("watch", []), "review.watch")),
+            environment_name,
         )
 
 

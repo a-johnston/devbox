@@ -53,8 +53,20 @@ def test_installed_devbox_entry_point() -> None:
 @pytest.mark.parametrize(
     ("argv", "handler", "expected"),
     [
-        (["new"], "_new", dict(harness=None, project=Path("."), no_config=False, detach=False, allow_root=False)),
-        (["build"], "_build", dict(harness=None, project=Path("."), no_config=False)),
+        (
+            ["new"],
+            "_new",
+            dict(
+                harness=None,
+                project=Path("."),
+                no_config=False,
+                detach=False,
+                allow_root=False,
+                environment=None,
+                no_workspace=False,
+            ),
+        ),
+        (["build"], "_build", dict(harness=None, project=Path("."), no_config=False, environment=None)),
         (["attach"], "_attach", dict(id=None)),
         (["shell"], "_shell", dict(id=None)),
         (["rm"], "_rm", dict(ids=[])),
@@ -197,6 +209,7 @@ def test_fork_dispatch(
         tmp_path,
     )
     monkeypatch.setattr(app.store, "sessions", lambda: [session])
+    monkeypatch.setattr(app.store, "metadata", lambda id: {})
     create = Mock(return_value=container.id)
     attach = Mock()
     terminal = Mock()
@@ -240,6 +253,7 @@ def test_fork_clone_source(
     session = Session("devbox-aabb/c", "devbox-aabb", "pi", str(project.cwd), tmp_path)
     monkeypatch.setattr(app.store, "sessions", lambda: [session])
     monkeypatch.setattr(app.store, "clones", lambda: ["devbox-aabb"] if has_clone else [])
+    monkeypatch.setattr(app.store, "metadata", lambda id: {})
     monkeypatch.setattr(cli, "get_harness", lambda name: harness)
     create = Mock(return_value="devbox-ccdd")
     monkeypatch.setattr(app, "new", create)

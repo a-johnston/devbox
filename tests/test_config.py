@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from devbox.config import Harness, Project, git_environment, harnesses, init
+from devbox.config import ASSETS, Harness, Project, git_environment, harnesses, init
 from devbox.errors import DevboxError
 
 
@@ -161,9 +161,83 @@ def test_prepared_dirs_cannot_cover_sessions(tmp_path: Path, harness: Harness, p
         Harness.load(tmp_path)
 
 
-def test_missing_config(tmp_path: Path) -> None:
-    with pytest.raises(DevboxError, match="No .devbox.toml"):
-        Project.discover(tmp_path)
+def test_missing_config_uses_stock_environment_without_a_checkout(tmp_path: Path) -> None:
+    project = Project.discover(tmp_path)
+    assert project.config is None
+    assert project.checkout is None
+    assert project.root == project.cwd == tmp_path.resolve()
+    assert project.containerfile.read_text().endswith("FROM ubuntu:24.04\n")
+    assert str(project.workdir) == str(project.workspace) == "/workspace"
+    assert project.env == {}
+
+
+def test_unconfigured_checkout_uses_stock_image_and_preserves_subdirectory(repository: Path) -> None:
+    (repository / ".devbox.toml").unlink()
+    child = repository / "sub"
+    child.mkdir()
+    project = Project.discover(child)
+    assert project.config is None
+    assert project.checkout == project.root == repository
+    assert project.containerfile == ASSETS / "default/Containerfile"
+    assert str(project.workdir) == f"/workspace/{repository.name}/sub"
+
+
+def test_no_workspace_keeps_project_image_but_not_host_workdir(repository: Path) -> None:
+    child = repository / "sub"
+    child.mkdir()
+    project = Project.discover(child, workspace=False)
+    assert project.checkout is None
+    assert project.config == repository / ".devbox.toml"
+    assert project.containerfile == repository / ".devbox/Containerfile"
+    assert str(project.workdir) == "/workspace"
+
+
+def test_non_git_project_uses_config_without_copying_host_files(tmp_path: Path) -> None:
+    init(tmp_path)
+    project = Project.discover(tmp_path)
+    assert project.checkout is None
+    assert project.config == tmp_path / ".devbox.toml"
+    assert str(project.workdir) == "/workspace"
+
+
+@pytest.mark.parametrize("content", ["not valid TOML", "version = 2", 'version = 1\n[image]\ncontainerfile = "missing"'])
+def test_invalid_project_config_never_falls_back(repository: Path, content: str) -> None:
+    (repository / ".devbox.toml").write_text(content)
+    with pytest.raises(DevboxError):
+        Project.discover(repository)
+
+
+@pytest.mark.parametrize("workspace", [False, True])
+def test_named_environment_replaces_project_settings_without_changing_checkout(
+    repository: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workspace: bool
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    preset = tmp_path / "config/devbox/environments/build-test"
+    init(preset)
+    (preset / ".devbox/Containerfile").write_text("FROM debian:bookworm\n")
+    with (preset / ".devbox.toml").open("a") as stream:
+        stream.write('\n[container]\ncpus = 2\nmemory = "4G"\n[environment]\nPRESET = "yes"\n')
+    # An explicit preset bypasses an unusable project manifest, rather than merging it.
+    (repository / ".devbox.toml").write_text("invalid")
+    project = Project.discover(repository, environment_name="build-test", workspace=workspace)
+    assert project.config == preset / ".devbox.toml"
+    assert project.containerfile == preset / ".devbox/Containerfile"
+    assert project.root == repository
+    assert project.checkout == (repository if workspace else None)
+    assert project.environment_name == "build-test"
+    assert project.env == {"PRESET": "yes"}
+    assert (project.cpus, project.memory) == (2, "4G")
+
+
+@pytest.mark.parametrize("name", ["../escape", "/absolute", "Bad", "", "foo/bar"])
+def test_invalid_environment_name_rejected(tmp_path: Path, name: str) -> None:
+    with pytest.raises(DevboxError, match="Invalid environment name"):
+        Project.discover(tmp_path, environment_name=name)
+
+
+def test_unknown_environment_never_falls_back(tmp_path: Path) -> None:
+    with pytest.raises(DevboxError, match="Cannot read.*environments/missing"):
+        Project.discover(tmp_path, environment_name="missing")
 
 
 def test_custom_profile_overrides_builtin(tmp_path: Path, harness: Harness, monkeypatch: pytest.MonkeyPatch) -> None:

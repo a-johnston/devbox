@@ -170,9 +170,10 @@ class App:
         }
 
     def _image_key(self, project: Project) -> str:
-        return hashlib.sha256(f"{self.store.root}:{project.root}".encode()).hexdigest()[:12]
+        source = project.config or project.containerfile
+        return hashlib.sha256(f"{self.store.root}:{project.root}:{source}".encode()).hexdigest()[:12]
 
-    def _prepared_image(self, project: Project, harness: Harness, files: dict[str, str], args: dict[str, str]) -> str:
+    def _prepared_image(self, project: Project, harness: Harness | None, files: dict[str, str], args: dict[str, str]) -> str:
         # A separate namespace prevents old, unprepared images from taking the fast path.
         inputs = json.dumps(
             {
@@ -185,26 +186,29 @@ class App:
             sort_keys=True,
         )
         variant = hashlib.sha256(inputs.encode()).hexdigest()[:12]
-        return f"devbox-{harness.name}-{self._image_key(project)}-prepared-{variant}:latest"
+        target = harness.name if harness else "shell"
+        return f"devbox-{target}-{self._image_key(project)}-prepared-{variant}:latest"
 
-    def _build_args(self, harness: Harness) -> dict[str, str]:
+    def _build_args(self, harness: Harness | None) -> dict[str, str]:
         """Match the host's harness version; Containerfiles default to a pinned one."""
-        version = host_version(harness)
+        version = host_version(harness) if harness else None
         return {"HARNESS_VERSION": version} if version else {}
 
-    def build(self, project: Project, harness: Harness, *, no_config: bool = False) -> str:
+    def build(self, project: Project, harness: Harness | None, *, no_config: bool = False) -> str:
         self.engine.require_running()
-        files = build_files(harness, no_config=no_config)
+        files = build_files(harness, no_config=no_config) if harness else {}
         return self._build(project, harness, files, self._build_args(harness))
 
-    def _build(self, project: Project, harness: Harness, files: dict[str, str], args: dict[str, str]) -> str:
+    def _build(self, project: Project, harness: Harness | None, files: dict[str, str], args: dict[str, str]) -> str:
         key = self._image_key(project)
         base = f"devbox-project-{key}:latest"
         runtime = f"devbox-runtime-{key}:latest"
         image = self._prepared_image(project, harness, files, args)
+        if harness is None:
+            runtime = image
         started = time.monotonic()
         print("Preparing environment; subsequent launches reuse the prepared image.", flush=True)
-        if harness.version_command:
+        if harness and harness.version_command:
             version = args.get("HARNESS_VERSION")
             print(
                 f"Installing {harness.name} {version} to match the host."
@@ -218,10 +222,11 @@ class App:
         ):
             # Only harness assets and hook-selected public declarations enter this context.
             context = Path(temp) / "harness"
-            shutil.copytree(harness.directory, context, ignore=shutil.ignore_patterns("__pycache__"))
-            for name, content in files.items():
-                (context / name).write_text(content)
-            for kind, tag, file, source, layer_args, parent in (
+            if harness:
+                shutil.copytree(harness.directory, context, ignore=shutil.ignore_patterns("__pycache__"))
+                for name, content in files.items():
+                    (context / name).write_text(content)
+            layers = [
                 (
                     "project",
                     base,
@@ -238,19 +243,23 @@ class App:
                     {"PROJECT_IMAGE": base},
                     base,
                 ),
-                (
-                    "prepared",
-                    image,
-                    context / "Containerfile",
-                    context,
-                    {
-                        **args,
-                        "RUNTIME_IMAGE": runtime,
-                        "PREPARE_REVISION": str(time.time_ns()),
-                    },
-                    runtime,
-                ),
-            ):
+            ]
+            if harness:
+                layers.append(
+                    (
+                        "prepared",
+                        image,
+                        context / "Containerfile",
+                        context,
+                        {
+                            **args,
+                            "RUNTIME_IMAGE": runtime,
+                            "PREPARE_REVISION": str(time.time_ns()),
+                        },
+                        runtime,
+                    )
+                )
+            for kind, tag, file, source, layer_args, parent in layers:
                 self.engine.build(
                     tag,
                     file,
@@ -263,7 +272,7 @@ class App:
                         IMAGE_KIND: kind,
                         IMAGE_BASE: parent,
                         "dev.devbox.project": str(project.root),
-                        "dev.devbox.harness": harness.name if kind == "prepared" else "",
+                        "dev.devbox.harness": harness.name if harness and kind == "prepared" else "",
                     },
                 )
         print(f"Environment prepared in {time.monotonic() - started:.1f}s", flush=True)
@@ -272,7 +281,7 @@ class App:
     def new(
         self,
         project: Project,
-        harness: Harness,
+        harness: Harness | None,
         *,
         no_config: bool = False,
         session: Session | None = None,
@@ -286,16 +295,18 @@ class App:
         """
         if allow_root:
             self.engine.require_root_support()
-        if self.store.root.is_relative_to(project.root):
-            raise DevboxError("Keep devbox state outside the shared project directory")
-        if session and not harness.resume_args:
-            raise DevboxError(f"{harness.name} does not support local session resumption")
+        if (project.checkout and self.store.root.is_relative_to(project.root)) or self.store.root.is_relative_to(project.context):
+            raise DevboxError("Keep devbox state outside the shared project directory and image build context")
+        if session and (not harness or not harness.resume_args):
+            raise DevboxError(f"{harness.name if harness else 'shell'} does not support local session resumption")
+        if from_instance and (not session or not project.checkout):
+            raise DevboxError("Cloning an instance requires a session and a host checkout")
         inherited = {key: os.environ[key] for key in INHERITED if key in os.environ}
-        env = {**inherited, **project.env, **harness.env}
+        env = {**inherited, **project.env, **(harness.env if harness else {})}
         if "TZ" not in env:
             env["TZ"] = host_timezone()
         self.engine.require_running()
-        files = build_files(harness, no_config=no_config)
+        files = build_files(harness, no_config=no_config) if harness else {}
         args = self._build_args(harness)
         image = self._prepared_image(project, harness, files, args)
         if self.engine.image_exists(image):
@@ -303,14 +314,14 @@ class App:
         else:
             image = self._build(project, harness, files, args)
         # Only the harness process receives these: not the container config or saved state.
-        secrets = {} if no_config else environment_secrets(harness.secrets)
+        secrets = {} if no_config or not harness else environment_secrets(harness.secrets)
         if secrets:
             print("Forwarding harness credentials: " + ", ".join(secrets), flush=True)
         shared_mounts = []
-        for name in harness.shared_dirs:
+        for name in harness.shared_dirs if harness else ():
             # Reserved for mounted state, never inherited from a project/profile.
             env.pop(f"DEVBOX_SHARED_{name.upper()}", None)
-        if not no_config:
+        if harness and not no_config:
             for name, source in shared_config(harness, project_root=project.root).items():
                 target = str(PurePosixPath("/home/agent") / harness.shared_dirs[name])
                 shared_mounts.append((str(source), target))
@@ -319,22 +330,28 @@ class App:
         id, directory = self.store.create(f"devbox-{color}" for color in random.sample(list(COLORS), len(COLORS)))
         cloned = directory / "repo"
         previous = session.instance if session and from_instance else None
-        branch, base, start = self._clone(project, cloned, previous)
+        branch, base, start = None, None, None
+        if project.checkout:
+            branch, base, start = self._clone(project, cloned, previous)
+        else:
+            cloned = directory / "workspace"
+            cloned.mkdir()
         home = directory / "home"
-        (home / harness.session_dir).mkdir(parents=True, exist_ok=True)
-        if not no_config:
-            imported = seed_config(harness, home)
-            if imported:
-                print("Seeded isolated config copy: " + ", ".join(imported), flush=True)
-        run_hook(harness, "trust_project", home / harness.state_dir, str(project.workdir))
-        for prepared in harness.prepared_dirs:
-            # Image-local and copy-on-write per container, never through the host mount.
-            link = home / prepared
-            link.parent.mkdir(parents=True, exist_ok=True)
-            link.symlink_to(PREPARED / prepared)
-        command = list(harness.command)
+        if harness:
+            (home / harness.session_dir).mkdir(parents=True, exist_ok=True)
+            if not no_config:
+                imported = seed_config(harness, home)
+                if imported:
+                    print("Seeded isolated config copy: " + ", ".join(imported), flush=True)
+            run_hook(harness, "trust_project", home / harness.state_dir, str(project.workdir))
+            for prepared in harness.prepared_dirs:
+                # Image-local and copy-on-write per container, never through the host mount.
+                link = home / prepared
+                link.parent.mkdir(parents=True, exist_ok=True)
+                link.symlink_to(PREPARED / prepared)
+        command = list(harness.command) if harness else []
         initial_session = None
-        if session:
+        if session and harness:
             session_id = session.id.split("/", 1)[1]
             # Harnesses that resume by ID choose where their snapshot must live.
             target = relative(run_hook(harness, "resume_file", session_id, str(project.workdir)) or ".devbox/resume.jsonl")
@@ -342,7 +359,8 @@ class App:
             initial_session = {"path": target, "id": session_id}
             command.extend(session_args(harness.resume_args, target, session_id))
         (home / ".devbox").mkdir(exist_ok=True)
-        shutil.copyfile(ASSETS / "runtime/harness.sh", home / ".devbox/harness.sh")
+        if harness:
+            shutil.copyfile(ASSETS / "runtime/harness.sh", home / ".devbox/harness.sh")
         architecture = host_platform().removeprefix("linux/").upper()
         (home / ".devbox/environment.md").write_text(
             (ASSETS / "runtime/environment.md")
@@ -350,8 +368,15 @@ class App:
             .format(
                 id=id,
                 architecture=architecture,
-                checkout=project.workspace,
-                start=start,
+                repository=(
+                    (ASSETS / "runtime/repository.md").read_text().format(id=id, checkout=project.workspace, start=start)
+                    if project.checkout
+                    else "There is no cloned repository. The user's working directory is not mounted in this instance. "
+                    f"{project.workdir} is an empty, instance-owned working directory. "
+                    "Use the inbox and outbox to exchange files. Git fetch, review, land and sync do not apply. "
+                    "The working directory is retained until the user cleans up the instance. "
+                    "Conversation forks do not copy its contents."
+                ),
                 root_access=(
                     "Passwordless `sudo` is enabled in this container. You may install software with `sudo apt-get` or use "
                     "`sudo -i` for a root shell. Container runtime restrictions still apply. "
@@ -364,20 +389,22 @@ class App:
                 ),
             )
         )
-        (home / ".devbox/tmux.conf").write_text(tmux_config(id, project.root.name, harness.name))
+        target = harness.name if harness else "shell"
+        (home / ".devbox/tmux.conf").write_text(tmux_config(id, project.root.name, target))
         metadata = {
             "id": id,
             "project": str(project.cwd),
             "root": str(project.root),
-            "checkout": str(project.checkout),
+            "checkout": str(project.checkout) if project.checkout else None,
             "workspace": str(project.workspace),
             "workdir": str(project.workdir),
             "branch": branch,
             "base": base,
-            "harness": harness.name,
-            "config": str(project.config),
-            "session_dir": harness.session_dir,
-            "session_glob": harness.session_glob,
+            "harness": harness.name if harness else None,
+            "config": str(project.config) if project.config else None,
+            "environment": project.environment_name,
+            "session_dir": harness.session_dir if harness else None,
+            "session_glob": harness.session_glob if harness else None,
             "image": image,
             "forked_from": session.id if session else None,
             "allow_root": allow_root,
@@ -388,7 +415,9 @@ class App:
                 "secrets": list(harness.secrets),
                 "no_config": no_config,
                 "initial_session": initial_session,
-            },
+            }
+            if harness
+            else None,
         }
         (directory / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
         spec = RunSpec(
@@ -399,14 +428,14 @@ class App:
             labels={
                 MANAGED: "1",
                 "dev.devbox.project": str(project.root),
-                "dev.devbox.harness": harness.name,
+                "dev.devbox.harness": target,
             },
             binds=(
                 (str(cloned), str(project.workspace)),
                 (str(home), "/home/agent"),
                 *shared_mounts,
             ),
-            env={**env, **self.git(project.cwd).identity(), "DEVBOX_INSTANCE": id},
+            env={**env, **(self.git(project.cwd).identity() if project.checkout else {}), "DEVBOX_INSTANCE": id},
             allow_root=allow_root,
         )
         started = time.monotonic()
@@ -420,19 +449,20 @@ class App:
                     flush=True,
                 )
                 self.engine.enable_root(id)
-            self._start_harness(
-                id,
-                str(project.workdir),
-                command,
-                secrets,
-                () if no_config else harness.secrets,
-            )
+            if harness:
+                self._start_harness(
+                    id,
+                    str(project.workdir),
+                    command,
+                    secrets,
+                    () if no_config else harness.secrets,
+                )
         except (DevboxError, KeyboardInterrupt):
             # Retain state for diagnosis, but do not leak a container.
             self.engine.remove(id)
             raise
         print(
-            f"Created {id} · {harness.name} · {project.cwd} ({time.monotonic() - started:.1f}s to start)",
+            f"Created {id} · {target} · {project.cwd} ({time.monotonic() - started:.1f}s to start)",
             flush=True,
         )
         return id
@@ -440,6 +470,9 @@ class App:
     def attach(self, container: Container) -> None:
         if container.state != "running":
             raise DevboxError(f"{container.id} is stopped; start it with the container runtime, then attach")
+        if self.store.metadata(container.id).get("harness", "legacy") is None:
+            self.shell(container)
+            return
         directory = self.store.directory(container.id)
         # Serialize the check/restart, but not the interactive connection. Every
         # host devbox process for this instance uses the same saved-state lock.
@@ -527,28 +560,41 @@ class App:
             start = self.git(project.root).fork(self.store.directory(previous) / "repo", target)
             # Keep the original host starting point for provenance and sync bundles.
             return metadata.get("branch"), metadata["base"], start
+        assert project.checkout is not None
         started = self.git(project.checkout).start(target)
         if started.dirty:
             print(f"Uncommitted changes in {project.checkout} are not copied.", flush=True)
         return started.branch, started.base, started.branch or started.base[:12]
 
+    def _repository_metadata(self, id: str) -> dict[str, Any]:
+        metadata = self.store.metadata(id)
+        if "checkout" in metadata and metadata["checkout"] is None:
+            raise DevboxError(f"{id} has no repository clone")
+        return metadata
+
     def fetch(self, id: str) -> list[repository.Fetched]:
         """Fetch instance refs and publish new work as <short-instance>/<branch>."""
-        metadata = self.store.metadata(id)
+        metadata = self._repository_metadata(id)
         clone = self.store.directory(id) / "repo"
         # The host's manifest, not the clone's, decides which changes need attention.
-        project = Project.discover(Path(metadata["config"]).parent)
+        config = metadata.get("config")
+        directory = Path(metadata["root"]) if not config or metadata.get("environment") else Path(config).parent
+        project = Project.discover(directory, environment_name=metadata.get("environment"))
+        if project.checkout is None:
+            raise DevboxError(f"Host checkout for {id} is no longer available")
+        # A preset's manifest lives outside the clone; still flag changes to the repo's own manifest.
+        manifest = project.config if not project.environment_name else None
         # Repository-relative paths: the same in every worktree of the host repository.
         watched = [
             f":(literal){path.relative_to(project.checkout)}"
-            for path in (project.config.resolve(), project.containerfile, project.context)
+            for path in (manifest or project.root / ".devbox.toml", project.containerfile, project.context)
             if path.is_relative_to(project.checkout)
         ] + [f":(glob){pattern}" for pattern in project.watch]
         return self.git(project.root).fetch(clone, f"refs/devbox/{id}/", watched, branch_prefix=id.removeprefix("devbox-"))
 
     def review(self, id: str, ref: str, *options: str) -> None:
         """Show a fetched branch's changes since its merge base with the current host HEAD."""
-        metadata = self.store.metadata(id)
+        metadata = self._repository_metadata(id)
         self.git(Path(metadata["root"])).show_diff(ref, *options)
 
     def land(
@@ -564,7 +610,7 @@ class App:
         A failed or declined sync never fails the landing. The landing instance's own branch
         also moves to its rebased commits, so its history matches what was landed.
         """
-        root = self.store.metadata(id)["root"]
+        root = self._repository_metadata(id)["root"]
         landed = self.git(Path(root)).land(branch)
         try:
             self.engine.require_running()
@@ -579,7 +625,8 @@ class App:
         found = []
         for container in self.engine.containers():
             try:
-                if self.store.metadata(container.id)["root"] == root:
+                metadata = self.store.metadata(container.id)
+                if metadata["root"] == root and metadata.get("checkout", "legacy") is not None:
                     found.append(container)
             except DevboxError:
                 continue  # Not one of ours, or its saved state is gone.
@@ -621,7 +668,7 @@ class App:
         """
         if container.state != "running":
             raise DevboxError(f"{container.id} is stopped; sync needs a running container")
-        metadata = self.store.metadata(container.id)
+        metadata = self._repository_metadata(container.id)
         branches = branches or ([metadata["branch"]] if metadata.get("branch") else [])
         if not branches:
             raise DevboxError(f"{container.id} started from a detached HEAD; name branches to sync")

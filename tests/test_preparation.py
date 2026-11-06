@@ -23,6 +23,8 @@ def test_built_in_harnesses_share_vim_runtime(name: str, project: Project, tmp_p
     containerfile = runtime.file.read_text()
     assert "vim" in containerfile.split("apt-get install", 1)[1].split("&&", 1)[0].split()
     assert "sudo" in containerfile.split("apt-get install", 1)[1].split("&&", 1)[0].split()
+    assert "tzdata" in containerfile.split("apt-get install", 1)[1].split("&&", 1)[0].split()
+    assert "DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install" in containerfile
     assert "NOPASSWD" not in containerfile
     assert "ENV EDITOR=vim VISUAL=vim" in containerfile.splitlines()
     assert prepared.args["RUNTIME_IMAGE"] == runtime.tag

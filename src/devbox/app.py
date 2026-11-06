@@ -17,6 +17,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
+from zoneinfo import ZoneInfoNotFoundError
+
+from tzlocal import get_localzone_name
 
 from devbox import repository, sync, transfer
 from devbox.config import ASSETS, Harness, Project, configured_secrets, relative
@@ -64,8 +67,19 @@ COLORS = {
     "brown": 94,
     "gray": 240,
 }
-# Terminal capabilities the guest cannot detect itself; manifests and profiles override them.
-INHERITED = ("COLORTERM",)
+# Host settings the guest cannot detect itself; manifests and profiles override them.
+INHERITED = ("COLORTERM", "TZ")
+
+
+def host_timezone() -> str:
+    """Use a zone name, not today's UTC offset, so the guest follows DST transitions."""
+    try:
+        name = get_localzone_name()
+    except (OSError, ValueError, ZoneInfoNotFoundError) as exc:
+        raise DevboxError("Cannot determine the host timezone; set TZ to an IANA name such as Europe/London") from exc
+    if not name:
+        raise DevboxError("Cannot determine the host timezone; set TZ to an IANA name such as Europe/London")
+    return name
 
 
 def environment_secrets(names: Sequence[str]) -> dict[str, str]:
@@ -278,6 +292,8 @@ class App:
             raise DevboxError(f"{harness.name} does not support local session resumption")
         inherited = {key: os.environ[key] for key in INHERITED if key in os.environ}
         env = {**inherited, **project.env, **harness.env}
+        if "TZ" not in env:
+            env["TZ"] = host_timezone()
         self.engine.require_running()
         files = build_files(harness, no_config=no_config)
         args = self._build_args(harness)

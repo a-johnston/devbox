@@ -74,6 +74,11 @@ checkout with `devbox sync`. Agents learn these constraints from devbox's [instr
 which every harness appends to its system prompt. Container images are reused when possible and only require rebuilding
 when the project dependencies or harness version change.
 
+New containers use the host's timezone (including daylight-saving rules), detected when the instance is created.
+The host's `TZ` environment variable takes precedence over system timezone detection; a project or harness `TZ`
+setting overrides that default. Timezone changes do not require an image rebuild, but existing containers keep
+the timezone they were created with.
+
 ### Optional guest root access
 
 Instances do not have passwordless root access by default. For experiments that need system packages,
@@ -207,7 +212,7 @@ A nonempty environment value takes precedence over the config file and both take
 Only secrets declared by the selected harness are forwarded, and only to the harness process - not to images, container
 config or saved state. Instances run with `--no-config` do not use any of these three auth sources.
 
-Git author identity, `COLORTERM` and, for `attach` and `shell`, `TERM` are inherited automatically.
+Git author identity, `COLORTERM`, `TZ` and, for `attach` and `shell`, `TERM` are inherited automatically.
 Other environment values must be declared by the project or harness. Harness profiles live in
 `$XDG_CONFIG_HOME/devbox/harnesses/<name>/`; see [harness docs](src/devbox/assets/harnesses/README.md).
 

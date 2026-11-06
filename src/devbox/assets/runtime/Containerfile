@@ -2,8 +2,9 @@ ARG PROJECT_IMAGE
 FROM ${PROJECT_IMAGE}
 USER root
 # safe.directory: shared checkouts are owned by a host UID the guest user lacks.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash ca-certificates git less ripgrep sudo tmux vim \
+# Configure tzdata without prompting; each instance receives its host's TZ at launch.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y --no-install-recommends \
+    bash ca-certificates git less ripgrep sudo tmux tzdata vim \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 agent \
     && useradd --create-home --uid 10001 --gid 10001 --shell /bin/bash agent \
